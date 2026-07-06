@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#16a34a" />
+    <title>Sate — calorie chat</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/icon.svg" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img src="/icons/icon.svg" alt="" width="26" height="26" />
+        <span>Sate</span>
+      </div>
+      <nav class="tabs">
+        <button data-view="log" class="active">Log</button>
+        <button data-view="history">History</button>
+        <button data-view="admin" id="adminTab" hidden>Admin</button>
+      </nav>
+      <div class="who" id="who"></div>
+    </header>
+
+    <main>
+      <!-- LOG VIEW -->
+      <section id="view-log" class="view">
+        <div class="ring-card">
+          <div class="ring" id="ring">
+            <div class="ring-inner">
+              <strong id="ringKcal">0</strong>
+              <small id="ringGoal">kcal</small>
+            </div>
+          </div>
+          <div class="macros" id="macros"></div>
+          <button class="link" id="goalsBtn">Set goals</button>
+        </div>
+
+        <div class="composer">
+          <input id="foodInput" type="text" placeholder="What did you eat? e.g. two eggs and toast" autocomplete="off" />
+          <input id="photoInput" type="file" accept="image/*" capture="environment" hidden />
+          <button id="photoBtn" title="Photo" class="icon-btn">📷</button>
+          <button id="sendBtn" class="primary">Log</button>
+        </div>
+        <div class="chatline" id="chatline"></div>
+
+        <h3 class="section">Today</h3>
+        <ul class="entries" id="entries"></ul>
+      </section>
+
+      <!-- HISTORY VIEW -->
+      <section id="view-history" class="view" hidden>
+        <div class="row">
+          <input type="date" id="histDate" />
+          <button id="summaryBtn" class="primary">AI recap</button>
+        </div>
+        <div class="summary" id="summary" hidden></div>
+        <ul class="entries" id="histEntries"></ul>
+      </section>
+
+      <!-- ADMIN VIEW -->
+      <section id="view-admin" class="view" hidden>
+        <h3 class="section">Providers — bring your own keys</h3>
+        <p class="hint">Keys are encrypted at rest and shown only by their last 4 characters.</p>
+        <div id="providers"></div>
+
+        <h3 class="section">Functions — pick a model per task</h3>
+        <p class="hint">Route each AI task to whichever provider/model you prefer.</p>
+        <div id="functions"></div>
+
+        <h3 class="section">Users</h3>
+        <ul class="users" id="users"></ul>
+      </section>
+    </main>
+
+    <!-- GOALS DIALOG -->
+    <dialog id="goalsDialog">
+      <form method="dialog" id="goalsForm">
+        <h3>Daily goals</h3>
+        <label>Calories <input type="number" name="goal_kcal" min="0" /></label>
+        <label>Protein (g) <input type="number" name="goal_protein" min="0" /></label>
+        <label>Carbs (g) <input type="number" name="goal_carbs" min="0" /></label>
+        <label>Fat (g) <input type="number" name="goal_fat" min="0" /></label>
+        <div class="row end">
+          <button value="cancel" class="link">Cancel</button>
+          <button value="save" class="primary">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" hidden></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

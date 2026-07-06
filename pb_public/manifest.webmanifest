@@ -1,0 +1,12 @@
+{
+  "name": "Sate — calorie chat",
+  "short_name": "Sate",
+  "description": "Log food by chat or photo; AI counts the calories.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1113",
+  "theme_color": "#16a34a",
+  "icons": [
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

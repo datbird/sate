@@ -1,0 +1,13 @@
+# PocketBase runtime data (database, uploaded files, logs)
+pb_data/
+
+# Local PocketBase binary (fetched by scripts/dev.sh for local dev)
+pocketbase
+*.zip
+
+# Secrets
+.env
+
+# OS / editor
+.DS_Store
+*.swp
