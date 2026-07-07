@@ -14,7 +14,7 @@
     <header class="topbar">
       <div class="brand">
         <img src="/icons/icon.svg" alt="" width="26" height="26" />
-        <span>Sate</span>
+        <span id="brandName">Sate</span>
       </div>
       <nav class="tabs">
         <button data-view="log" class="active">Log</button>
@@ -62,16 +62,40 @@
 
       <!-- ADMIN VIEW -->
       <section id="view-admin" class="view" hidden>
-        <h3 class="section">Providers — bring your own keys</h3>
+        <h3 class="section">Instance</h3>
+        <p class="hint">Manage this Sate deployment as a whole.</p>
+        <div class="card" id="instanceCard">
+          <label class="field">App name
+            <input type="text" id="appName" placeholder="Sate" />
+          </label>
+          <div class="grid4">
+            <label class="field">Default kcal <input type="number" id="dg_kcal" min="0" /></label>
+            <label class="field">Protein g <input type="number" id="dg_protein" min="0" /></label>
+            <label class="field">Carbs g <input type="number" id="dg_carbs" min="0" /></label>
+            <label class="field">Fat g <input type="number" id="dg_fat" min="0" /></label>
+          </div>
+          <div class="row end"><button class="primary" id="saveInstance">Save instance settings</button></div>
+          <div class="meta" id="instanceMeta"></div>
+        </div>
+
+        <h3 class="section">AI Providers — bring your own keys</h3>
         <p class="hint">Keys are encrypted at rest and shown only by their last 4 characters.</p>
         <div id="providers"></div>
 
-        <h3 class="section">Functions — pick a model per task</h3>
-        <p class="hint">Route each AI task to whichever provider/model you prefer.</p>
+        <h3 class="section">AI Functions — pick a model per task</h3>
+        <p class="hint">Model lists load live from each provider once its key is set. 👁 = supports photos.</p>
         <div id="functions"></div>
+        <datalist id="dl-anthropic"></datalist>
+        <datalist id="dl-openai"></datalist>
+        <datalist id="dl-google"></datalist>
 
-        <h3 class="section">Users</h3>
+        <h3 class="section">Users &amp; Admins</h3>
+        <p class="hint">Promote anyone on the allow-list to admin. Emails in <code>ADMIN_EMAILS</code> are always admin.</p>
         <ul class="users" id="users"></ul>
+        <div class="row" style="margin-top:10px">
+          <input type="email" id="newAdminEmail" placeholder="email to make admin" />
+          <button class="primary" id="addAdminBtn">Add admin</button>
+        </div>
       </section>
     </main>
 

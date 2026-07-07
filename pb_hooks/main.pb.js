@@ -16,6 +16,10 @@ routerAdd("GET", "/api/sate/day/summary", (e) => require(`${__hooks}/api.js`).da
 
 routerAdd("GET", "/api/sate/admin/providers", (e) => require(`${__hooks}/api.js`).adminGetProviders(e));
 routerAdd("PUT", "/api/sate/admin/providers", (e) => require(`${__hooks}/api.js`).adminPutProvider(e));
+routerAdd("GET", "/api/sate/admin/models", (e) => require(`${__hooks}/api.js`).adminGetModels(e));
 routerAdd("GET", "/api/sate/admin/functions", (e) => require(`${__hooks}/api.js`).adminGetFunctions(e));
 routerAdd("PUT", "/api/sate/admin/functions", (e) => require(`${__hooks}/api.js`).adminPutFunction(e));
+routerAdd("GET", "/api/sate/admin/settings", (e) => require(`${__hooks}/api.js`).adminGetSettings(e));
+routerAdd("PUT", "/api/sate/admin/settings", (e) => require(`${__hooks}/api.js`).adminPutSettings(e));
 routerAdd("GET", "/api/sate/admin/users", (e) => require(`${__hooks}/api.js`).adminGetUsers(e));
+routerAdd("PUT", "/api/sate/admin/users/role", (e) => require(`${__hooks}/api.js`).adminSetUserRole(e));

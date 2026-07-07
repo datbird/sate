@@ -180,21 +180,113 @@ $("#summaryBtn").addEventListener("click", async () => {
 });
 
 // ------------------------------------------------------------------- admin
+let MODELS = {}; // provider -> [{id,label,vision}]
+
 async function loadAdmin() {
-  const [{ providers }, { functions }, { users }] = await Promise.all([
-    api("/admin/providers"), api("/admin/functions"), api("/admin/users"),
+  const [{ providers }, { functions }, usersResp, settingsResp] = await Promise.all([
+    api("/admin/providers"), api("/admin/functions"), api("/admin/users"), api("/admin/settings"),
   ]);
+  renderInstance(settingsResp);
   renderProviders(providers);
+  // Fetch live model lists for any provider that has a key.
+  MODELS = {};
+  await Promise.all(
+    providers.filter((p) => p.key_set).map(async (p) => {
+      try { const r = await api("/admin/models?provider=" + p.name); MODELS[p.name] = r.models || []; }
+      catch (_) { MODELS[p.name] = []; }
+    })
+  );
+  populateDatalists();
   renderFunctions(functions, providers);
+  renderUsers(usersResp.users);
+}
+
+function renderInstance(s) {
+  const set = s.settings || {};
+  $("#appName").value = set.app_name || "";
+  $("#dg_kcal").value = set.default_goal_kcal || "";
+  $("#dg_protein").value = set.default_goal_protein || "";
+  $("#dg_carbs").value = set.default_goal_carbs || "";
+  $("#dg_fat").value = set.default_goal_fat || "";
+  $("#instanceMeta").innerHTML =
+    `<span class="badge">host ${escapeHtml(location.host)}</span> ` +
+    `<span class="badge">auth header ${escapeHtml(s.auth_header || "")}</span> ` +
+    `<span class="badge">env admins: ${(s.env_admins || []).map(escapeHtml).join(", ") || "none"}</span>`;
+}
+
+$("#saveInstance").addEventListener("click", async () => {
+  const payload = {
+    app_name: $("#appName").value.trim() || "Sate",
+    default_goal_kcal: $("#dg_kcal").value || 0,
+    default_goal_protein: $("#dg_protein").value || 0,
+    default_goal_carbs: $("#dg_carbs").value || 0,
+    default_goal_fat: $("#dg_fat").value || 0,
+  };
+  try {
+    await api("/admin/settings", { method: "PUT", body: JSON.stringify(payload) });
+    document.title = payload.app_name + " — calorie chat";
+    $("#brandName").textContent = payload.app_name;
+    toast("Instance settings saved");
+  } catch (e) { toast(e.message); }
+});
+
+function populateDatalists() {
+  for (const prov of ["anthropic", "openai", "google"]) {
+    const dl = $("#dl-" + prov);
+    if (!dl) continue;
+    const list = MODELS[prov] || [];
+    dl.innerHTML = list
+      .map((m) => `<option value="${escapeHtml(m.id)}">${m.vision ? "👁 " : ""}${escapeHtml(m.label || m.id)}</option>`)
+      .join("");
+  }
+}
+
+async function fetchModelsIfNeeded(prov) {
+  if (MODELS[prov]) return;
+  try { const r = await api("/admin/models?provider=" + prov); MODELS[prov] = r.models || []; }
+  catch (_) { MODELS[prov] = []; }
+  populateDatalists();
+}
+
+async function renderUsers(users) {
   const ul = $("#users");
   ul.innerHTML = "";
   users.forEach((u) => {
     const li = document.createElement("li");
     li.className = "u";
-    li.innerHTML = `<span>${escapeHtml(u.email)}</span><span class="badge">${u.role}</span>`;
+    const badge = u.env_admin
+      ? '<span class="badge lock">env-admin</span>'
+      : `<span class="badge ${u.role === "admin" ? "adminb" : ""}">${u.role}</span>`;
+    li.innerHTML = `<span>${escapeHtml(u.email)}</span>`;
+    const right = document.createElement("span");
+    right.className = "urow-right";
+    right.innerHTML = badge;
+    if (!u.env_admin) {
+      const btn = document.createElement("button");
+      btn.className = "link";
+      btn.textContent = u.role === "admin" ? "demote" : "make admin";
+      btn.onclick = () => setRole(u.email, u.role === "admin" ? "user" : "admin");
+      right.appendChild(btn);
+    }
+    li.appendChild(right);
     ul.appendChild(li);
   });
 }
+
+async function setRole(email, role) {
+  try {
+    await api("/admin/users/role", { method: "PUT", body: JSON.stringify({ email, role }) });
+    toast(email + " → " + role);
+    loadAdmin();
+  } catch (e) { toast(e.message); }
+}
+
+$("#addAdminBtn").addEventListener("click", () => {
+  const email = $("#newAdminEmail").value.trim().toLowerCase();
+  if (!email || email.indexOf("@") === -1) return toast("enter a valid email");
+  $("#newAdminEmail").value = "";
+  setRole(email, "admin");
+});
 
 function renderProviders(providers) {
   const wrap = $("#providers");
@@ -241,21 +333,28 @@ function renderFunctions(functions, providers) {
     const el = document.createElement("div");
     el.className = "fn";
     const opts = providers.map((p) => `<option value="${p.name}" ${fn.provider === p.name ? "selected" : ""}>${p.name}</option>`).join("");
+    const needsVision = fn.fn === "vision_estimate";
     el.innerHTML =
-      `<h4>${FN_LABELS[fn.fn] || fn.fn}</h4>` +
+      `<h4>${FN_LABELS[fn.fn] || fn.fn}${needsVision ? ' <span class="badge">needs 👁</span>' : ""}</h4>` +
       `<div class="grid">` +
       `<select data-k="provider">${opts}</select>` +
       `<label class="switch"><input type="checkbox" data-k="enabled" ${fn.enabled ? "checked" : ""}/> on</label>` +
       `</div>` +
       `<div class="grid" style="margin-top:8px">` +
-      `<input type="text" value="${escapeHtml(fn.model || "")}" placeholder="model id" data-k="model" />` +
+      `<input type="text" list="dl-${fn.provider}" value="${escapeHtml(fn.model || "")}" placeholder="model id (pick or type)" data-k="model" />` +
       `<button class="primary" data-save>Save</button>` +
       `</div>`;
+    const modelInput = el.querySelector('[data-k="model"]');
+    const provSel = el.querySelector('[data-k="provider"]');
+    provSel.addEventListener("change", () => {
+      modelInput.setAttribute("list", "dl-" + provSel.value);
+      fetchModelsIfNeeded(provSel.value);
+    });
     el.querySelector("[data-save]").onclick = async () => {
       const payload = {
         fn: fn.fn,
-        provider: el.querySelector('[data-k="provider"]').value,
-        model: el.querySelector('[data-k="model"]').value.trim(),
+        provider: provSel.value,
+        model: modelInput.value.trim(),
         enabled: el.querySelector('[data-k="enabled"]').checked,
       };
       try { await api("/admin/functions", { method: "PUT", body: JSON.stringify(payload) }); toast(fn.fn + " saved"); }
@@ -276,6 +375,7 @@ async function boot() {
     return;
   }
   $("#who").textContent = ME.email;
+  if (ME.app_name) { $("#brandName").textContent = ME.app_name; document.title = ME.app_name + " — calorie chat"; }
   if (ME.isAdmin) $("#adminTab").hidden = false;
   $("#histDate").value = todayISO();
   refreshToday();

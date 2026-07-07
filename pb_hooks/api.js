@@ -1,10 +1,10 @@
 /// <reference path="../pb_data/types.d.ts" />
 
-// All Sate request logic lives here as a required module. PocketBase runs route handlers in
-// an isolated JSVM that can't see a hook file's top-level scope, so main.pb.js stays thin and
-// delegates to the functions exported below (each handler require()s this module at call time).
+// All Sate request logic. PocketBase runs route handlers in an isolated JSVM that can't see a
+// hook file's top-level scope, so main.pb.js stays thin and delegates to the functions below
+// (each handler require()s this module at call time).
 
-const { runProvider } = require(`${__hooks}/providers.js`);
+const P = require(`${__hooks}/providers.js`);
 const F = require(`${__hooks}/functions.js`);
 
 function env(name) {
@@ -25,6 +25,7 @@ const ADMINS = env("ADMIN_EMAILS")
   .map((s) => s.trim())
   .filter((s) => s.length > 0);
 const VALID_PROVIDERS = ["anthropic", "openai", "google"];
+const SETTING_KEYS = ["app_name", "default_goal_kcal", "default_goal_protein", "default_goal_carbs", "default_goal_fat"];
 
 // ------------------------------------------------------------------ helpers
 
@@ -34,8 +35,37 @@ function identity(e) {
   return email.toLowerCase().trim();
 }
 
-function isAdmin(email) {
+function isEnvAdmin(email) {
   return ADMINS.indexOf(email) !== -1;
+}
+
+// Admin = listed in ADMIN_EMAILS (env, bootstrap) OR promoted in-app (profiles.role == "admin").
+function resolveIsAdmin(app, email) {
+  if (isEnvAdmin(email)) return true;
+  try {
+    const p = app.findFirstRecordByFilter("profiles", "email = {:e}", { e: email });
+    return p.getString("role") === "admin";
+  } catch (_) {
+    return false;
+  }
+}
+
+function settingsMap(app) {
+  const out = {};
+  try {
+    app.findAllRecords("settings").forEach((r) => {
+      out[r.getString("key")] = r.getString("value");
+    });
+  } catch (_) {}
+  return out;
+}
+
+function applyDefaultGoals(app, rec) {
+  const s = settingsMap(app);
+  if (s.default_goal_kcal) rec.set("goal_kcal", Number(s.default_goal_kcal) || 0);
+  if (s.default_goal_protein) rec.set("goal_protein", Number(s.default_goal_protein) || 0);
+  if (s.default_goal_carbs) rec.set("goal_carbs", Number(s.default_goal_carbs) || 0);
+  if (s.default_goal_fat) rec.set("goal_fat", Number(s.default_goal_fat) || 0);
 }
 
 function ensureProfile(app, email) {
@@ -45,18 +75,20 @@ function ensureProfile(app, email) {
   } catch (_) {
     rec = null;
   }
-  let isNew = false;
+  let dirty = false;
   if (!rec) {
     rec = new Record(app.findCollectionByNameOrId("profiles"));
     rec.set("email", email);
     rec.set("name", email.split("@")[0]);
-    isNew = true;
+    rec.set("role", isEnvAdmin(email) ? "admin" : "user");
+    applyDefaultGoals(app, rec);
+    dirty = true;
+  } else if (isEnvAdmin(email) && rec.getString("role") !== "admin") {
+    // env admins are always admin; never force-downgrade an in-app promoted admin
+    rec.set("role", "admin");
+    dirty = true;
   }
-  const role = isAdmin(email) ? "admin" : "user";
-  if (isNew || rec.getString("role") !== role) {
-    rec.set("role", role);
-    app.save(rec);
-  }
+  if (dirty) app.save(rec);
   return rec;
 }
 
@@ -144,7 +176,7 @@ function addEntry(app, email, data) {
 function estimate(app, fn, userText, image) {
   const cfg = F.resolveFunction(app, fn);
   const p = F.PROMPTS[fn];
-  const reply = runProvider({
+  const reply = P.runProvider({
     provider: cfg.provider,
     apiKey: cfg.apiKey,
     baseUrl: cfg.baseUrl,
@@ -179,7 +211,8 @@ function me(e) {
     email: email,
     name: profile.getString("name"),
     role: profile.getString("role"),
-    isAdmin: isAdmin(email),
+    isAdmin: resolveIsAdmin(app, email),
+    app_name: settingsMap(app).app_name || "Sate",
     goals: goalsOf(profile),
     today: today,
     totals: sumTotals(dayEntries(app, email, today)),
@@ -271,7 +304,7 @@ function chat(e) {
     `${Math.round(totals.fat)}g fat across ${totals.count} entries.`;
   try {
     const cfg = F.resolveFunction(app, "chat");
-    const reply = runProvider({
+    const reply = P.runProvider({
       provider: cfg.provider,
       apiKey: cfg.apiKey,
       baseUrl: cfg.baseUrl,
@@ -348,7 +381,7 @@ function daySummary(e) {
     `${Math.round(totals.carbs)}g carbs, ${Math.round(totals.fat)}g fat.`;
   try {
     const cfg = F.resolveFunction(app, "daily_summary");
-    const reply = runProvider({
+    const reply = P.runProvider({
       provider: cfg.provider,
       apiKey: cfg.apiKey,
       baseUrl: cfg.baseUrl,
@@ -368,8 +401,16 @@ function daySummary(e) {
 function requireAdmin(e) {
   const email = identity(e);
   if (!email) return { ok: false, res: e.json(401, { error: "not authenticated" }) };
-  if (!isAdmin(email)) return { ok: false, res: e.json(403, { error: "admin only" }) };
+  if (!resolveIsAdmin(e.app, email)) return { ok: false, res: e.json(403, { error: "admin only" }) };
   return { ok: true, email: email };
+}
+
+function providerRecord(app, name) {
+  try {
+    return app.findFirstRecordByFilter("providers", "name = {:n}", { n: name });
+  } catch (_) {
+    return null;
+  }
 }
 
 function adminGetProviders(e) {
@@ -402,10 +443,8 @@ function adminPutProvider(e) {
   const body = e.requestInfo().body || {};
   const name = (body.name || "").toString();
   if (VALID_PROVIDERS.indexOf(name) === -1) return e.json(400, { error: "invalid provider name" });
-  let rec;
-  try {
-    rec = app.findFirstRecordByFilter("providers", "name = {:n}", { n: name });
-  } catch (_) {
+  let rec = providerRecord(app, name);
+  if (!rec) {
     rec = new Record(app.findCollectionByNameOrId("providers"));
     rec.set("name", name);
   }
@@ -416,6 +455,29 @@ function adminPutProvider(e) {
   if (body.base_url !== undefined) rec.set("base_url", String(body.base_url));
   app.save(rec);
   return e.json(200, { ok: true });
+}
+
+// Live model list for a provider (used to populate the admin model pickers).
+function adminGetModels(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const q = e.requestInfo().query || {};
+  const name = (q.provider || "").toString();
+  if (VALID_PROVIDERS.indexOf(name) === -1) return e.json(400, { error: "invalid provider" });
+  const rec = providerRecord(app, name);
+  const enc = rec ? rec.getString("api_key_enc") : "";
+  if (!enc) return e.json(200, { provider: name, models: [], note: "no API key set" });
+  try {
+    const models = P.listModels({
+      provider: name,
+      apiKey: F.decryptKey(enc),
+      baseUrl: rec.getString("base_url") || "",
+    });
+    return e.json(200, { provider: name, models: models });
+  } catch (err) {
+    return e.json(200, { provider: name, models: [], error: String(err.message || err) });
+  }
 }
 
 function adminGetFunctions(e) {
@@ -456,16 +518,84 @@ function adminPutFunction(e) {
   return e.json(200, { ok: true });
 }
 
+// Instance settings: app name + default new-user goals.
+function adminGetSettings(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  return e.json(200, {
+    settings: settingsMap(e.app),
+    env_admins: ADMINS,
+    auth_header: AUTH_HEADER,
+  });
+}
+
+function adminPutSettings(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const body = e.requestInfo().body || {};
+  const col = app.findCollectionByNameOrId("settings");
+  for (const k of SETTING_KEYS) {
+    if (body[k] === undefined) continue;
+    let rec;
+    try {
+      rec = app.findFirstRecordByFilter("settings", "key = {:k}", { k: k });
+    } catch (_) {
+      rec = new Record(col);
+      rec.set("key", k);
+    }
+    rec.set("value", String(body[k]));
+    app.save(rec);
+  }
+  return e.json(200, { settings: settingsMap(app) });
+}
+
 function adminGetUsers(e) {
   const a = requireAdmin(e);
   if (!a.ok) return a.res;
   const app = e.app;
-  const out = app.findAllRecords("profiles").map((r) => ({
-    email: r.getString("email"),
-    name: r.getString("name"),
-    role: r.getString("role"),
-  }));
+  const seen = {};
+  const out = app.findAllRecords("profiles").map((r) => {
+    const email = r.getString("email");
+    seen[email] = true;
+    return {
+      email: email,
+      name: r.getString("name"),
+      role: isEnvAdmin(email) ? "admin" : r.getString("role") || "user",
+      env_admin: isEnvAdmin(email),
+    };
+  });
+  // include env admins who haven't logged in yet
+  for (const email of ADMINS) {
+    if (!seen[email]) out.push({ email: email, name: email.split("@")[0], role: "admin", env_admin: true });
+  }
   return e.json(200, { users: out });
+}
+
+// Promote/demote a user (or pre-authorize an admin by email).
+function adminSetUserRole(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const body = e.requestInfo().body || {};
+  const email = (body.email || "").toString().toLowerCase().trim();
+  const role = (body.role || "").toString();
+  if (!email || email.indexOf("@") === -1) return e.json(400, { error: "valid email required" });
+  if (role !== "admin" && role !== "user") return e.json(400, { error: "role must be admin or user" });
+  if (isEnvAdmin(email))
+    return e.json(400, { error: "this email is an env admin (ADMIN_EMAILS) and is always admin" });
+  let rec;
+  try {
+    rec = app.findFirstRecordByFilter("profiles", "email = {:e}", { e: email });
+  } catch (_) {
+    rec = new Record(app.findCollectionByNameOrId("profiles"));
+    rec.set("email", email);
+    rec.set("name", email.split("@")[0]);
+    applyDefaultGoals(app, rec);
+  }
+  rec.set("role", role);
+  app.save(rec);
+  return e.json(200, { ok: true, email: email, role: role });
 }
 
 module.exports = {
@@ -479,7 +609,11 @@ module.exports = {
   daySummary,
   adminGetProviders,
   adminPutProvider,
+  adminGetModels,
   adminGetFunctions,
   adminPutFunction,
+  adminGetSettings,
+  adminPutSettings,
   adminGetUsers,
+  adminSetUserRole,
 };

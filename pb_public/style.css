@@ -121,7 +121,18 @@ input[type=date], select, .prov input, .fn input {
 .switch { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .keyhint { font-size: 12px; color: var(--muted); }
 
-.users .u { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; justify-content: space-between; }
+.users .u { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; }
+.urow-right { display: flex; align-items: center; gap: 10px; }
+.badge.lock { color: var(--brand); border-color: color-mix(in srgb, var(--brand) 40%, var(--line)); }
+.badge.adminb { color: var(--brand); }
+
+/* instance card */
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 14px; margin-bottom: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.field input { padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+@media (max-width: 480px) { .grid4 { grid-template-columns: repeat(2, 1fr); } }
+.meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* dialog */
 dialog { border: 0; border-radius: var(--radius); padding: 20px; background: var(--card); color: var(--ink); box-shadow: 0 10px 40px rgba(0,0,0,.3); width: min(92vw, 360px); }

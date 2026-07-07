@@ -156,4 +156,57 @@ function runProvider(req) {
   }
 }
 
-module.exports = { runProvider };
+// -------------------------------------------------------- live model listing
+// Returns [{ id, label, vision }] for the admin model pickers. req = {provider, apiKey, baseUrl}.
+
+function listModels(req) {
+  if (req.provider === "anthropic") {
+    const res = $http.send({
+      url: (req.baseUrl || "https://api.anthropic.com") + "/v1/models?limit=1000",
+      method: "GET",
+      headers: { "x-api-key": req.apiKey, "anthropic-version": "2023-06-01" },
+      timeout: 30,
+    });
+    if (res.statusCode >= 300) fail("anthropic", res);
+    // All current Claude models are multimodal.
+    return (res.json.data || []).map((m) => ({ id: m.id, label: m.display_name || m.id, vision: true }));
+  }
+
+  if (req.provider === "openai") {
+    const res = $http.send({
+      url: (req.baseUrl || "https://api.openai.com/v1") + "/models",
+      method: "GET",
+      headers: { Authorization: "Bearer " + req.apiKey },
+      timeout: 30,
+    });
+    if (res.statusCode >= 300) fail("openai", res);
+    const skip = /audio|realtime|transcribe|tts|image|dall-e|embedding|moderation|whisper|search/;
+    const chat = /^(gpt-|o1|o3|o4|chatgpt)/;
+    return (res.json.data || [])
+      .map((m) => m.id)
+      .filter((id) => chat.test(id) && !skip.test(id))
+      .sort()
+      .map((id) => ({ id: id, label: id, vision: /gpt-4o|gpt-4\.1|gpt-5|o1|o3|o4|chatgpt/.test(id) }));
+  }
+
+  if (req.provider === "google") {
+    const base = req.baseUrl || "https://generativelanguage.googleapis.com";
+    const res = $http.send({
+      url: base + "/v1beta/models?key=" + encodeURIComponent(req.apiKey) + "&pageSize=1000",
+      method: "GET",
+      headers: {},
+      timeout: 30,
+    });
+    if (res.statusCode >= 300) fail("google", res);
+    const skip = /embedding|aqa|tts|image-generation|image|robotics|lyria|deep-research|computer-use|omni/;
+    return (res.json.models || [])
+      .filter((m) => (m.supportedGenerationMethods || []).indexOf("generateContent") !== -1)
+      .map((m) => m.name.replace("models/", ""))
+      .filter((n) => !skip.test(n))
+      .map((id) => ({ id: id, label: id, vision: true }));
+  }
+
+  throw new Error("unknown provider: " + req.provider);
+}
+
+module.exports = { runProvider, listModels };
