@@ -107,7 +107,7 @@ main { max-width: 620px; margin: 0 auto; padding: 16px 14px 40px; }
 /* composer */
 .composer { display: flex; gap: 8px; margin: 16px 0 8px; }
 .composer input[type=text] {
-  flex: 1; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
+  flex: 1; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
   background: var(--card); color: var(--ink); font: inherit;
 }
 .icon-btn { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 12px; width: 46px; font-size: 20px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
@@ -244,4 +244,34 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
   background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px;
   font-size: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.3); z-index: 20; max-width: 90vw;
+}
+
+/* ------------------------------- mobile ------------------------------- */
+@media (max-width: 560px) {
+  /* Header: shrink the lockup + tabs and collapse the account button to a caret pill
+     (the full email still shows inside the opened menu) so it all fits on a phone. */
+  .topbar { gap: 8px; padding-left: 10px; padding-right: 10px; }
+  .brand { font-size: 17px; padding: 3px 12px 3px 3px; gap: 7px; }
+  .brand img { width: 30px; height: 30px; }
+  .tabs { gap: 2px; }
+  .tabs button { padding: 6px 8px; font-size: 13px; }
+  .who { max-width: none; padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; }
+  .who .who-email { display: none; }
+  .who .caret { font-size: 11px; }
+
+  /* iOS zooms any focused control whose text is < 16px — keep form text at 16px on phones. */
+  input, select, textarea,
+  .fooded input, .prov input, .fn input, .fn select,
+  .uov-row select, .uov-row input, .prompt-ta, dialog input, #goalMode { font-size: 16px; }
+
+  /* Comfortable tap targets for inline row actions. */
+  .link { padding: 6px 8px; }
+  .food .fx, .entry .del { font-size: 18px; padding: 6px 9px; }
+
+  /* Per-user override rows breathe a little more. */
+  .uov-row { grid-template-columns: 56px minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+
+  /* Goals dialog: stack each goal label above its input so nothing overflows. */
+  .goalgrid label { flex-direction: column; align-items: stretch; gap: 4px; }
+  .goalgrid input { width: 100%; }
 }
