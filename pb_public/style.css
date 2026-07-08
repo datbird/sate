@@ -117,7 +117,7 @@ input[type=date], select, .prov input, .fn input {
   padding: 14px; margin-bottom: 10px;
 }
 .prov h4, .fn h4 { margin: 0 0 10px; text-transform: capitalize; }
-.prov .grid, .fn .grid { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.prov .grid, .fn .grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 .prov input, .fn input, .fn select { width: 100%; }
 .switch { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .keyhint { font-size: 12px; color: var(--muted); }
@@ -129,9 +129,10 @@ input[type=date], select, .prov input, .fn input {
 
 /* instance card */
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 14px; margin-bottom: 10px; }
-.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
-.field input { padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; }
-.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); margin-bottom: 10px; min-width: 0; }
+.field input { padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; width: 100%; }
+.grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.grid4 > * { min-width: 0; }
 @media (max-width: 480px) { .grid4 { grid-template-columns: repeat(2, 1fr); } }
 .meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
 
