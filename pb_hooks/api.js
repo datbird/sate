@@ -228,8 +228,16 @@ function sourcesHint(app) {
     recs = [];
   }
   if (!recs.length) return "";
-  const lines = recs.map((r) => `- ${r.getString("title")}: ${r.getString("url")}`);
-  return "Preferred sources (consult these authoritative nutrition references first):\n" + lines.join("\n");
+  const lines = recs.map((r) => `- ${r.getString("title")}: ${r.getString("domain") || r.getString("url")}`);
+  const domains = recs.map((r) => r.getString("domain")).filter(Boolean);
+  const example = domains.length
+    ? domains.slice(0, 3).map((d) => "site:" + d).join(" OR ")
+    : "site:fdc.nal.usda.gov";
+  return (
+    "Preferred sources — search THESE FIRST with Google 'site:' operators before any general search " +
+    "(e.g. query: \"<food> nutrition facts " + example + "\"). Fall back to a broad search only if none " +
+    "of them cover the food:\n" + lines.join("\n")
+  );
 }
 
 // Web-grounded estimate for a food/meal not found in the local database.

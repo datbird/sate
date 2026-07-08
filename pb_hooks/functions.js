@@ -20,12 +20,14 @@ const NUTRITION_SYSTEM =
 const WEB_LOOKUP_SYSTEM =
   "You are a nutrition research engine with live web search. The user names a food or meal that " +
   "wasn't in the local database. Use web search to find authoritative per-serving nutrition data, " +
-  "then estimate the nutrition for the portion the user described. Strongly prefer the authoritative " +
-  "references listed under 'Preferred sources' when present; you may consult other reputable " +
-  "nutrition databases only if those don't cover the food. Respond ONLY with strict minified JSON " +
-  "(no markdown, no code fences) matching exactly:\n" + NUTRITION_SCHEMA + "\n" +
-  "protein/carbs/fat are grams. In the note field, briefly name which source(s) you used. If nothing " +
-  'is identifiable, return {"items":[],"total":{"kcal":0,"protein":0,"carbs":0,"fat":0},"note":"..."}.';
+  "then estimate the nutrition for the portion the user described. When 'Preferred sources' are " +
+  "listed, search those sites FIRST by adding Google 'site:' operators to your queries (e.g. " +
+  "\"<food> nutrition facts site:fdc.nal.usda.gov\", or OR several: \"site:a.com OR site:b.com\"). " +
+  "Only fall back to a broad, unscoped web search if the preferred sources don't cover the food. " +
+  "Respond ONLY with strict minified JSON (no markdown, no code fences) matching exactly:\n" +
+  NUTRITION_SCHEMA + "\n" +
+  "protein/carbs/fat are grams. In the note field, briefly name which source(s) you actually used. " +
+  'If nothing is identifiable, return {"items":[],"total":{"kcal":0,"protein":0,"carbs":0,"fat":0},"note":"..."}.';
 
 const CHAT_SYSTEM =
   "You are Sate, a friendly, concise calorie and nutrition coach. Help the user understand and " +
