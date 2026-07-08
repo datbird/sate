@@ -33,10 +33,10 @@ body {
 .topbar {
   position: sticky; top: 0; z-index: 5;
   display: flex; align-items: center; gap: 12px;
-  padding: 10px 14px; padding-top: calc(10px + env(safe-area-inset-top));
+  padding: 6px 14px; padding-top: calc(6px + env(safe-area-inset-top));
   background: var(--card); border-bottom: 1px solid var(--line);
 }
-.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 20px; }
 .tabs { display: flex; gap: 4px; margin-left: auto; }
 .tabs button {
   border: 0; background: transparent; color: var(--muted);
