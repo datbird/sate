@@ -225,15 +225,23 @@ async function closeScanner() {
   $("#scanwrap").hidden = true;
 }
 
+// Pull a product barcode (GTIN) out of a scan: a plain UPC/EAN, or the GTIN embedded in a
+// GS1 Digital Link QR code (e.g. https://brand.example/01/00012345678905/10/LOT).
+function gtinFromScan(raw) {
+  if (/^\d{8,14}$/.test(raw)) return raw;
+  const m = raw.match(/(?:^|\/)01\/(\d{8,14})(?:\/|$)/);
+  return m ? m[1] : null;
+}
+
 async function onScan(decodedText) {
   if (scanBusy) return;
   const raw = String(decodedText).trim();
-  const code = raw.replace(/[^0-9]/g, "");
   scanBusy = true;
-  if (/^\d{8,14}$/.test(code)) {
-    $("#scanStatus").textContent = "Looking up " + code + "…";
+  const gtin = gtinFromScan(raw);
+  if (gtin) {
+    $("#scanStatus").textContent = "Looking up " + gtin + "…";
     try {
-      const r = await api("/log/barcode", { method: "POST", body: JSON.stringify({ barcode: code }) });
+      const r = await api("/log/barcode", { method: "POST", body: JSON.stringify({ barcode: gtin }) });
       await closeScanner();
       const cl = $("#chatline"); cl.innerHTML = "";
       const m = document.createElement("div"); m.className = "chatmsg";
@@ -244,8 +252,12 @@ async function onScan(decodedText) {
       $("#scanStatus").textContent = e.message + " — try again, or type it in.";
       scanBusy = false;
     }
+  } else if (/^https?:\/\//i.test(raw)) {
+    // a QR code that's just a link (not a product code) — don't log a URL as food
+    $("#scanStatus").textContent = "That QR code is a link, not a product barcode.";
+    scanBusy = false;
   } else {
-    // QR / non-numeric code → treat the decoded text as a meal description
+    // any other text (incl. a meal typed into a QR) → treat as a meal description
     await closeScanner();
     $("#foodInput").value = raw;
     logText();
