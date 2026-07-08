@@ -8,6 +8,7 @@
 routerAdd("GET", "/api/sate/me", (e) => require(`${__hooks}/api.js`).me(e));
 routerAdd("POST", "/api/sate/log/text", (e) => require(`${__hooks}/api.js`).logText(e));
 routerAdd("POST", "/api/sate/log/photo", (e) => require(`${__hooks}/api.js`).logPhoto(e));
+routerAdd("POST", "/api/sate/log/barcode", (e) => require(`${__hooks}/api.js`).logBarcode(e));
 routerAdd("POST", "/api/sate/chat", (e) => require(`${__hooks}/api.js`).chat(e));
 routerAdd("GET", "/api/sate/entries", (e) => require(`${__hooks}/api.js`).listEntries(e));
 routerAdd("DELETE", "/api/sate/entries/{id}", (e) => require(`${__hooks}/api.js`).deleteEntry(e));
@@ -30,3 +31,5 @@ routerAdd("DELETE", "/api/sate/admin/foods/{id}", (e) => require(`${__hooks}/api
 routerAdd("GET", "/api/sate/admin/sources", (e) => require(`${__hooks}/api.js`).adminGetSources(e));
 routerAdd("PUT", "/api/sate/admin/sources", (e) => require(`${__hooks}/api.js`).adminPutSource(e));
 routerAdd("DELETE", "/api/sate/admin/sources/{id}", (e) => require(`${__hooks}/api.js`).adminDeleteSource(e));
+routerAdd("GET", "/api/sate/admin/prompts", (e) => require(`${__hooks}/api.js`).adminGetPrompts(e));
+routerAdd("PUT", "/api/sate/admin/prompts", (e) => require(`${__hooks}/api.js`).adminPutPrompt(e));

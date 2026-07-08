@@ -196,6 +196,65 @@ $("#foodInput").addEventListener("keydown", (e) => { if (e.key === "Enter") logT
 $("#photoBtn").addEventListener("click", () => $("#photoInput").click());
 $("#photoInput").addEventListener("change", (e) => { if (e.target.files[0]) logPhoto(e.target.files[0]); e.target.value = ""; });
 
+// -------------------------------------------------------- barcode scanning
+let scanner = null;
+let scanBusy = false;
+
+async function openScanner() {
+  if (typeof Html5Qrcode === "undefined") return toast("Scanner failed to load");
+  $("#scanwrap").hidden = false;
+  $("#scanStatus").textContent = "Starting camera…";
+  scanBusy = false;
+  try {
+    scanner = new Html5Qrcode("reader", { verbose: false });
+    await scanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 250, height: 160 } },
+      onScan,
+      () => {}
+    );
+    $("#scanStatus").textContent = "Point your camera at a barcode.";
+  } catch (err) {
+    $("#scanStatus").textContent = "Camera error: " + (err && err.message ? err.message : err);
+  }
+}
+
+async function closeScanner() {
+  try { if (scanner) { await scanner.stop(); scanner.clear(); } } catch (_) {}
+  scanner = null;
+  $("#scanwrap").hidden = true;
+}
+
+async function onScan(decodedText) {
+  if (scanBusy) return;
+  const raw = String(decodedText).trim();
+  const code = raw.replace(/[^0-9]/g, "");
+  scanBusy = true;
+  if (/^\d{8,14}$/.test(code)) {
+    $("#scanStatus").textContent = "Looking up " + code + "…";
+    try {
+      const r = await api("/log/barcode", { method: "POST", body: JSON.stringify({ barcode: code }) });
+      await closeScanner();
+      const cl = $("#chatline"); cl.innerHTML = "";
+      const m = document.createElement("div"); m.className = "chatmsg";
+      m.textContent = `Logged ${r.name} — ${fmt(r.entry.kcal)} kcal (via ${r.found_via}).`;
+      cl.appendChild(m);
+      refreshToday();
+    } catch (e) {
+      $("#scanStatus").textContent = e.message + " — try again, or type it in.";
+      scanBusy = false;
+    }
+  } else {
+    // QR / non-numeric code → treat the decoded text as a meal description
+    await closeScanner();
+    $("#foodInput").value = raw;
+    logText();
+  }
+}
+
+$("#scanBtn").addEventListener("click", openScanner);
+$("#scanClose").addEventListener("click", closeScanner);
+
 // ------------------------------------------------------------------- goals
 const goalsDialog = $("#goalsDialog");
 $("#goalsBtn").addEventListener("click", () => {
@@ -264,6 +323,51 @@ async function loadAdmin() {
   renderUsers(usersResp.users);
   loadFoods("");
   loadSources();
+  loadPrompts();
+}
+
+// ---------------------------------------------------- editable AI prompts
+async function loadPrompts() {
+  let r;
+  try { r = await api("/admin/prompts"); } catch (e) { toast(e.message); return; }
+  const wrap = $("#prompts");
+  wrap.innerHTML = "";
+  r.prompts.forEach((p) => wrap.appendChild(promptCard(p)));
+}
+
+function promptCard(p) {
+  const el = document.createElement("div");
+  el.className = "prompt";
+  const head = document.createElement("div");
+  head.className = "prompt-head";
+  head.innerHTML = `<span class="fname">${escapeHtml(p.label)}</span>` +
+    (p.customized ? ' <span class="fbadge web">customized</span>' : ' <span class="fbadge">default</span>');
+  const ta = document.createElement("textarea");
+  ta.className = "prompt-ta";
+  ta.rows = 5;
+  ta.value = p.override || p.default;
+  ta.placeholder = "System prompt…";
+  const actions = document.createElement("div");
+  actions.className = "row end";
+  const reset = document.createElement("button");
+  reset.className = "link";
+  reset.textContent = "Reset to default";
+  reset.onclick = () => { ta.value = p.default; savePrompt(p.fn, "", el); };
+  const save = document.createElement("button");
+  save.className = "primary";
+  save.textContent = "Save";
+  save.onclick = () => savePrompt(p.fn, ta.value.trim() === p.default.trim() ? "" : ta.value, el);
+  actions.appendChild(reset); actions.appendChild(save);
+  el.appendChild(head); el.appendChild(ta); el.appendChild(actions);
+  return el;
+}
+
+async function savePrompt(fn, text, el) {
+  try {
+    const r = await api("/admin/prompts", { method: "PUT", body: JSON.stringify({ fn, text }) });
+    toast(r.reset ? "Reset to default" : "Prompt saved");
+    loadPrompts();
+  } catch (e) { toast(e.message); }
 }
 
 function renderInstance(s) {

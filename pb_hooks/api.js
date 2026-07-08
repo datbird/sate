@@ -66,6 +66,17 @@ function settingsMap(app) {
   return out;
 }
 
+// Effective system prompt for a function: an admin override in `settings` (key prompt_<fn>)
+// if set, otherwise the built-in default from functions.js.
+function promptFor(app, fn) {
+  try {
+    const rec = app.findFirstRecordByFilter("settings", "key = {:k}", { k: "prompt_" + fn });
+    const v = rec.getString("value");
+    if (v && v.trim()) return v;
+  } catch (_) {}
+  return (F.PROMPTS[fn] && F.PROMPTS[fn].system) || "";
+}
+
 function applyDefaultGoals(app, rec) {
   const s = settingsMap(app);
   if (s.default_goal_kcal) rec.set("goal_kcal", Number(s.default_goal_kcal) || 0);
@@ -199,7 +210,7 @@ function estimate(app, fn, userText, image) {
     apiKey: cfg.apiKey,
     baseUrl: cfg.baseUrl,
     model: cfg.model,
-    system: p.system,
+    system: promptFor(app, fn),
     messages: [{ role: "user", text: userMsg }],
     image: image || null,
     jsonMode: p.jsonMode,
@@ -250,7 +261,7 @@ function webEstimate(app, text) {
     apiKey: cfg.apiKey,
     baseUrl: cfg.baseUrl,
     model: cfg.model,
-    system: F.PROMPTS.web_lookup.system,
+    system: promptFor(app, "web_lookup"),
     messages: [{ role: "user", text: userMsg }],
     webSearch: true,
     jsonMode: false,
@@ -354,6 +365,97 @@ function webLookupEntry(e) {
   }
 }
 
+// Look up a product by barcode on Open Food Facts (runtime API call — not redistributed data).
+function fetchOpenFoodFacts(code) {
+  const url = "https://world.openfoodfacts.org/api/v2/product/" + encodeURIComponent(code) +
+    ".json?fields=product_name,brands,serving_size,serving_quantity,nutriments";
+  let res;
+  try {
+    res = $http.send({ url: url, method: "GET",
+      headers: { "User-Agent": "Sate/1.0 (self-hosted calorie app)" }, timeout: 20 });
+  } catch (_) { return null; }
+  if (res.statusCode >= 300 || !res.json) return null;
+  const j = res.json;
+  if (!j.product || j.status === 0) return null;
+  const p = j.product;
+  const nut = p.nutriments || {};
+  const name = String(p.product_name || "").trim();
+  if (!name) return null;
+  const sq = Number(p.serving_quantity) || 0; // grams per serving
+  const r1 = (x) => Math.round((Number(x) || 0) * 10) / 10;
+  let kcal, protein, carbs, fat, servingDesc, servingG;
+  const perServ = Number(nut["energy-kcal_serving"]);
+  if (isFinite(perServ) && perServ > 0) {
+    kcal = perServ;
+    protein = num(nut["proteins_serving"]); carbs = num(nut["carbohydrates_serving"]); fat = num(nut["fat_serving"]);
+    servingDesc = String(p.serving_size || (sq ? sq + " g" : "1 serving"));
+    servingG = sq || 0;
+  } else {
+    const f = sq ? sq / 100 : 1;
+    kcal = num(nut["energy-kcal_100g"]) * f;
+    protein = num(nut["proteins_100g"]) * f; carbs = num(nut["carbohydrates_100g"]) * f; fat = num(nut["fat_100g"]) * f;
+    servingDesc = sq ? String(p.serving_size || sq + " g") : "100 g";
+    servingG = sq || 100;
+  }
+  if (!(kcal > 0)) return null;
+  return { name: name, brand: String(p.brands || "").split(",")[0].trim(),
+    serving_desc: servingDesc.slice(0, 40), serving_g: Math.round(servingG),
+    kcal: Math.round(kcal), protein: r1(protein), carbs: r1(carbs), fat: r1(fat) };
+}
+
+// Log a scanned barcode: local foods DB first, then Open Food Facts (cached into foods).
+function logBarcode(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  ensureProfile(app, email);
+  const b = e.requestInfo().body || {};
+  const code = String(b.barcode || "").replace(/[^0-9]/g, "");
+  if (!code) return e.json(400, { error: "no barcode provided" });
+
+  let food = null;
+  try { food = app.findFirstRecordByFilter("foods", "barcode = {:c}", { c: code }); } catch (_) {}
+  // EAN-13 vs UPC-12 leading-zero mismatch
+  if (!food && code.length === 12) {
+    try { food = app.findFirstRecordByFilter("foods", "barcode = {:c}", { c: "0" + code }); } catch (_) {}
+  }
+
+  let item, via;
+  if (food) {
+    via = "database";
+    item = { name: food.getString("name"), brand: food.getString("brand"),
+      serving_desc: food.getString("serving_desc") || "1 serving",
+      kcal: food.getFloat("kcal"), protein: food.getFloat("protein"),
+      carbs: food.getFloat("carbs"), fat: food.getFloat("fat") };
+    try { food.set("usage_count", (food.getFloat("usage_count") || 0) + 1); app.save(food); } catch (_) {}
+  } else {
+    const off = fetchOpenFoodFacts(code);
+    if (!off) return e.json(404, { error: "Barcode not found in the database or Open Food Facts.", barcode: code });
+    via = "Open Food Facts";
+    item = off;
+    try { // cache it so next scan is instant + it grows the DB
+      const rec = new Record(app.findCollectionByNameOrId("foods"));
+      rec.set("name", off.name); rec.set("brand", off.brand); rec.set("serving_desc", off.serving_desc);
+      rec.set("serving_g", off.serving_g); rec.set("kcal", off.kcal); rec.set("protein", off.protein);
+      rec.set("carbs", off.carbs); rec.set("fat", off.fat); rec.set("category", "");
+      rec.set("aliases", []); rec.set("barcode", code); rec.set("source", "off");
+      rec.set("verified", false); rec.set("usage_count", 1);
+      rec.set("search", (off.name + " " + off.brand + " " + code).toLowerCase());
+      rec.set("norm_key", FOODS.normKey(off.name, off.brand));
+      app.save(rec);
+    } catch (_) {}
+  }
+  const label = item.brand ? item.name + " (" + item.brand + ")" : item.name;
+  const rec = addEntry(app, email, {
+    source: "barcode", description: label,
+    items: [{ name: item.name, qty: item.serving_desc || "1 serving",
+      kcal: item.kcal, protein: item.protein, carbs: item.carbs, fat: item.fat }],
+    total: { kcal: item.kcal, protein: item.protein, carbs: item.carbs, fat: item.fat },
+    provider: "", model: "" });
+  return e.json(200, { entry: entryJSON(rec), found_via: via, name: label,
+    totals: sumTotals(dayEntries(app, email, todayStr())) });
+}
+
 function logPhoto(e) {
   const email = identity(e);
   if (!email) return e.json(401, { error: "not authenticated" });
@@ -405,7 +507,7 @@ function chat(e) {
     .map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", text: String(m.text) }));
   const totals = sumTotals(dayEntries(app, email, todayStr()));
   const context =
-    F.PROMPTS.chat.system +
+    promptFor(app, "chat") +
     `\n\nUser's totals so far today: ${Math.round(totals.kcal)} kcal, ` +
     `${Math.round(totals.protein)}g protein, ${Math.round(totals.carbs)}g carbs, ` +
     `${Math.round(totals.fat)}g fat across ${totals.count} entries.`;
@@ -493,7 +595,7 @@ function daySummary(e) {
       apiKey: cfg.apiKey,
       baseUrl: cfg.baseUrl,
       model: cfg.model,
-      system: F.PROMPTS.daily_summary.system,
+      system: promptFor(app, "daily_summary"),
       messages: [{ role: "user", text: userText }],
       jsonMode: false,
     });
@@ -720,6 +822,7 @@ function foodJSON(r) {
     fat: r.getFloat("fat"),
     category: r.getString("category"),
     aliases: FOODS.readAliases(r),
+    barcode: r.getString("barcode"),
     source: r.getString("source"),
     verified: r.getBool("verified"),
     usage_count: r.getFloat("usage_count"),
@@ -850,10 +953,66 @@ function adminDeleteSource(e) {
   return e.json(200, { deleted: id });
 }
 
+// ---- admin: editable AI system prompts ----
+
+const PROMPT_LABELS = {
+  vision_estimate: "Photo estimate (vision)",
+  text_parse: "Text meal parse",
+  chat: "Coach chat",
+  daily_summary: "Daily recap",
+  web_lookup: "Web search lookup",
+};
+
+function adminGetPrompts(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const prompts = F.FUNCTIONS.map((fn) => {
+    let override = "";
+    try {
+      override = app.findFirstRecordByFilter("settings", "key = {:k}", { k: "prompt_" + fn }).getString("value");
+    } catch (_) {}
+    return {
+      fn: fn,
+      label: PROMPT_LABELS[fn] || fn,
+      default: (F.PROMPTS[fn] && F.PROMPTS[fn].system) || "",
+      override: override || "",
+      customized: !!(override && override.trim()),
+    };
+  });
+  return e.json(200, { prompts: prompts });
+}
+
+function adminPutPrompt(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const b = e.requestInfo().body || {};
+  const fn = String(b.fn || "");
+  if (F.FUNCTIONS.indexOf(fn) === -1) return e.json(400, { error: "invalid function" });
+  const text = String(b.text || "");
+  const key = "prompt_" + fn;
+  let rec = null;
+  try { rec = app.findFirstRecordByFilter("settings", "key = {:k}", { k: key }); } catch (_) {}
+  // empty text = reset to the built-in default (remove the override)
+  if (!text.trim()) {
+    try { if (rec) app.delete(rec); } catch (_) {}
+    return e.json(200, { ok: true, reset: true });
+  }
+  if (!rec) {
+    rec = new Record(app.findCollectionByNameOrId("settings"));
+    rec.set("key", key);
+  }
+  rec.set("value", text);
+  app.save(rec);
+  return e.json(200, { ok: true });
+}
+
 module.exports = {
   me,
   logText,
   logPhoto,
+  logBarcode,
   chat,
   listEntries,
   deleteEntry,
@@ -875,4 +1034,6 @@ module.exports = {
   adminGetSources,
   adminPutSource,
   adminDeleteSource,
+  adminGetPrompts,
+  adminPutPrompt,
 };
