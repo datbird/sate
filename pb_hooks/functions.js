@@ -10,7 +10,9 @@ const NUTRITION_SYSTEM =
   "code fences) matching exactly:\n" +
   '{"items":[{"name":string,"qty":string,"kcal":number,"protein":number,"carbs":number,"fat":number}],' +
   '"total":{"kcal":number,"protein":number,"carbs":number,"fat":number},"note":string}\n' +
-  "protein/carbs/fat are grams. Estimate typical serving sizes when unspecified. If no food is " +
+  "protein/carbs/fat are grams. Estimate typical serving sizes when unspecified. If the message " +
+  "includes a 'Known foods from the database' list, use those per-serving values for matching " +
+  "items (scaled to the amount eaten) instead of estimating. If no food is " +
   'identifiable, return {"items":[],"total":{"kcal":0,"protein":0,"carbs":0,"fat":0},"note":"..."}.';
 
 const CHAT_SYSTEM =

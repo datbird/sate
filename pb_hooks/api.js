@@ -6,6 +6,12 @@
 
 const P = require(`${__hooks}/providers.js`);
 const F = require(`${__hooks}/functions.js`);
+const FOODS = require(`${__hooks}/foods.js`);
+
+function num(v) {
+  const n = Number(v);
+  return isFinite(n) ? n : 0;
+}
 
 function env(name) {
   try {
@@ -176,17 +182,36 @@ function addEntry(app, email, data) {
 function estimate(app, fn, userText, image) {
   const cfg = F.resolveFunction(app, fn);
   const p = F.PROMPTS[fn];
+
+  // Retrieval: for text logging, ground the model with known foods from the DB.
+  let userMsg = userText;
+  let matched = [];
+  if (fn === "text_parse") {
+    try {
+      matched = FOODS.searchByText(app, userText);
+      const ref = FOODS.referenceBlock(matched);
+      if (ref) userMsg = ref + "\n\nMeal to log:\n" + userText;
+    } catch (_) {}
+  }
+
   const reply = P.runProvider({
     provider: cfg.provider,
     apiKey: cfg.apiKey,
     baseUrl: cfg.baseUrl,
     model: cfg.model,
     system: p.system,
-    messages: [{ role: "user", text: userText }],
+    messages: [{ role: "user", text: userMsg }],
     image: image || null,
     jsonMode: p.jsonMode,
   });
   const parsed = F.normalizeNutrition(F.parseJSON(reply));
+
+  // Self-growth: bump usage for matched foods, save any new ones as unverified.
+  try {
+    if (matched.length) FOODS.bumpUsage(app, matched);
+    FOODS.upsertItems(app, parsed.items);
+  } catch (_) {}
+
   return { parsed: parsed, provider: cfg.provider, model: cfg.model };
 }
 
@@ -598,6 +623,94 @@ function adminSetUserRole(e) {
   return e.json(200, { ok: true, email: email, role: role });
 }
 
+// ---- admin: food database ----
+
+function foodJSON(r) {
+  return {
+    id: r.id,
+    name: r.getString("name"),
+    brand: r.getString("brand"),
+    serving_desc: r.getString("serving_desc"),
+    serving_g: r.getFloat("serving_g"),
+    kcal: r.getFloat("kcal"),
+    protein: r.getFloat("protein"),
+    carbs: r.getFloat("carbs"),
+    fat: r.getFloat("fat"),
+    category: r.getString("category"),
+    aliases: FOODS.readAliases(r),
+    source: r.getString("source"),
+    verified: r.getBool("verified"),
+    usage_count: r.getFloat("usage_count"),
+  };
+}
+
+function adminGetFoods(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const q = e.requestInfo().query || {};
+  const term = FOODS.norm(q.q || "");
+  let recs;
+  try {
+    if (term) {
+      recs = app.findRecordsByFilter("foods", "search ~ {:t}", "-verified,-usage_count", 200, 0, { t: term });
+    } else {
+      recs = app.findRecordsByFilter("foods", "id != ''", "-verified,name", 200, 0, {});
+    }
+  } catch (err) {
+    return e.json(500, { error: String(err.message || err) });
+  }
+  let total = recs.length;
+  try { total = app.countRecords("foods"); } catch (_) {}
+  return e.json(200, { foods: recs.map(foodJSON), shown: recs.length, total: total });
+}
+
+function adminPutFood(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const b = e.requestInfo().body || {};
+  const name = String(b.name || "").trim();
+  if (!name) return e.json(400, { error: "name is required" });
+  const brand = String(b.brand || "").trim();
+  let rec;
+  if (b.id) {
+    try { rec = app.findRecordById("foods", String(b.id)); }
+    catch (_) { return e.json(404, { error: "not found" }); }
+  } else {
+    rec = new Record(app.findCollectionByNameOrId("foods"));
+  }
+  const aliases = Array.isArray(b.aliases)
+    ? b.aliases
+    : String(b.aliases || "").split(",").map((s) => s.trim()).filter(Boolean);
+  rec.set("name", name);
+  rec.set("brand", brand);
+  rec.set("serving_desc", String(b.serving_desc || ""));
+  rec.set("serving_g", num(b.serving_g));
+  rec.set("kcal", num(b.kcal));
+  rec.set("protein", num(b.protein));
+  rec.set("carbs", num(b.carbs));
+  rec.set("fat", num(b.fat));
+  rec.set("category", String(b.category || ""));
+  rec.set("aliases", aliases);
+  if (b.verified !== undefined) rec.set("verified", !!b.verified);
+  if (!rec.getString("source")) rec.set("source", "user");
+  rec.set("search", (name + " " + brand + " " + aliases.join(" ")).toLowerCase());
+  rec.set("norm_key", FOODS.normKey(name, brand));
+  try { app.save(rec); }
+  catch (err) { return e.json(400, { error: String(err.message || err) }); }
+  return e.json(200, { ok: true, food: foodJSON(rec) });
+}
+
+function adminDeleteFood(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const id = e.request.pathValue("id");
+  try { e.app.delete(e.app.findRecordById("foods", id)); }
+  catch (_) { return e.json(404, { error: "not found" }); }
+  return e.json(200, { deleted: id });
+}
+
 module.exports = {
   me,
   logText,
@@ -616,4 +729,7 @@ module.exports = {
   adminPutSettings,
   adminGetUsers,
   adminSetUserRole,
+  adminGetFoods,
+  adminPutFood,
+  adminDeleteFood,
 };

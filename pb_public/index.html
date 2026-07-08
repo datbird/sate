@@ -11,7 +11,7 @@
     <link rel="icon" href="/icons/icon-192.png?v2" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png?v2" />
     <script>try{var t=localStorage.getItem('sate-theme');if(t&&t!=='system')document.documentElement.dataset.theme=t;}catch(e){}</script>
-    <link rel="stylesheet" href="/style.css?v5" />
+    <link rel="stylesheet" href="/style.css?v6" />
   </head>
   <body>
     <header class="topbar">
@@ -114,6 +114,39 @@
           <input type="email" id="newAdminEmail" placeholder="email to make admin" />
           <button class="primary" id="addAdminBtn">Add admin</button>
         </div>
+
+        <h3 class="section">Food database</h3>
+        <p class="hint">The AI grounds estimates on these and auto-adds new foods (unverified) as it learns. <span id="foodCount"></span></p>
+        <div class="row">
+          <input type="text" id="foodSearch" placeholder="search foods…" />
+          <button class="primary" id="foodSearchBtn">Search</button>
+        </div>
+        <div class="foods" id="foodsList"></div>
+        <div class="fooded">
+          <h4 id="foodEditorTitle">Add food</h4>
+          <div class="grid2">
+            <input type="text" id="fName" placeholder="name" />
+            <input type="text" id="fBrand" placeholder="brand (optional)" />
+          </div>
+          <div class="grid2" style="margin-top:8px">
+            <input type="text" id="fServing" placeholder="serving, e.g. 1 cup" />
+            <input type="number" id="fServingG" placeholder="grams" />
+          </div>
+          <div class="grid4" style="margin-top:8px">
+            <input type="number" id="fKcal" placeholder="kcal" />
+            <input type="number" id="fProtein" placeholder="protein g" />
+            <input type="number" id="fCarbs" placeholder="carbs g" />
+            <input type="number" id="fFat" placeholder="fat g" />
+          </div>
+          <div class="grid2" style="margin-top:8px">
+            <input type="text" id="fAliases" placeholder="aliases, comma-separated" />
+            <label class="switch"><input type="checkbox" id="fVerified" /> verified</label>
+          </div>
+          <div class="row end" style="margin-top:10px">
+            <button class="link" id="foodClearBtn">New / clear</button>
+            <button class="primary" id="foodSaveBtn">Save food</button>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -133,6 +166,6 @@
     </dialog>
 
     <div class="toast" id="toast" hidden></div>
-    <script src="/app.js?v5"></script>
+    <script src="/app.js?v6"></script>
   </body>
 </html>

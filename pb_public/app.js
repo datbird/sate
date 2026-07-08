@@ -222,6 +222,7 @@ async function loadAdmin() {
   populateDatalists();
   renderFunctions(functions, providers);
   renderUsers(usersResp.users);
+  loadFoods("");
 }
 
 function renderInstance(s) {
@@ -310,6 +311,111 @@ $("#addAdminBtn").addEventListener("click", () => {
   $("#newAdminEmail").value = "";
   setRole(email, "admin");
 });
+
+// ---------------------------------------------------- food database
+let FOOD_EDIT_ID = null;
+
+async function loadFoods(q) {
+  let r;
+  try { r = await api("/admin/foods" + (q ? "?q=" + encodeURIComponent(q) : "")); }
+  catch (e) { toast(e.message); return; }
+  $("#foodCount").textContent = q
+    ? `${r.shown} match “${q}” · ${r.total} total`
+    : `${r.total} foods`;
+  const wrap = $("#foodsList");
+  wrap.innerHTML = "";
+  if (!r.foods.length) { wrap.innerHTML = '<div class="hint">No foods found.</div>'; return; }
+  r.foods.forEach((f) => wrap.appendChild(foodRow(f)));
+}
+
+function foodRow(f) {
+  const el = document.createElement("div");
+  el.className = "food";
+  const brand = f.brand ? ` · ${escapeHtml(f.brand)}` : "";
+  const src = escapeHtml(f.source || "");
+  const badges =
+    `<span class="fbadge ${src}">${src}</span>` +
+    (f.verified ? "" : ' <span class="fbadge warn">unverified</span>');
+  const macros = `${fmt(f.protein)}P · ${fmt(f.carbs)}C · ${fmt(f.fat)}F`;
+  const serv = escapeHtml(f.serving_desc || "1 serving");
+  const body = document.createElement("div");
+  body.className = "fbody";
+  body.innerHTML =
+    `<div class="fname">${escapeHtml(f.name)}${brand} ${badges}</div>` +
+    `<div class="fsub">${serv} · ${macros} · used ${fmt(f.usage_count)}×</div>`;
+  const kcal = document.createElement("div");
+  kcal.className = "fkcal";
+  kcal.textContent = fmt(f.kcal);
+  const edit = document.createElement("button");
+  edit.className = "fx"; edit.title = "edit"; edit.textContent = "✎";
+  edit.onclick = () => fillFoodEditor(f);
+  const del = document.createElement("button");
+  del.className = "fx danger"; del.title = "delete"; del.textContent = "✕";
+  del.onclick = () => deleteFood(f);
+  el.appendChild(body); el.appendChild(kcal); el.appendChild(edit); el.appendChild(del);
+  return el;
+}
+
+function fillFoodEditor(f) {
+  FOOD_EDIT_ID = f.id || null;
+  $("#foodEditorTitle").textContent = f.id ? "Edit food" : "Add food";
+  $("#fName").value = f.name || "";
+  $("#fBrand").value = f.brand || "";
+  $("#fServing").value = f.serving_desc || "";
+  $("#fServingG").value = f.serving_g || "";
+  $("#fKcal").value = f.kcal || "";
+  $("#fProtein").value = f.protein || "";
+  $("#fCarbs").value = f.carbs || "";
+  $("#fFat").value = f.fat || "";
+  $("#fAliases").value = (f.aliases || []).join(", ");
+  $("#fVerified").checked = !!f.verified;
+  $("#foodEditorTitle").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function clearFoodEditor() {
+  fillFoodEditor({});
+  $("#foodEditorTitle").textContent = "Add food";
+}
+
+async function saveFood() {
+  const name = $("#fName").value.trim();
+  if (!name) return toast("name is required");
+  const payload = {
+    id: FOOD_EDIT_ID || undefined,
+    name: name,
+    brand: $("#fBrand").value.trim(),
+    serving_desc: $("#fServing").value.trim(),
+    serving_g: $("#fServingG").value || 0,
+    kcal: $("#fKcal").value || 0,
+    protein: $("#fProtein").value || 0,
+    carbs: $("#fCarbs").value || 0,
+    fat: $("#fFat").value || 0,
+    aliases: $("#fAliases").value,
+    verified: $("#fVerified").checked,
+  };
+  try {
+    await api("/admin/foods", { method: "PUT", body: JSON.stringify(payload) });
+    toast(FOOD_EDIT_ID ? "Food updated" : "Food added");
+    clearFoodEditor();
+    loadFoods($("#foodSearch").value.trim());
+  } catch (e) { toast(e.message); }
+}
+
+async function deleteFood(f) {
+  if (!confirm(`Delete “${f.name}” from the food database?`)) return;
+  try {
+    await api("/admin/foods/" + f.id, { method: "DELETE" });
+    if (FOOD_EDIT_ID === f.id) clearFoodEditor();
+    loadFoods($("#foodSearch").value.trim());
+  } catch (e) { toast(e.message); }
+}
+
+$("#foodSearchBtn").addEventListener("click", () => loadFoods($("#foodSearch").value.trim()));
+$("#foodSearch").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") { ev.preventDefault(); loadFoods($("#foodSearch").value.trim()); }
+});
+$("#foodSaveBtn").addEventListener("click", saveFood);
+$("#foodClearBtn").addEventListener("click", clearFoodEditor);
 
 function renderProviders(providers) {
   const wrap = $("#providers");
