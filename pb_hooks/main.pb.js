@@ -25,6 +25,7 @@ routerAdd("GET", "/api/sate/admin/settings", (e) => require(`${__hooks}/api.js`)
 routerAdd("PUT", "/api/sate/admin/settings", (e) => require(`${__hooks}/api.js`).adminPutSettings(e));
 routerAdd("GET", "/api/sate/admin/users", (e) => require(`${__hooks}/api.js`).adminGetUsers(e));
 routerAdd("PUT", "/api/sate/admin/users/role", (e) => require(`${__hooks}/api.js`).adminSetUserRole(e));
+routerAdd("PUT", "/api/sate/admin/users/models", (e) => require(`${__hooks}/api.js`).adminSetUserModels(e));
 routerAdd("GET", "/api/sate/admin/foods", (e) => require(`${__hooks}/api.js`).adminGetFoods(e));
 routerAdd("PUT", "/api/sate/admin/foods", (e) => require(`${__hooks}/api.js`).adminPutFood(e));
 routerAdd("DELETE", "/api/sate/admin/foods/{id}", (e) => require(`${__hooks}/api.js`).adminDeleteFood(e));

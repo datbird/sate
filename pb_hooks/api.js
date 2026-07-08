@@ -145,6 +145,10 @@ function entryJSON(rec) {
     protein: rec.getFloat("protein"),
     carbs: rec.getFloat("carbs"),
     fat: rec.getFloat("fat"),
+    fiber: rec.getFloat("fiber"),
+    sugar: rec.getFloat("sugar"),
+    sodium: rec.getFloat("sodium"),
+    sat_fat: rec.getFloat("sat_fat"),
     provider: rec.getString("provider"),
     model: rec.getString("model"),
   };
@@ -163,12 +167,16 @@ function dayEntries(app, email, dateStr) {
 }
 
 function sumTotals(records) {
-  const t = { kcal: 0, protein: 0, carbs: 0, fat: 0, count: records.length };
+  const t = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, sodium: 0, sat_fat: 0, count: records.length };
   for (const rec of records) {
     t.kcal += rec.getFloat("kcal");
     t.protein += rec.getFloat("protein");
     t.carbs += rec.getFloat("carbs");
     t.fat += rec.getFloat("fat");
+    t.fiber += rec.getFloat("fiber");
+    t.sugar += rec.getFloat("sugar");
+    t.sodium += rec.getFloat("sodium");
+    t.sat_fat += rec.getFloat("sat_fat");
   }
   return t;
 }
@@ -184,14 +192,39 @@ function addEntry(app, email, data) {
   rec.set("protein", data.total.protein);
   rec.set("carbs", data.total.carbs);
   rec.set("fat", data.total.fat);
+  rec.set("fiber", num(data.total.fiber));
+  rec.set("sugar", num(data.total.sugar));
+  rec.set("sodium", num(data.total.sodium));
+  rec.set("sat_fat", num(data.total.sat_fat));
   rec.set("provider", data.provider || "");
   rec.set("model", data.model || "");
   app.save(rec);
   return rec;
 }
 
-function estimate(app, fn, userText, image) {
-  const cfg = F.resolveFunction(app, fn);
+// "vision_estimate" is image interpretation; everything else is "normal AI".
+function fnCategory(fn) { return fn === "vision_estimate" ? "vision" : "ai"; }
+
+// A user's per-category model override, or null to use the global default.
+function userModelOverride(app, email, fn) {
+  if (!email) return null;
+  let p;
+  try { p = app.findFirstRecordByFilter("profiles", "email = {:e}", { e: email }); } catch (_) { return null; }
+  if (!p) return null;
+  const vision = fnCategory(fn) === "vision";
+  const provider = p.getString(vision ? "ov_vision_provider" : "ov_ai_provider");
+  const model = p.getString(vision ? "ov_vision_model" : "ov_ai_model");
+  if (!provider || !model) return null;
+  return { provider: provider, model: model };
+}
+
+// Resolve a function for a specific user (applies their override, else the global default).
+function resolveFor(app, fn, email) {
+  return F.resolveFunction(app, fn, userModelOverride(app, email, fn));
+}
+
+function estimate(app, fn, userText, image, email) {
+  const cfg = resolveFor(app, fn, email);
   const p = F.PROMPTS[fn];
 
   // Retrieval: for text logging, ground the model with known foods from the DB.
@@ -252,8 +285,8 @@ function sourcesHint(app) {
 }
 
 // Web-grounded estimate for a food/meal not found in the local database.
-function webEstimate(app, text) {
-  const cfg = F.resolveFunction(app, "web_lookup");
+function webEstimate(app, text, email) {
+  const cfg = resolveFor(app, "web_lookup", email);
   const hint = sourcesHint(app);
   const userMsg = (hint ? hint + "\n\n" : "") + "Food/meal to research and estimate:\n" + text;
   const reply = P.runProvider({
@@ -271,13 +304,22 @@ function webEstimate(app, text) {
   return { parsed: parsed, provider: cfg.provider, model: cfg.model };
 }
 
+// Tracking modes → which metric the ring counts down. Kept in sync with the frontend MODES.
+const TRACK_MODES = ["calories", "carb", "protein", "fat", "balanced", "heart"];
+
 function goalsOf(profile) {
   return {
     kcal: profile.getFloat("goal_kcal"),
     protein: profile.getFloat("goal_protein"),
     carbs: profile.getFloat("goal_carbs"),
     fat: profile.getFloat("goal_fat"),
+    sodium: profile.getFloat("goal_sodium"),
   };
+}
+
+function trackModeOf(profile) {
+  const m = profile.getString("track_mode");
+  return TRACK_MODES.indexOf(m) !== -1 ? m : "calories";
 }
 
 // --------------------------------------------------------------- user routes
@@ -295,6 +337,7 @@ function me(e) {
     isAdmin: resolveIsAdmin(app, email),
     app_name: settingsMap(app).app_name || "Sate",
     goals: goalsOf(profile),
+    track_mode: trackModeOf(profile),
     today: today,
     totals: sumTotals(dayEntries(app, email, today)),
   });
@@ -309,7 +352,7 @@ function logText(e) {
   const text = (body.text || "").toString().trim();
   if (!text) return e.json(400, { error: "text is required" });
   try {
-    const r = estimate(app, "text_parse", text, null);
+    const r = estimate(app, "text_parse", text, null, email);
     const rec = addEntry(app, email, {
       source: "text",
       description: text,
@@ -345,13 +388,17 @@ function webLookupEntry(e) {
   const text = rec.getString("description");
   if (!text || text === "(photo)") return e.json(400, { error: "entry has no description to search" });
   try {
-    const r = webEstimate(app, text);
+    const r = webEstimate(app, text, email);
     rec.set("source", "web");
     rec.set("items", r.parsed.items);
     rec.set("kcal", r.parsed.total.kcal);
     rec.set("protein", r.parsed.total.protein);
     rec.set("carbs", r.parsed.total.carbs);
     rec.set("fat", r.parsed.total.fat);
+    rec.set("fiber", num(r.parsed.total.fiber));
+    rec.set("sugar", num(r.parsed.total.sugar));
+    rec.set("sodium", num(r.parsed.total.sodium));
+    rec.set("sat_fat", num(r.parsed.total.sat_fat));
     rec.set("provider", r.provider);
     rec.set("model", r.model);
     app.save(rec);
@@ -383,24 +430,29 @@ function fetchOpenFoodFacts(code) {
   if (!name) return null;
   const sq = Number(p.serving_quantity) || 0; // grams per serving
   const r1 = (x) => Math.round((Number(x) || 0) * 10) / 10;
-  let kcal, protein, carbs, fat, servingDesc, servingG;
+  let kcal, protein, carbs, fat, fiber, sugar, sodium, sat_fat, servingDesc, servingG;
   const perServ = Number(nut["energy-kcal_serving"]);
   if (isFinite(perServ) && perServ > 0) {
     kcal = perServ;
     protein = num(nut["proteins_serving"]); carbs = num(nut["carbohydrates_serving"]); fat = num(nut["fat_serving"]);
+    fiber = num(nut["fiber_serving"]); sugar = num(nut["sugars_serving"]);
+    sodium = num(nut["sodium_serving"]) * 1000; sat_fat = num(nut["saturated-fat_serving"]); // OFF sodium is grams
     servingDesc = String(p.serving_size || (sq ? sq + " g" : "1 serving"));
     servingG = sq || 0;
   } else {
     const f = sq ? sq / 100 : 1;
     kcal = num(nut["energy-kcal_100g"]) * f;
     protein = num(nut["proteins_100g"]) * f; carbs = num(nut["carbohydrates_100g"]) * f; fat = num(nut["fat_100g"]) * f;
+    fiber = num(nut["fiber_100g"]) * f; sugar = num(nut["sugars_100g"]) * f;
+    sodium = num(nut["sodium_100g"]) * 1000 * f; sat_fat = num(nut["saturated-fat_100g"]) * f;
     servingDesc = sq ? String(p.serving_size || sq + " g") : "100 g";
     servingG = sq || 100;
   }
   if (!(kcal > 0)) return null;
   return { name: name, brand: String(p.brands || "").split(",")[0].trim(),
     serving_desc: servingDesc.slice(0, 40), serving_g: Math.round(servingG),
-    kcal: Math.round(kcal), protein: r1(protein), carbs: r1(carbs), fat: r1(fat) };
+    kcal: Math.round(kcal), protein: r1(protein), carbs: r1(carbs), fat: r1(fat),
+    fiber: r1(fiber), sugar: r1(sugar), sodium: Math.round(sodium), sat_fat: r1(sat_fat) };
 }
 
 function r1x(x) { return Math.round((Number(x) || 0) * 10) / 10; }
@@ -414,6 +466,10 @@ function lookupCfg(app) {
     nixKey: (s.nutritionix_app_key || "").trim(),
     fsId: (s.fatsecret_client_id || "").trim(),
     fsSecret: (s.fatsecret_client_secret || "").trim(),
+    // Identity-only sources (name/brand, no nutrition) — see barcodeIdentifyOnline.
+    upcKey: (s.upcitemdb_key || "").trim(),
+    goUpcKey: (s.go_upc_key || "").trim(),
+    barcodeLookupKey: (s.barcode_lookup_key || "").trim(),
   };
 }
 
@@ -436,6 +492,7 @@ function fetchUSDA(code, apiKey) {
   const lv = (o) => (o && isFinite(o.value)) ? Number(o.value) : 0;
   // Prefer the Nutrition-Facts label values (already per serving)...
   let kcal = lv(ln.calories), protein = lv(ln.protein), carbs = lv(ln.carbohydrates), fat = lv(ln.fat);
+  let fiber = lv(ln.fiber), sugar = lv(ln.sugars), sodium = lv(ln.sodium), sat_fat = lv(ln.saturatedFat);
   // ...else fall back to the per-100g foodNutrients array scaled by the serving weight.
   if (!(kcal > 0)) {
     const per = {};
@@ -447,10 +504,15 @@ function fetchUSDA(code, apiKey) {
       else if (id === "1003" || id === "203") per.protein = v;
       else if (id === "1004" || id === "204") per.fat = v;
       else if (id === "1005" || id === "205") per.carbs = v;
+      else if (id === "1079" || id === "291") per.fiber = v;
+      else if (id === "2000" || id === "269") per.sugar = v;
+      else if (id === "1093" || id === "307") per.sodium = v; // mg per 100g
+      else if (id === "1258" || id === "606") per.sat_fat = v;
     }
     if (per.kcal > 0) {
       const f = sg ? sg / 100 : 1;
       kcal = per.kcal * f; protein = (per.protein || 0) * f; carbs = (per.carbs || 0) * f; fat = (per.fat || 0) * f;
+      fiber = (per.fiber || 0) * f; sugar = (per.sugar || 0) * f; sodium = (per.sodium || 0) * f; sat_fat = (per.sat_fat || 0) * f;
     }
   }
   if (!(kcal > 0)) return null;
@@ -459,7 +521,8 @@ function fetchUSDA(code, apiKey) {
   return { name: String(hit.description || "").trim().slice(0, 58),
     brand: String(hit.brandName || hit.brandOwner || "").trim().slice(0, 30),
     serving_desc: String(sdesc).slice(0, 40), serving_g: Math.round(servingG),
-    kcal: Math.round(kcal), protein: r1x(protein), carbs: r1x(carbs), fat: r1x(fat) };
+    kcal: Math.round(kcal), protein: r1x(protein), carbs: r1x(carbs), fat: r1x(fat),
+    fiber: r1x(fiber), sugar: r1x(sugar), sodium: Math.round(sodium), sat_fat: r1x(sat_fat) };
 }
 
 // Nutritionix UPC item lookup (BYO app id/key; best US branded + restaurant coverage).
@@ -477,7 +540,8 @@ function fetchNutritionix(code, appId, appKey) {
   const sdesc = (f.serving_qty && f.serving_unit) ? (f.serving_qty + " " + f.serving_unit) : "1 serving";
   return { name: String(f.food_name || "").trim().slice(0, 58), brand: String(f.brand_name || "").trim().slice(0, 30),
     serving_desc: String(sdesc).slice(0, 40), serving_g: Math.round(num(f.serving_weight_grams)),
-    kcal: Math.round(kcal), protein: r1x(f.nf_protein), carbs: r1x(f.nf_total_carbohydrate), fat: r1x(f.nf_total_fat) };
+    kcal: Math.round(kcal), protein: r1x(f.nf_protein), carbs: r1x(f.nf_total_carbohydrate), fat: r1x(f.nf_total_fat),
+    fiber: r1x(f.nf_dietary_fiber), sugar: r1x(f.nf_sugars), sodium: Math.round(num(f.nf_sodium)), sat_fat: r1x(f.nf_saturated_fat) };
 }
 
 function b64(str) {
@@ -547,7 +611,71 @@ function fetchFatSecret(app, code, id, secret) {
   return { name: String(food.food_name || "").trim().slice(0, 58), brand: String(food.brand_name || "").trim().slice(0, 30),
     serving_desc: String(serv.serving_description || "1 serving").slice(0, 40),
     serving_g: Math.round(num(serv.metric_serving_amount)),
-    kcal: Math.round(kcal), protein: r1x(serv.protein), carbs: r1x(serv.carbohydrate), fat: r1x(serv.fat) };
+    kcal: Math.round(kcal), protein: r1x(serv.protein), carbs: r1x(serv.carbohydrate), fat: r1x(serv.fat),
+    fiber: r1x(serv.fiber), sugar: r1x(serv.sugar), sodium: Math.round(num(serv.sodium)), sat_fat: r1x(serv.saturated_fat) };
+}
+
+// ------------------------------------------------------------- identity-only barcode sources
+// These return the product NAME/brand only — no trustworthy nutrition. They exist so that when
+// every nutrition source misses, we can still name the product and let the AI estimate its macros
+// (saved unverified, clearly an estimate). Each is optional; UPCitemdb works with no key at all.
+
+// UPCitemdb — ~700M+ barcodes, the largest catalog. Free "trial" endpoint needs no key (shared,
+// low daily limit); a paid user_key lifts the volume. Identity only.
+function fetchUpcItemDb(code, key) {
+  let url; const headers = { "Accept": "application/json" };
+  if (key) { url = "https://api.upcitemdb.com/prod/v1/lookup?upc=" + encodeURIComponent(code);
+    headers.user_key = key; headers.key_type = "3scale"; }
+  else { url = "https://api.upcitemdb.com/prod/trial/lookup?upc=" + encodeURIComponent(code); }
+  let res;
+  try { res = $http.send({ url: url, method: "GET", headers: headers, timeout: 20 }); } catch (_) { return null; }
+  if (res.statusCode >= 300 || !res.json) return null; // incl. 429 shared-trial limit → skip
+  const it = (res.json.items || [])[0];
+  if (!it) return null;
+  const name = String(it.title || "").trim();
+  if (!name) return null;
+  return { name: name.slice(0, 70), brand: String(it.brand || "").trim().slice(0, 30) };
+}
+
+// Go-UPC — ~500M+ barcodes, strong international coverage. BYO API key (Bearer). Identity only.
+function fetchGoUpc(code, key) {
+  if (!key) return null;
+  let res;
+  try { res = $http.send({ url: "https://go-upc.com/api/v1/code/" + encodeURIComponent(code),
+    method: "GET", headers: { "Authorization": "Bearer " + key }, timeout: 20 }); } catch (_) { return null; }
+  if (res.statusCode >= 300 || !res.json || !res.json.product) return null;
+  const name = String(res.json.product.name || "").trim();
+  if (!name) return null;
+  return { name: name.slice(0, 70), brand: String(res.json.product.brand || "").trim().slice(0, 30) };
+}
+
+// Barcode Lookup (barcodelookup.com) — BYO key, rich retail metadata. Identity only.
+function fetchBarcodeLookup(code, key) {
+  if (!key) return null;
+  let res;
+  try { res = $http.send({ url: "https://api.barcodelookup.com/v3/products?formatted=y&barcode=" +
+    encodeURIComponent(code) + "&key=" + encodeURIComponent(key), method: "GET", timeout: 20 }); } catch (_) { return null; }
+  if (res.statusCode >= 300 || !res.json) return null;
+  const p = (res.json.products || [])[0];
+  if (!p) return null;
+  const name = String(p.product_name || p.title || "").trim();
+  if (!name) return null;
+  return { name: name.slice(0, 70), brand: String(p.brand || p.manufacturer || "").trim().slice(0, 30) };
+}
+
+// Identity fallback chain — first source to name the product wins. UPCitemdb runs even unkeyed.
+function barcodeIdentifyOnline(app, code, cfg) {
+  const chain = [
+    { src: "upcitemdb", via: "UPCitemdb", fn: () => fetchUpcItemDb(code, cfg.upcKey) },
+    { src: "go_upc", via: "Go-UPC", fn: () => fetchGoUpc(code, cfg.goUpcKey) },
+    { src: "barcode_lookup", via: "Barcode Lookup", fn: () => fetchBarcodeLookup(code, cfg.barcodeLookupKey) },
+  ];
+  for (const step of chain) {
+    let id = null;
+    try { id = step.fn(); } catch (_) {}
+    if (id && id.name) return { name: id.name, brand: id.brand, via: step.via, src: step.src };
+  }
+  return null;
 }
 
 // Online barcode fallback chain: Open Food Facts → USDA → Nutritionix → FatSecret. Prefers the
@@ -595,10 +723,35 @@ function logBarcode(e) {
     item = { name: food.getString("name"), brand: food.getString("brand"),
       serving_desc: food.getString("serving_desc") || "1 serving",
       kcal: food.getFloat("kcal"), protein: food.getFloat("protein"),
-      carbs: food.getFloat("carbs"), fat: food.getFloat("fat") };
+      carbs: food.getFloat("carbs"), fat: food.getFloat("fat"),
+      fiber: food.getFloat("fiber"), sugar: food.getFloat("sugar"),
+      sodium: food.getFloat("sodium"), sat_fat: food.getFloat("sat_fat") };
     try { food.set("usage_count", (food.getFloat("usage_count") || 0) + 1); app.save(food); } catch (_) {}
   } else {
-    const hit = barcodeLookupOnline(app, code);
+    let hit = barcodeLookupOnline(app, code);
+    // No authoritative nutrition anywhere → try to at least NAME the product via the identity
+    // sources, then let the AI estimate its macros from that name (web-grounded if possible,
+    // else a plain estimate). Saved unverified — it's an estimate, not label data.
+    if (!hit) {
+      const cfg = lookupCfg(app);
+      let ident = null;
+      try { ident = barcodeIdentifyOnline(app, code, cfg); } catch (_) {}
+      if (ident) {
+        const label = ident.brand ? ident.name + " " + ident.brand : ident.name;
+        let est = null;
+        try { est = webEstimate(app, label, email); } catch (_) {}
+        if (!est || !(est.parsed && est.parsed.total && est.parsed.total.kcal > 0)) {
+          try { est = estimate(app, "text_parse", label, null, email); } catch (_) {}
+        }
+        const t = est && est.parsed && est.parsed.total;
+        if (t && t.kcal > 0) {
+          hit = { food: { name: ident.name, brand: ident.brand, serving_desc: "1 serving", serving_g: 0,
+            kcal: Math.round(t.kcal), protein: r1x(t.protein), carbs: r1x(t.carbs), fat: r1x(t.fat),
+            fiber: r1x(t.fiber), sugar: r1x(t.sugar), sodium: Math.round(num(t.sodium)), sat_fat: r1x(t.sat_fat) },
+            via: ident.via + " → AI estimate", src: "barcode-id" };
+        }
+      }
+    }
     if (!hit) return e.json(404, { error: "Barcode not found in the database, Open Food Facts, or your configured sources.", barcode: code });
     via = hit.via;
     item = hit.food;
@@ -608,6 +761,8 @@ function logBarcode(e) {
       rec.set("name", off.name); rec.set("brand", off.brand); rec.set("serving_desc", off.serving_desc);
       rec.set("serving_g", off.serving_g); rec.set("kcal", off.kcal); rec.set("protein", off.protein);
       rec.set("carbs", off.carbs); rec.set("fat", off.fat); rec.set("category", "");
+      rec.set("fiber", num(off.fiber)); rec.set("sugar", num(off.sugar));
+      rec.set("sodium", num(off.sodium)); rec.set("sat_fat", num(off.sat_fat));
       rec.set("aliases", []); rec.set("barcode", code); rec.set("source", hit.src);
       rec.set("verified", false); rec.set("usage_count", 1);
       rec.set("search", (off.name + " " + off.brand + " " + code).toLowerCase());
@@ -619,8 +774,10 @@ function logBarcode(e) {
   const rec = addEntry(app, email, {
     source: "barcode", description: label,
     items: [{ name: item.name, qty: item.serving_desc || "1 serving",
-      kcal: item.kcal, protein: item.protein, carbs: item.carbs, fat: item.fat }],
-    total: { kcal: item.kcal, protein: item.protein, carbs: item.carbs, fat: item.fat },
+      kcal: item.kcal, protein: item.protein, carbs: item.carbs, fat: item.fat,
+      fiber: num(item.fiber), sugar: num(item.sugar), sodium: num(item.sodium), sat_fat: num(item.sat_fat) }],
+    total: { kcal: item.kcal, protein: item.protein, carbs: item.carbs, fat: item.fat,
+      fiber: num(item.fiber), sugar: num(item.sugar), sodium: num(item.sodium), sat_fat: num(item.sat_fat) },
     provider: "", model: "" });
   return e.json(200, { entry: entryJSON(rec), found_via: via, name: label,
     totals: sumTotals(dayEntries(app, email, todayStr())) });
@@ -645,7 +802,7 @@ function logPhoto(e) {
     const prompt = note
       ? "Estimate the nutrition of the food in this photo. Context: " + note
       : "Estimate the nutrition of the food in this photo.";
-    const r = estimate(app, "vision_estimate", prompt, { mimeType: mimeType, data: data });
+    const r = estimate(app, "vision_estimate", prompt, { mimeType: mimeType, data: data }, email);
     const rec = addEntry(app, email, {
       source: "photo",
       description: note || "(photo)",
@@ -682,7 +839,7 @@ function chat(e) {
     `${Math.round(totals.protein)}g protein, ${Math.round(totals.carbs)}g carbs, ` +
     `${Math.round(totals.fat)}g fat across ${totals.count} entries.`;
   try {
-    const cfg = F.resolveFunction(app, "chat");
+    const cfg = resolveFor(app, "chat", email);
     const reply = P.runProvider({
       provider: cfg.provider,
       apiKey: cfg.apiKey,
@@ -730,13 +887,16 @@ function setGoals(e) {
   const app = e.app;
   const profile = ensureProfile(app, email);
   const body = e.requestInfo().body || {};
-  for (const k of ["goal_kcal", "goal_protein", "goal_carbs", "goal_fat"]) {
+  for (const k of ["goal_kcal", "goal_protein", "goal_carbs", "goal_fat", "goal_sodium"]) {
     if (body[k] !== undefined && body[k] !== null && body[k] !== "") {
       profile.set(k, Number(body[k]) || 0);
     }
   }
+  if (body.track_mode !== undefined && TRACK_MODES.indexOf(String(body.track_mode)) !== -1) {
+    profile.set("track_mode", String(body.track_mode));
+  }
   app.save(profile);
-  return e.json(200, { goals: goalsOf(profile) });
+  return e.json(200, { goals: goalsOf(profile), track_mode: trackModeOf(profile) });
 }
 
 function daySummary(e) {
@@ -759,7 +919,7 @@ function daySummary(e) {
     `Totals: ${Math.round(totals.kcal)} kcal, ${Math.round(totals.protein)}g protein, ` +
     `${Math.round(totals.carbs)}g carbs, ${Math.round(totals.fat)}g fat.`;
   try {
-    const cfg = F.resolveFunction(app, "daily_summary");
+    const cfg = resolveFor(app, "daily_summary", email);
     const reply = P.runProvider({
       provider: cfg.provider,
       apiKey: cfg.apiKey,
@@ -942,13 +1102,43 @@ function adminGetUsers(e) {
       name: r.getString("name"),
       role: isEnvAdmin(email) ? "admin" : r.getString("role") || "user",
       env_admin: isEnvAdmin(email),
+      ov_ai_provider: r.getString("ov_ai_provider"),
+      ov_ai_model: r.getString("ov_ai_model"),
+      ov_vision_provider: r.getString("ov_vision_provider"),
+      ov_vision_model: r.getString("ov_vision_model"),
     };
   });
   // include env admins who haven't logged in yet
   for (const email of ADMINS) {
-    if (!seen[email]) out.push({ email: email, name: email.split("@")[0], role: "admin", env_admin: true });
+    if (!seen[email]) out.push({ email: email, name: email.split("@")[0], role: "admin", env_admin: true,
+      ov_ai_provider: "", ov_ai_model: "", ov_vision_provider: "", ov_vision_model: "" });
   }
   return e.json(200, { users: out });
+}
+
+// Set (or clear) a user's per-category AI model overrides. Empty provider/model clears it.
+function adminSetUserModels(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const body = e.requestInfo().body || {};
+  const email = (body.email || "").toString().toLowerCase().trim();
+  if (!email || email.indexOf("@") === -1) return e.json(400, { error: "valid email required" });
+  let rec;
+  try {
+    rec = app.findFirstRecordByFilter("profiles", "email = {:e}", { e: email });
+  } catch (_) {
+    rec = new Record(app.findCollectionByNameOrId("profiles"));
+    rec.set("email", email);
+    rec.set("name", email.split("@")[0]);
+    rec.set("role", isEnvAdmin(email) ? "admin" : "user");
+    applyDefaultGoals(app, rec);
+  }
+  for (const k of ["ov_ai_provider", "ov_ai_model", "ov_vision_provider", "ov_vision_model"]) {
+    if (body[k] !== undefined) rec.set(k, String(body[k] || "").trim());
+  }
+  app.save(rec);
+  return e.json(200, { ok: true, email: email });
 }
 
 // Promote/demote a user (or pre-authorize an admin by email).
@@ -1189,6 +1379,9 @@ function adminGetLookup(e) {
     usda: { set: set(s.usda_api_key), hint: F.redact(s.usda_api_key) },
     nutritionix: { app_id: s.nutritionix_app_id || "", set: set(s.nutritionix_app_key), hint: F.redact(s.nutritionix_app_key) },
     fatsecret: { client_id: s.fatsecret_client_id || "", set: set(s.fatsecret_client_secret), hint: F.redact(s.fatsecret_client_secret) },
+    upcitemdb: { set: set(s.upcitemdb_key), hint: F.redact(s.upcitemdb_key) },
+    go_upc: { set: set(s.go_upc_key), hint: F.redact(s.go_upc_key) },
+    barcode_lookup: { set: set(s.barcode_lookup_key), hint: F.redact(s.barcode_lookup_key) },
   });
 }
 
@@ -1208,7 +1401,8 @@ function adminPutLookup(e) {
   const delKey = (k) => { try { app.delete(app.findFirstRecordByFilter("settings", "key = {:k}", { k: k })); } catch (_) {} };
   // [key, isSecret] — secrets are kept when submitted blank (so you don't wipe them by re-saving)
   const fields = [["usda_api_key", true], ["nutritionix_app_id", false], ["nutritionix_app_key", true],
-    ["fatsecret_client_id", false], ["fatsecret_client_secret", true]];
+    ["fatsecret_client_id", false], ["fatsecret_client_secret", true],
+    ["upcitemdb_key", true], ["go_upc_key", true], ["barcode_lookup_key", true]];
   for (const f of fields) {
     if (b[f[0]] === undefined) continue;
     const v = String(b[f[0]]);
@@ -1241,6 +1435,7 @@ module.exports = {
   adminPutSettings,
   adminGetUsers,
   adminSetUserRole,
+  adminSetUserModels,
   adminGetFoods,
   adminPutFood,
   adminDeleteFood,

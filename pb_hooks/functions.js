@@ -5,17 +5,23 @@
 const FUNCTIONS = ["vision_estimate", "text_parse", "chat", "daily_summary", "web_lookup"];
 
 const NUTRITION_SCHEMA =
-  '{"items":[{"name":string,"qty":string,"kcal":number,"protein":number,"carbs":number,"fat":number}],' +
-  '"total":{"kcal":number,"protein":number,"carbs":number,"fat":number},"note":string}';
+  '{"items":[{"name":string,"qty":string,"kcal":number,"protein":number,"carbs":number,"fat":number,"fiber":number,"sugar":number,"sodium":number,"sat_fat":number}],' +
+  '"total":{"kcal":number,"protein":number,"carbs":number,"fat":number,"fiber":number,"sugar":number,"sodium":number,"sat_fat":number},"note":string}';
+
+const UNITS_LINE =
+  "protein, carbs, fat, fiber, sugar and sat_fat are grams; sodium is milligrams. fiber and sugar " +
+  "are subsets of carbs; sat_fat is a subset of fat. Always fill every field with your best " +
+  "estimate (use 0 only when a nutrient is genuinely absent).";
+const EMPTY_TOTAL = '{"items":[],"total":{"kcal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"sat_fat":0},"note":"..."}';
 
 const NUTRITION_SYSTEM =
   "You are a nutrition estimation engine. Given a description or photo of food, estimate its " +
   "nutrition for the portion shown. Respond ONLY with strict minified JSON (no markdown, no " +
-  "code fences) matching exactly:\n" + NUTRITION_SCHEMA + "\n" +
-  "protein/carbs/fat are grams. Estimate typical serving sizes when unspecified. If the message " +
-  "includes a 'Known foods from the database' list, use those per-serving values for matching " +
-  "items (scaled to the amount eaten) instead of estimating. If no food is " +
-  'identifiable, return {"items":[],"total":{"kcal":0,"protein":0,"carbs":0,"fat":0},"note":"..."}.';
+  "code fences) matching exactly:\n" + NUTRITION_SCHEMA + "\n" + UNITS_LINE + " Estimate typical " +
+  "serving sizes when unspecified. If the message includes a 'Known foods from the database' list, " +
+  "use those per-serving values for matching items (scaled to the amount eaten) instead of " +
+  "estimating, and still estimate fiber/sugar/sodium/sat_fat for them. If no food is " +
+  "identifiable, return " + EMPTY_TOTAL + ".";
 
 const WEB_LOOKUP_SYSTEM =
   "You are a nutrition research engine with live web search. The user names a food or meal that " +
@@ -25,9 +31,8 @@ const WEB_LOOKUP_SYSTEM =
   "\"<food> nutrition facts site:fdc.nal.usda.gov\", or OR several: \"site:a.com OR site:b.com\"). " +
   "Only fall back to a broad, unscoped web search if the preferred sources don't cover the food. " +
   "Respond ONLY with strict minified JSON (no markdown, no code fences) matching exactly:\n" +
-  NUTRITION_SCHEMA + "\n" +
-  "protein/carbs/fat are grams. In the note field, briefly name which source(s) you actually used. " +
-  'If nothing is identifiable, return {"items":[],"total":{"kcal":0,"protein":0,"carbs":0,"fat":0},"note":"..."}.';
+  NUTRITION_SCHEMA + "\n" + UNITS_LINE + " In the note field, briefly name which source(s) you " +
+  "actually used. If nothing is identifiable, return " + EMPTY_TOTAL + ".";
 
 const CHAT_SYSTEM =
   "You are Sate, a friendly, concise calorie and nutrition coach. Help the user understand and " +
@@ -100,7 +105,26 @@ function redact(plaintext) {
 
 // ---- resolve which provider+model+key handles a function ----
 
-function resolveFunction(app, fn) {
+// Try to build a usable config for a provider+model; returns null if the provider is missing,
+// disabled, or has no key (so callers can fall back).
+function tryResolveProvider(app, provider, model) {
+  if (!provider || !model) return null;
+  const prov = app.findFirstRecordByFilter("providers", "name = {:n}", { n: provider });
+  if (!prov || !prov.getBool("enabled")) return null;
+  const enc = prov.getString("api_key_enc");
+  if (!enc) return null;
+  return { provider: provider, model: model, apiKey: decryptKey(enc), baseUrl: prov.getString("base_url") || "" };
+}
+
+// Resolve which provider+model+key handles a function. An optional per-user `override`
+// ({provider, model}) wins when its provider is enabled and keyed; otherwise the global
+// per-function default is used.
+function resolveFunction(app, fn, override) {
+  if (override && override.provider && override.model) {
+    const r = tryResolveProvider(app, override.provider, override.model);
+    if (r) return r;
+  }
+
   const cfg = app.findFirstRecordByFilter("function_config", "fn = {:fn}", { fn: fn });
   if (!cfg) throw new Error("function not configured: " + fn);
   if (!cfg.getBool("enabled")) throw new Error("function is disabled: " + fn);
@@ -156,6 +180,10 @@ function normalizeNutrition(obj) {
     protein: num(it.protein),
     carbs: num(it.carbs),
     fat: num(it.fat),
+    fiber: num(it.fiber),
+    sugar: num(it.sugar),
+    sodium: num(it.sodium),
+    sat_fat: num(it.sat_fat),
   }));
   const total = clean.reduce(
     (t, it) => ({
@@ -163,8 +191,12 @@ function normalizeNutrition(obj) {
       protein: t.protein + it.protein,
       carbs: t.carbs + it.carbs,
       fat: t.fat + it.fat,
+      fiber: t.fiber + it.fiber,
+      sugar: t.sugar + it.sugar,
+      sodium: t.sodium + it.sodium,
+      sat_fat: t.sat_fat + it.sat_fat,
     }),
-    { kcal: 0, protein: 0, carbs: 0, fat: 0 }
+    { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, sodium: 0, sat_fat: 0 }
   );
   return { items: clean, total: total, note: String(obj.note || "") };
 }

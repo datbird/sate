@@ -11,7 +11,7 @@
     <link rel="icon" href="/icons/icon-192.png?v2" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png?v2" />
     <script>try{var t=localStorage.getItem('sate-theme');if(t&&t!=='system')document.documentElement.dataset.theme=t;}catch(e){}</script>
-    <link rel="stylesheet" href="/style.css?v11" />
+    <link rel="stylesheet" href="/style.css?v16" />
   </head>
   <body>
     <header class="topbar">
@@ -36,6 +36,7 @@
             <button data-theme-choice="light">Light</button>
             <button data-theme-choice="dark">Dark</button>
           </div>
+          <button type="button" class="menu-item" id="menuGoals">Goals &amp; tracking</button>
           <a class="menu-item" href="/cdn-cgi/access/logout">Sign out</a>
         </div>
       </div>
@@ -53,6 +54,7 @@
             </div>
           </div>
           <div class="macros" id="macros"></div>
+          <div class="modecap" id="modeCap" hidden></div>
           <button class="link" id="goalsBtn">Set goals</button>
         </div>
 
@@ -103,8 +105,8 @@
         <p class="hint">Keys are encrypted at rest and shown only by their last 4 characters.</p>
         <div id="providers"></div>
 
-        <h3 class="section">AI Functions — pick a model per task</h3>
-        <p class="hint">Model lists load live from each provider once its key is set. 👁 = supports photos.</p>
+        <h3 class="section">AI Functions — global defaults per task</h3>
+        <p class="hint">These are the instance-wide defaults everyone uses. <b>Image interpretation</b> is the photo→nutrition model; the <b>Normal AI</b> rows cover text, chat, recap, and web lookup. Individual users can override these in <b>Users &amp; Admins</b> below. Model lists load live once a provider key is set. 👁 = supports photos.</p>
         <div id="functions"></div>
         <datalist id="dl-anthropic"></datalist>
         <datalist id="dl-openai"></datalist>
@@ -115,7 +117,7 @@
         <div id="prompts"></div>
 
         <h3 class="section">Users &amp; Admins</h3>
-        <p class="hint">Promote anyone on the allow-list to admin. Emails in <code>ADMIN_EMAILS</code> are always admin.</p>
+        <p class="hint">Promote anyone on the allow-list to admin. Emails in <code>ADMIN_EMAILS</code> are always admin. Use <b>AI models</b> on any user to override the global Normal-AI or Image-interpretation model just for them.</p>
         <ul class="users" id="users"></ul>
         <div class="row" style="margin-top:10px">
           <input type="email" id="newAdminEmail" placeholder="email to make admin" />
@@ -187,6 +189,14 @@
             <label class="field">FatSecret Client ID <input type="text" id="lk_fs_id" placeholder="client id" /></label>
             <label class="field">FatSecret Client Secret <input type="password" id="lk_fs_secret" placeholder="client secret" /></label>
           </div>
+          <p class="hint" style="margin-top:14px">Identity fallback — when no nutrition source has the barcode, these name the product so the AI can <em>estimate</em> its macros (saved unverified). UPCitemdb works with no key.</p>
+          <label class="field">UPCitemdb API key <span class="muted">(optional — blank uses the free trial endpoint)</span>
+            <input type="password" id="lk_upc" placeholder="leave blank to use the free trial tier" />
+          </label>
+          <div class="grid2" style="margin-top:8px">
+            <label class="field">Go-UPC API key <input type="password" id="lk_goupc" placeholder="bearer key" /></label>
+            <label class="field">Barcode Lookup API key <input type="password" id="lk_bclookup" placeholder="api key" /></label>
+          </div>
           <div class="row end" style="margin-top:10px">
             <button class="primary" id="lookupSaveBtn">Save lookup sources</button>
           </div>
@@ -198,11 +208,25 @@
     <!-- GOALS DIALOG -->
     <dialog id="goalsDialog">
       <form method="dialog" id="goalsForm">
-        <h3>Daily goals</h3>
-        <label>Calories <input type="number" name="goal_kcal" min="0" /></label>
-        <label>Protein (g) <input type="number" name="goal_protein" min="0" /></label>
-        <label>Carbs (g) <input type="number" name="goal_carbs" min="0" /></label>
-        <label>Fat (g) <input type="number" name="goal_fat" min="0" /></label>
+        <h3>Goals &amp; tracking</h3>
+        <label>What are you tracking?
+          <select name="track_mode" id="goalMode">
+            <option value="calories">Calories (simple)</option>
+            <option value="carb">Carb-focused (low-carb / keto / diabetic)</option>
+            <option value="protein">High-protein</option>
+            <option value="fat">Low-fat</option>
+            <option value="balanced">Balanced macros</option>
+            <option value="heart">Heart-healthy</option>
+          </select>
+        </label>
+        <p class="hint" id="goalModeHint"></p>
+        <div class="goalgrid">
+          <label>Calories <input type="number" name="goal_kcal" min="0" /></label>
+          <label>Protein (g) <input type="number" name="goal_protein" min="0" /></label>
+          <label>Carbs (g) <input type="number" name="goal_carbs" min="0" /></label>
+          <label>Fat (g) <input type="number" name="goal_fat" min="0" /></label>
+          <label>Sodium (mg) <input type="number" name="goal_sodium" min="0" /></label>
+        </div>
         <div class="row end">
           <button value="cancel" class="link">Cancel</button>
           <button value="save" class="primary">Save</button>
@@ -221,6 +245,6 @@
 
     <div class="toast" id="toast" hidden></div>
     <script src="/vendor/html5-qrcode.min.js"></script>
-    <script src="/app.js?v11"></script>
+    <script src="/app.js?v16"></script>
   </body>
 </html>

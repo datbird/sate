@@ -134,6 +134,10 @@ function upsertItems(app, items, source) {
           rec.set("protein", num(item.protein));
           rec.set("carbs", num(item.carbs));
           rec.set("fat", num(item.fat));
+          rec.set("fiber", num(item.fiber));
+          rec.set("sugar", num(item.sugar));
+          rec.set("sodium", num(item.sodium));
+          rec.set("sat_fat", num(item.sat_fat));
           if (item.qty) rec.set("serving_desc", String(item.qty));
           rec.set("source", "web");
         }
@@ -151,6 +155,10 @@ function upsertItems(app, items, source) {
       r.set("protein", num(item.protein));
       r.set("carbs", num(item.carbs));
       r.set("fat", num(item.fat));
+      r.set("fiber", num(item.fiber));
+      r.set("sugar", num(item.sugar));
+      r.set("sodium", num(item.sodium));
+      r.set("sat_fat", num(item.sat_fat));
       r.set("category", "");
       r.set("aliases", []);
       r.set("source", src);

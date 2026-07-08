@@ -56,20 +56,68 @@ function showView(name) {
 }
 $$(".tabs button").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
 
+// ---------------------------------------------------------- tracking modes
+// Per-metric display metadata. `get` reads the value from a totals/goals object; `u` is the
+// unit suffix shown right after the number; `goalKey` is which goal field applies (if any).
+const METRIC = {
+  kcal:     { label: "kcal",     u: "",   goalKey: "kcal",   get: (t) => t.kcal || 0 },
+  protein:  { label: "protein",  u: "g",  goalKey: "protein", get: (t) => t.protein || 0 },
+  carbs:    { label: "carbs",    u: "g",  goalKey: "carbs",  get: (t) => t.carbs || 0 },
+  fat:      { label: "fat",      u: "g",  goalKey: "fat",    get: (t) => t.fat || 0 },
+  fiber:    { label: "fiber",    u: "g",  goalKey: null,     get: (t) => t.fiber || 0 },
+  sugar:    { label: "sugar",    u: "g",  goalKey: null,     get: (t) => t.sugar || 0 },
+  sodium:   { label: "sodium",   u: "mg", goalKey: "sodium", get: (t) => t.sodium || 0 },
+  sat_fat:  { label: "sat fat",  u: "g",  goalKey: null,     get: (t) => t.sat_fat || 0 },
+  // Net carbs = carbs − fiber; its goal is the carb goal.
+  netcarbs: { label: "net carbs", u: "g", goalKey: "carbs", get: (t) => Math.max(0, (t.carbs || 0) - (t.fiber || 0)) },
+};
+
+// Each mode picks the ring's primary metric and the secondary stats shown beneath it.
+const MODES = {
+  calories: { label: "Calories",        primary: "kcal",     stats: ["protein", "carbs", "fat"],
+              hint: "The ring counts calories. Only a daily calorie goal is needed." },
+  carb:     { label: "Carb-focused",    primary: "netcarbs", stats: ["kcal", "protein", "fiber"],
+              hint: "The ring counts net carbs (carbs − fiber) toward your carb goal. Covers low-carb, keto, and diabetic carb-counting." },
+  protein:  { label: "High-protein",    primary: "protein",  stats: ["kcal", "carbs", "fat"],
+              hint: "The ring counts protein toward your protein goal." },
+  fat:      { label: "Low-fat",         primary: "fat",      stats: ["kcal", "carbs", "protein"],
+              hint: "The ring counts fat toward your fat goal." },
+  balanced: { label: "Balanced macros", primary: "kcal",     stats: ["protein", "carbs", "fat"],
+              hint: "The ring counts calories; protein, carbs, and fat each show progress toward their goals." },
+  heart:    { label: "Heart-healthy",   primary: "sodium",   stats: ["sat_fat", "fiber", "kcal"],
+              hint: "The ring counts sodium toward a daily limit; saturated fat and fiber are shown too." },
+};
+function modeOf() { return MODES[(ME && ME.track_mode)] || MODES.calories; }
+
 // -------------------------------------------------------------------- totals
 function renderTotals(totals, goals) {
-  const kcal = totals ? totals.kcal : 0;
-  const goal = goals && goals.kcal ? goals.kcal : 0;
-  $("#ringKcal").textContent = fmt(kcal);
-  $("#ringGoal").textContent = goal ? "/ " + fmt(goal) : "kcal";
-  const pct = goal ? Math.min(100, (kcal / goal) * 100) : 0;
+  totals = totals || {};
+  goals = goals || {};
+  const mode = modeOf();
+  const pm = METRIC[mode.primary];
+  const val = pm.get(totals);
+  const goal = pm.goalKey ? (goals[pm.goalKey] || 0) : 0;
+
+  $("#ringKcal").textContent = fmt(val);
+  const ushort = pm.u ? " " + pm.u : (mode.primary === "kcal" ? " kcal" : "");
+  $("#ringGoal").textContent = goal ? "of " + fmt(goal) + ushort : (pm.u ? pm.u : pm.label);
+  const pct = goal ? Math.min(100, (val / goal) * 100) : 0;
   $("#ring").style.setProperty("--pct", pct.toFixed(1));
-  const macro = (label, val, g) =>
-    `<div class="macro"><b>${fmt(val)}g</b><span>${label}${g ? " / " + fmt(g) : ""}</span></div>`;
-  $("#macros").innerHTML =
-    macro("protein", totals.protein, goals && goals.protein) +
-    macro("carbs", totals.carbs, goals && goals.carbs) +
-    macro("fat", totals.fat, goals && goals.fat);
+
+  // Secondary stats row
+  const stat = (key) => {
+    const m = METRIC[key];
+    const v = m.get(totals);
+    const g = m.goalKey ? (goals[m.goalKey] || 0) : 0;
+    return `<div class="macro"><b>${fmt(v)}${m.u}</b><span>${m.label}${g ? " / " + fmt(g) : ""}</span></div>`;
+  };
+  $("#macros").innerHTML = mode.stats.map(stat).join("");
+
+  // Mode caption under the ring
+  const cap = $("#modeCap");
+  cap.hidden = false;
+  const goalTxt = goal ? " · goal " + fmt(goal) + ushort : "";
+  cap.textContent = mode.label + " · ring tracks " + pm.label + goalTxt;
 }
 
 function entryLi(en, onDel) {
@@ -269,23 +317,36 @@ $("#scanClose").addEventListener("click", closeScanner);
 
 // ------------------------------------------------------------------- goals
 const goalsDialog = $("#goalsDialog");
-$("#goalsBtn").addEventListener("click", () => {
+function goalModeHint() {
+  const m = MODES[$("#goalMode").value] || MODES.calories;
+  $("#goalModeHint").textContent = m.hint;
+}
+function openGoals() {
   const f = $("#goalsForm");
-  f.goal_kcal.value = ME.goals.kcal || "";
-  f.goal_protein.value = ME.goals.protein || "";
-  f.goal_carbs.value = ME.goals.carbs || "";
-  f.goal_fat.value = ME.goals.fat || "";
+  const g = ME.goals || {};
+  f.goal_kcal.value = g.kcal || "";
+  f.goal_protein.value = g.protein || "";
+  f.goal_carbs.value = g.carbs || "";
+  f.goal_fat.value = g.fat || "";
+  f.goal_sodium.value = g.sodium || "";
+  $("#goalMode").value = ME.track_mode || "calories";
+  goalModeHint();
   goalsDialog.showModal();
-});
+}
+$("#goalsBtn").addEventListener("click", openGoals);
+$("#menuGoals").addEventListener("click", () => { $("#userMenu").hidden = true; openGoals(); });
+$("#goalMode").addEventListener("change", goalModeHint);
 $("#goalsForm").addEventListener("submit", async (e) => {
   if (e.submitter && e.submitter.value === "cancel") return;
   const f = e.target;
   const payload = {
+    track_mode: f.track_mode.value,
     goal_kcal: f.goal_kcal.value, goal_protein: f.goal_protein.value,
-    goal_carbs: f.goal_carbs.value, goal_fat: f.goal_fat.value,
+    goal_carbs: f.goal_carbs.value, goal_fat: f.goal_fat.value, goal_sodium: f.goal_sodium.value,
   };
   const r = await api("/goals", { method: "PATCH", body: JSON.stringify(payload) });
   ME.goals = r.goals;
+  if (r.track_mode) ME.track_mode = r.track_mode;
   refreshToday();
   toast("Goals saved");
 });
@@ -315,11 +376,13 @@ $("#summaryBtn").addEventListener("click", async () => {
 
 // ------------------------------------------------------------------- admin
 let MODELS = {}; // provider -> [{id,label,vision}]
+let PROVIDERS = []; // provider rows from the last admin load (for per-user override dropdowns)
 
 async function loadAdmin() {
   const [{ providers }, { functions }, usersResp, settingsResp] = await Promise.all([
     api("/admin/providers"), api("/admin/functions"), api("/admin/users"), api("/admin/settings"),
   ]);
+  PROVIDERS = providers;
   renderInstance(settingsResp);
   renderProviders(providers);
   // Fetch live model lists for any provider that has a key.
@@ -351,10 +414,19 @@ async function loadLookup() {
   $("#lk_fs_id").value = r.fatsecret.client_id || "";
   $("#lk_fs_secret").value = "";
   $("#lk_fs_secret").placeholder = r.fatsecret.set ? "set — " + r.fatsecret.hint + " (blank keeps it)" : "client secret";
+  $("#lk_upc").value = "";
+  $("#lk_upc").placeholder = (r.upcitemdb && r.upcitemdb.set) ? "key set — " + r.upcitemdb.hint + " (blank keeps it)" : "leave blank to use the free trial tier";
+  $("#lk_goupc").value = "";
+  $("#lk_goupc").placeholder = (r.go_upc && r.go_upc.set) ? "set — " + r.go_upc.hint + " (blank keeps it)" : "bearer key";
+  $("#lk_bclookup").value = "";
+  $("#lk_bclookup").placeholder = (r.barcode_lookup && r.barcode_lookup.set) ? "set — " + r.barcode_lookup.hint + " (blank keeps it)" : "api key";
   const on = [];
   if (r.usda.set) on.push("USDA"); if (r.nutritionix.set) on.push("Nutritionix"); if (r.fatsecret.set) on.push("FatSecret");
-  $("#lookupMeta").innerHTML = '<span class="badge">chain: local → Open Food Facts' +
-    (on.length ? " → " + on.join(" → ") : "") + "</span>";
+  const idOn = ["UPCitemdb"]; // always available (free trial)
+  if (r.go_upc && r.go_upc.set) idOn.push("Go-UPC"); if (r.barcode_lookup && r.barcode_lookup.set) idOn.push("Barcode Lookup");
+  $("#lookupMeta").innerHTML = '<span class="badge">nutrition: local → Open Food Facts' +
+    (on.length ? " → " + on.join(" → ") : "") + "</span> " +
+    '<span class="badge">identity → AI estimate: ' + idOn.join(" → ") + "</span>";
 }
 
 async function saveLookup() {
@@ -364,6 +436,9 @@ async function saveLookup() {
     nutritionix_app_key: $("#lk_nix_key").value.trim(),
     fatsecret_client_id: $("#lk_fs_id").value.trim(),
     fatsecret_client_secret: $("#lk_fs_secret").value.trim(),
+    upcitemdb_key: $("#lk_upc").value.trim(),
+    go_upc_key: $("#lk_goupc").value.trim(),
+    barcode_lookup_key: $("#lk_bclookup").value.trim(),
   };
   try { await api("/admin/lookup", { method: "PUT", body: JSON.stringify(payload) }); toast("Lookup sources saved"); loadLookup(); }
   catch (e) { toast(e.message); }
@@ -462,7 +537,37 @@ async function fetchModelsIfNeeded(prov) {
   populateDatalists();
 }
 
-async function renderUsers(users) {
+function provOptions(selected) {
+  return '<option value="">(global default)</option>' +
+    PROVIDERS.map((p) => `<option value="${p.name}" ${selected === p.name ? "selected" : ""}>${p.name}</option>`).join("");
+}
+
+// One override category row (provider select + model input) for a user.
+function overrideRow(u, cat, label) {
+  const prov = cat === "ai" ? u.ov_ai_provider : u.ov_vision_provider;
+  const model = cat === "ai" ? u.ov_ai_model : u.ov_vision_model;
+  const row = document.createElement("div");
+  row.className = "uov-row";
+  row.innerHTML =
+    `<span class="uov-label">${label}</span>` +
+    `<select data-cat="${cat}" data-k="provider">${provOptions(prov)}</select>` +
+    `<input type="text" data-cat="${cat}" data-k="model" value="${escapeHtml(model || "")}" placeholder="global default" />`;
+  const sel = row.querySelector("select");
+  const inp = row.querySelector("input");
+  const sync = (clear) => {
+    const has = !!sel.value;
+    inp.disabled = !has;
+    inp.placeholder = has ? "model id (pick or type)" : "uses global default";
+    inp.setAttribute("list", has ? "dl-" + sel.value : "");
+    if (has) fetchModelsIfNeeded(sel.value);
+    else if (clear) inp.value = "";
+  };
+  sel.addEventListener("change", () => sync(true));
+  sync(false);
+  return row;
+}
+
+function renderUsers(users) {
   const ul = $("#users");
   ul.innerHTML = "";
   users.forEach((u) => {
@@ -471,7 +576,8 @@ async function renderUsers(users) {
     const badge = u.env_admin
       ? '<span class="badge lock">env-admin</span>'
       : `<span class="badge ${u.role === "admin" ? "adminb" : ""}">${u.role}</span>`;
-    li.innerHTML = `<span>${escapeHtml(u.email)}</span>`;
+    const hasOv = u.ov_ai_provider || u.ov_vision_provider;
+    li.innerHTML = `<span class="uemail">${escapeHtml(u.email)}${hasOv ? ' <span class="badge">custom AI</span>' : ""}</span>`;
     const right = document.createElement("span");
     right.className = "urow-right";
     right.innerHTML = badge;
@@ -482,9 +588,47 @@ async function renderUsers(users) {
       btn.onclick = () => setRole(u.email, u.role === "admin" ? "user" : "admin");
       right.appendChild(btn);
     }
+    // AI model overrides (collapsed by default)
+    const ov = document.createElement("div");
+    ov.className = "uoverrides";
+    ov.hidden = true;
+    ov.appendChild(overrideRow(u, "ai", "Normal AI"));
+    ov.appendChild(overrideRow(u, "vision", "Image"));
+    const save = document.createElement("button");
+    save.className = "primary small";
+    save.textContent = "Save overrides";
+    save.onclick = () => saveUserModels(u.email, ov);
+    ov.appendChild(save);
+
+    const toggle = document.createElement("button");
+    toggle.className = "link";
+    toggle.textContent = "AI models";
+    toggle.onclick = () => { ov.hidden = !ov.hidden; };
+    right.appendChild(toggle);
+
     li.appendChild(right);
+    li.appendChild(ov);
     ul.appendChild(li);
   });
+}
+
+async function saveUserModels(email, ov) {
+  const val = (cat, k) => {
+    const el = ov.querySelector(`[data-cat="${cat}"][data-k="${k}"]`);
+    return el ? el.value.trim() : "";
+  };
+  const payload = {
+    email: email,
+    ov_ai_provider: val("ai", "provider"), ov_ai_model: val("ai", "model"),
+    ov_vision_provider: val("vision", "provider"), ov_vision_model: val("vision", "model"),
+  };
+  if (!payload.ov_ai_provider) payload.ov_ai_model = "";
+  if (!payload.ov_vision_provider) payload.ov_vision_model = "";
+  try {
+    await api("/admin/users/models", { method: "PUT", body: JSON.stringify(payload) });
+    toast("AI overrides saved for " + email);
+    loadAdmin();
+  } catch (e) { toast(e.message); }
 }
 
 async function setRole(email, role) {
@@ -696,10 +840,11 @@ function renderProviders(providers) {
 }
 
 const FN_LABELS = {
-  vision_estimate: "Photo → nutrition (needs vision model)",
-  text_parse: "Meal text → nutrition",
-  chat: "Chat / coaching",
-  daily_summary: "Daily recap",
+  vision_estimate: "Image interpretation — photo → nutrition",
+  text_parse: "Normal AI — meal text → nutrition",
+  chat: "Normal AI — chat / coaching",
+  daily_summary: "Normal AI — daily recap",
+  web_lookup: "Normal AI — web-search lookup",
 };
 
 function renderFunctions(functions, providers) {
