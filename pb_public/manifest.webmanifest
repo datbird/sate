@@ -1,12 +1,14 @@
 {
   "name": "Sate — calorie chat",
   "short_name": "Sate",
-  "description": "Log food by chat or photo; AI counts the calories.",
+  "description": "Understand every meal, without the manual logging.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f1113",
+  "background_color": "#ffffff",
   "theme_color": "#16a34a",
   "icons": [
-    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
