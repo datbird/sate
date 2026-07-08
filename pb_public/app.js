@@ -117,12 +117,52 @@ async function logText() {
   try {
     const r = await api("/log/text", { method: "POST", body: JSON.stringify({ text }) });
     input.value = "";
-    $("#chatline").textContent = r.note || `Logged ${fmt(r.entry.kcal)} kcal.`;
+    renderChatResult(r);
     refreshToday();
   } catch (e) {
     toast(e.message);
   } finally {
     setBusy(false);
+  }
+}
+
+function renderChatResult(r) {
+  const cl = $("#chatline");
+  cl.innerHTML = "";
+  const msg = document.createElement("div");
+  msg.className = "chatmsg";
+  msg.textContent = r.note || `Logged ${fmt(r.entry.kcal)} kcal.`;
+  cl.appendChild(msg);
+  // Not found in the local DB → offer an on-demand web search to replace the guess.
+  if (!r.in_db) {
+    const warn = document.createElement("div");
+    warn.className = "chatwarn";
+    warn.textContent = "⚠ Not in your food database — this is a best guess.";
+    cl.appendChild(warn);
+    const btn = document.createElement("button");
+    btn.className = "primary websearch";
+    btn.textContent = "🔎 Search the web";
+    btn.onclick = () => webLookup(r.entry.id, btn);
+    cl.appendChild(btn);
+  }
+}
+
+async function webLookup(entryId, btn) {
+  btn.disabled = true;
+  btn.textContent = "Searching the web…";
+  try {
+    const r = await api("/entries/" + entryId + "/web-lookup", { method: "POST" });
+    const cl = $("#chatline");
+    cl.innerHTML = "";
+    const m = document.createElement("div");
+    m.className = "chatmsg";
+    m.textContent = r.note || `Updated to ${fmt(r.entry.kcal)} kcal from the web.`;
+    cl.appendChild(m);
+    refreshToday();
+  } catch (e) {
+    toast(e.message);
+    btn.disabled = false;
+    btn.textContent = "🔎 Search the web";
   }
 }
 
@@ -223,6 +263,7 @@ async function loadAdmin() {
   renderFunctions(functions, providers);
   renderUsers(usersResp.users);
   loadFoods("");
+  loadSources();
 }
 
 function renderInstance(s) {
@@ -416,6 +457,63 @@ $("#foodSearch").addEventListener("keydown", (ev) => {
 });
 $("#foodSaveBtn").addEventListener("click", saveFood);
 $("#foodClearBtn").addEventListener("click", clearFoodEditor);
+
+// ---------------------------------------------------- nutrition sources
+async function loadSources() {
+  let r;
+  try { r = await api("/admin/sources"); } catch (e) { toast(e.message); return; }
+  const wrap = $("#sourcesList");
+  wrap.innerHTML = "";
+  if (!r.sources.length) { wrap.innerHTML = '<div class="hint">No sources yet.</div>'; return; }
+  r.sources.forEach((s) => wrap.appendChild(sourceRow(s)));
+}
+
+function sourceRow(s) {
+  const el = document.createElement("div");
+  el.className = "source" + (s.enabled ? "" : " off");
+  const body = document.createElement("div");
+  body.className = "fbody";
+  body.innerHTML =
+    `<div class="fname">${escapeHtml(s.title)}</div>` +
+    `<div class="fsub"><a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.domain || s.url)}</a>` +
+    (s.notes ? ` · ${escapeHtml(s.notes)}` : "") + `</div>`;
+  const toggle = document.createElement("label");
+  toggle.className = "switch";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = s.enabled;
+  cb.onchange = () => saveSource({ id: s.id, title: s.title, url: s.url, notes: s.notes, enabled: cb.checked }, true);
+  toggle.appendChild(cb);
+  const del = document.createElement("button");
+  del.className = "fx danger"; del.title = "delete"; del.textContent = "✕";
+  del.onclick = () => deleteSource(s);
+  el.appendChild(body); el.appendChild(toggle); el.appendChild(del);
+  return el;
+}
+
+async function saveSource(payload, quiet) {
+  try {
+    await api("/admin/sources", { method: "PUT", body: JSON.stringify(payload) });
+    if (!quiet) {
+      $("#sTitle").value = ""; $("#sUrl").value = ""; $("#sNotes").value = ""; $("#sEnabled").checked = true;
+      toast("Source added");
+    }
+    loadSources();
+  } catch (e) { toast(e.message); }
+}
+
+async function deleteSource(s) {
+  if (!confirm(`Remove “${s.title}” from your nutrition sources?`)) return;
+  try { await api("/admin/sources/" + s.id, { method: "DELETE" }); loadSources(); }
+  catch (e) { toast(e.message); }
+}
+
+$("#sourceSaveBtn").addEventListener("click", () => {
+  const title = $("#sTitle").value.trim();
+  const url = $("#sUrl").value.trim();
+  if (!title || !url) return toast("title and url are required");
+  saveSource({ title, url, notes: $("#sNotes").value.trim(), enabled: $("#sEnabled").checked }, false);
+});
 
 function renderProviders(providers) {
   const wrap = $("#providers");

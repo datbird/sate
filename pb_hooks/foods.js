@@ -63,6 +63,29 @@ function searchByText(app, text) {
   return matches.slice(0, 12).map((m) => m.f);
 }
 
+// Are the meaningful words of the meal actually covered by the matched foods? A lone generic
+// ingredient hit ("beef" in "beef rendang") shouldn't count the dish as known — that's exactly
+// when a web search is worth offering. Substring matching both ways absorbs plurals/variants
+// (egg/eggs, toast/toasted).
+function coverageOk(text, records) {
+  if (!records || !records.length) return false;
+  const words = norm(text).split(" ").filter((w) => w.length >= 4 && STOP.indexOf(w) === -1);
+  if (!words.length) return true; // nothing distinctive to cover — a match is enough
+  const covered = [];
+  for (const f of records) {
+    const names = [norm(f.getString("name"))].concat(readAliases(f).map(norm));
+    for (const nm of names) for (const w of nm.split(" ")) if (w.length >= 3) covered.push(w);
+  }
+  for (const w of words) {
+    let ok = false;
+    for (const c of covered) {
+      if (w === c || w.indexOf(c) !== -1 || c.indexOf(w) !== -1) { ok = true; break; }
+    }
+    if (!ok) return false;
+  }
+  return true;
+}
+
 function referenceBlock(records) {
   if (!records || !records.length) return "";
   const lines = records.map((f) => {
@@ -89,8 +112,9 @@ function bumpUsage(app, records) {
 
 // Auto-save newly seen foods as unverified (self-growth). Existing entries: bump usage,
 // never overwrite verified/seed values.
-function upsertItems(app, items) {
+function upsertItems(app, items, source) {
   if (!Array.isArray(items)) return;
+  const src = source || "ai";
   for (const item of items) {
     const name = String((item && item.name) || "").trim();
     if (!name || name.length < 2) continue;
@@ -103,6 +127,16 @@ function upsertItems(app, items) {
     }
     if (rec) {
       try {
+        // A web lookup is authoritative — upgrade a stale, unverified guess in place
+        // (but never overwrite seed data or an admin-verified record).
+        if (src === "web" && !rec.getBool("verified") && rec.getString("source") !== "seed") {
+          rec.set("kcal", num(item.kcal));
+          rec.set("protein", num(item.protein));
+          rec.set("carbs", num(item.carbs));
+          rec.set("fat", num(item.fat));
+          if (item.qty) rec.set("serving_desc", String(item.qty));
+          rec.set("source", "web");
+        }
         rec.set("usage_count", (rec.getFloat("usage_count") || 0) + 1);
         app.save(rec);
       } catch (_) {}
@@ -119,7 +153,7 @@ function upsertItems(app, items) {
       r.set("fat", num(item.fat));
       r.set("category", "");
       r.set("aliases", []);
-      r.set("source", "ai");
+      r.set("source", src);
       r.set("verified", false);
       r.set("usage_count", 1);
       r.set("search", name.toLowerCase());
@@ -131,4 +165,4 @@ function upsertItems(app, items) {
   }
 }
 
-module.exports = { norm, normKey, num, readAliases, searchByText, referenceBlock, bumpUsage, upsertItems };
+module.exports = { norm, normKey, num, readAliases, searchByText, coverageOk, referenceBlock, bumpUsage, upsertItems };

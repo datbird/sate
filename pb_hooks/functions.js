@@ -2,18 +2,30 @@
 
 // Function registry, prompts, key encryption, and config resolution.
 
-const FUNCTIONS = ["vision_estimate", "text_parse", "chat", "daily_summary"];
+const FUNCTIONS = ["vision_estimate", "text_parse", "chat", "daily_summary", "web_lookup"];
+
+const NUTRITION_SCHEMA =
+  '{"items":[{"name":string,"qty":string,"kcal":number,"protein":number,"carbs":number,"fat":number}],' +
+  '"total":{"kcal":number,"protein":number,"carbs":number,"fat":number},"note":string}';
 
 const NUTRITION_SYSTEM =
   "You are a nutrition estimation engine. Given a description or photo of food, estimate its " +
   "nutrition for the portion shown. Respond ONLY with strict minified JSON (no markdown, no " +
-  "code fences) matching exactly:\n" +
-  '{"items":[{"name":string,"qty":string,"kcal":number,"protein":number,"carbs":number,"fat":number}],' +
-  '"total":{"kcal":number,"protein":number,"carbs":number,"fat":number},"note":string}\n' +
+  "code fences) matching exactly:\n" + NUTRITION_SCHEMA + "\n" +
   "protein/carbs/fat are grams. Estimate typical serving sizes when unspecified. If the message " +
   "includes a 'Known foods from the database' list, use those per-serving values for matching " +
   "items (scaled to the amount eaten) instead of estimating. If no food is " +
   'identifiable, return {"items":[],"total":{"kcal":0,"protein":0,"carbs":0,"fat":0},"note":"..."}.';
+
+const WEB_LOOKUP_SYSTEM =
+  "You are a nutrition research engine with live web search. The user names a food or meal that " +
+  "wasn't in the local database. Use web search to find authoritative per-serving nutrition data, " +
+  "then estimate the nutrition for the portion the user described. Strongly prefer the authoritative " +
+  "references listed under 'Preferred sources' when present; you may consult other reputable " +
+  "nutrition databases only if those don't cover the food. Respond ONLY with strict minified JSON " +
+  "(no markdown, no code fences) matching exactly:\n" + NUTRITION_SCHEMA + "\n" +
+  "protein/carbs/fat are grams. In the note field, briefly name which source(s) you used. If nothing " +
+  'is identifiable, return {"items":[],"total":{"kcal":0,"protein":0,"carbs":0,"fat":0},"note":"..."}.';
 
 const CHAT_SYSTEM =
   "You are Sate, a friendly, concise calorie and nutrition coach. Help the user understand and " +
@@ -30,6 +42,9 @@ const PROMPTS = {
   text_parse: { system: NUTRITION_SYSTEM, jsonMode: true },
   chat: { system: CHAT_SYSTEM, jsonMode: false },
   daily_summary: { system: DAILY_SUMMARY_SYSTEM, jsonMode: false },
+  // Web search grounding can't be combined with forced-JSON response modes, so jsonMode is
+  // off and the reply is parsed defensively (parseJSON strips any prose/fences).
+  web_lookup: { system: WEB_LOOKUP_SYSTEM, jsonMode: false },
 };
 
 // ---- encryption of provider API keys (AES-256-GCM via $security) ----

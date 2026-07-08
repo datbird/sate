@@ -17,6 +17,7 @@
 //   }
 
 const TIMEOUT = 120;
+const WEB_TIMEOUT = 180; // web search adds round-trips
 const MAX_TOKENS = 2048;
 
 function lastUserIndex(messages) {
@@ -58,11 +59,13 @@ function runAnthropic(req) {
     },
     body: JSON.stringify({
       model: req.model,
-      max_tokens: MAX_TOKENS,
+      max_tokens: req.webSearch ? 4096 : MAX_TOKENS,
       system: req.system || undefined,
       messages: messages,
+      // Web search server tool (basic variant — widely supported across Claude models).
+      tools: req.webSearch ? [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }] : undefined,
     }),
-    timeout: TIMEOUT,
+    timeout: req.webSearch ? WEB_TIMEOUT : TIMEOUT,
   });
   if (res.statusCode >= 300) fail("anthropic", res);
 
@@ -91,6 +94,13 @@ function runOpenAI(req) {
       messages.push({ role: m.role, content: m.text });
     }
   });
+
+  if (req.webSearch) {
+    throw new Error(
+      "web search isn't supported for the OpenAI provider in this build — " +
+        "assign the Web lookup function to Google or Anthropic."
+    );
+  }
 
   const body = { model: req.model, messages: messages };
   if (req.jsonMode) body.response_format = { type: "json_object" };
@@ -122,7 +132,8 @@ function runGoogle(req) {
   });
 
   const generationConfig = {};
-  if (req.jsonMode) generationConfig.responseMimeType = "application/json";
+  // JSON response mime can't be combined with the search-grounding tool.
+  if (req.jsonMode && !req.webSearch) generationConfig.responseMimeType = "application/json";
 
   const base = req.baseUrl || "https://generativelanguage.googleapis.com";
   const res = $http.send({
@@ -133,8 +144,9 @@ function runGoogle(req) {
       systemInstruction: req.system ? { parts: [{ text: req.system }] } : undefined,
       contents: contents,
       generationConfig: generationConfig,
+      tools: req.webSearch ? [{ google_search: {} }] : undefined,
     }),
-    timeout: TIMEOUT,
+    timeout: req.webSearch ? WEB_TIMEOUT : TIMEOUT,
   });
   if (res.statusCode >= 300) fail("google", res);
 

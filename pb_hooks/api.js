@@ -212,6 +212,43 @@ function estimate(app, fn, userText, image) {
     FOODS.upsertItems(app, parsed.items);
   } catch (_) {}
 
+  // Only *verified* foods (seed/admin-confirmed) count as "known" for suppressing the web
+  // button — an unverified AI guess is exactly what a web search should be able to replace.
+  const trusted = matched.filter((f) => f.getBool("verified"));
+  const inDb = fn === "text_parse" ? FOODS.coverageOk(userText, trusted) : false;
+  return { parsed: parsed, provider: cfg.provider, model: cfg.model, inDb: inDb };
+}
+
+// Build a "prefer these sources" hint from the curated nutrition URLs for web lookups.
+function sourcesHint(app) {
+  let recs = [];
+  try {
+    recs = app.findRecordsByFilter("sources", "enabled = true", "title", 50, 0, {});
+  } catch (_) {
+    recs = [];
+  }
+  if (!recs.length) return "";
+  const lines = recs.map((r) => `- ${r.getString("title")}: ${r.getString("url")}`);
+  return "Preferred sources (consult these authoritative nutrition references first):\n" + lines.join("\n");
+}
+
+// Web-grounded estimate for a food/meal not found in the local database.
+function webEstimate(app, text) {
+  const cfg = F.resolveFunction(app, "web_lookup");
+  const hint = sourcesHint(app);
+  const userMsg = (hint ? hint + "\n\n" : "") + "Food/meal to research and estimate:\n" + text;
+  const reply = P.runProvider({
+    provider: cfg.provider,
+    apiKey: cfg.apiKey,
+    baseUrl: cfg.baseUrl,
+    model: cfg.model,
+    system: F.PROMPTS.web_lookup.system,
+    messages: [{ role: "user", text: userMsg }],
+    webSearch: true,
+    jsonMode: false,
+  });
+  const parsed = F.normalizeNutrition(F.parseJSON(reply));
+  try { FOODS.upsertItems(app, parsed.items, "web"); } catch (_) {}
   return { parsed: parsed, provider: cfg.provider, model: cfg.model };
 }
 
@@ -262,6 +299,43 @@ function logText(e) {
       provider: r.provider,
       model: r.model,
     });
+    return e.json(200, {
+      entry: entryJSON(rec),
+      note: r.parsed.note,
+      in_db: r.inDb,
+      totals: sumTotals(dayEntries(app, email, todayStr())),
+    });
+  } catch (err) {
+    return e.json(502, { error: String(err.message || err) });
+  }
+}
+
+// Re-estimate an existing entry using web search, then update it in place.
+function webLookupEntry(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const id = e.request.pathValue("id");
+  let rec;
+  try {
+    rec = app.findRecordById("entries", id);
+  } catch (_) {
+    return e.json(404, { error: "not found" });
+  }
+  if (rec.getString("user_email") !== email) return e.json(403, { error: "forbidden" });
+  const text = rec.getString("description");
+  if (!text || text === "(photo)") return e.json(400, { error: "entry has no description to search" });
+  try {
+    const r = webEstimate(app, text);
+    rec.set("source", "web");
+    rec.set("items", r.parsed.items);
+    rec.set("kcal", r.parsed.total.kcal);
+    rec.set("protein", r.parsed.total.protein);
+    rec.set("carbs", r.parsed.total.carbs);
+    rec.set("fat", r.parsed.total.fat);
+    rec.set("provider", r.provider);
+    rec.set("model", r.model);
+    app.save(rec);
     return e.json(200, {
       entry: entryJSON(rec),
       note: r.parsed.note,
@@ -711,6 +785,63 @@ function adminDeleteFood(e) {
   return e.json(200, { deleted: id });
 }
 
+// ---- admin: curated nutrition sources ----
+
+function sourceJSON(r) {
+  return {
+    id: r.id,
+    title: r.getString("title"),
+    url: r.getString("url"),
+    domain: r.getString("domain"),
+    notes: r.getString("notes"),
+    enabled: r.getBool("enabled"),
+  };
+}
+
+function adminGetSources(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  let recs = [];
+  try { recs = e.app.findRecordsByFilter("sources", "id != ''", "title", 200, 0, {}); }
+  catch (err) { return e.json(500, { error: String(err.message || err) }); }
+  return e.json(200, { sources: recs.map(sourceJSON) });
+}
+
+function adminPutSource(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const b = e.requestInfo().body || {};
+  const title = String(b.title || "").trim();
+  let url = String(b.url || "").trim();
+  if (!title || !url) return e.json(400, { error: "title and url are required" });
+  if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+  let rec;
+  if (b.id) {
+    try { rec = app.findRecordById("sources", String(b.id)); }
+    catch (_) { return e.json(404, { error: "not found" }); }
+  } else {
+    rec = new Record(app.findCollectionByNameOrId("sources"));
+  }
+  rec.set("title", title);
+  rec.set("url", url);
+  rec.set("domain", url.replace(/^https?:\/\//i, "").split("/")[0]);
+  rec.set("notes", String(b.notes || ""));
+  rec.set("enabled", b.enabled === undefined ? true : !!b.enabled);
+  try { app.save(rec); }
+  catch (err) { return e.json(400, { error: String(err.message || err) }); }
+  return e.json(200, { ok: true, source: sourceJSON(rec) });
+}
+
+function adminDeleteSource(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const id = e.request.pathValue("id");
+  try { e.app.delete(e.app.findRecordById("sources", id)); }
+  catch (_) { return e.json(404, { error: "not found" }); }
+  return e.json(200, { deleted: id });
+}
+
 module.exports = {
   me,
   logText,
@@ -732,4 +863,8 @@ module.exports = {
   adminGetFoods,
   adminPutFood,
   adminDeleteFood,
+  webLookupEntry,
+  adminGetSources,
+  adminPutSource,
+  adminDeleteSource,
 };

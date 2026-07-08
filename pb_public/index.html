@@ -11,7 +11,7 @@
     <link rel="icon" href="/icons/icon-192.png?v2" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png?v2" />
     <script>try{var t=localStorage.getItem('sate-theme');if(t&&t!=='system')document.documentElement.dataset.theme=t;}catch(e){}</script>
-    <link rel="stylesheet" href="/style.css?v6" />
+    <link rel="stylesheet" href="/style.css?v7" />
   </head>
   <body>
     <header class="topbar">
@@ -147,6 +147,24 @@
             <button class="primary" id="foodSaveBtn">Save food</button>
           </div>
         </div>
+
+        <h3 class="section">Nutrition sources</h3>
+        <p class="hint">Trusted sites the “Search the web” button prefers when a food isn’t in the database. Toggle off any you don’t trust.</p>
+        <div class="sources" id="sourcesList"></div>
+        <div class="fooded">
+          <h4>Add source</h4>
+          <div class="grid2">
+            <input type="text" id="sTitle" placeholder="title, e.g. USDA FoodData Central" />
+            <input type="text" id="sUrl" placeholder="https://…" />
+          </div>
+          <div class="grid2" style="margin-top:8px">
+            <input type="text" id="sNotes" placeholder="notes (optional)" />
+            <label class="switch"><input type="checkbox" id="sEnabled" checked /> enabled</label>
+          </div>
+          <div class="row end" style="margin-top:10px">
+            <button class="primary" id="sourceSaveBtn">Add source</button>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -166,6 +184,6 @@
     </dialog>
 
     <div class="toast" id="toast" hidden></div>
-    <script src="/app.js?v6"></script>
+    <script src="/app.js?v7"></script>
   </body>
 </html>
