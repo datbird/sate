@@ -10,8 +10,16 @@
   --radius: 14px;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
+:root[data-theme="dark"] {
+  --bg: #0f1113;
+  --card: #191c1f;
+  --ink: #e8eaed;
+  --muted: #9aa0a6;
+  --line: #2a2e33;
+  --shadow: none;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0f1113;
     --card: #191c1f;
     --ink: #e8eaed;
@@ -43,7 +51,19 @@ body {
   font-weight: 600; padding: 6px 10px; border-radius: 8px; cursor: pointer;
 }
 .tabs button.active { color: var(--brand); background: color-mix(in srgb, var(--brand) 12%, transparent); }
-.who { font-size: 12px; color: var(--muted); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usermenu { position: relative; }
+.who { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 12px; color: var(--muted); background: transparent; border: 0; cursor: pointer; max-width: 160px; padding: 5px 7px; border-radius: 8px; }
+.who .who-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who .caret { font-size: 9px; opacity: .8; }
+.who:hover { background: color-mix(in srgb, var(--muted) 16%, transparent); }
+.menu { position: absolute; right: 0; top: calc(100% + 8px); background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 34px rgba(0,0,0,.28); padding: 6px; min-width: 214px; z-index: 30; }
+.menu-email { font-size: 12px; color: var(--muted); padding: 6px 8px; word-break: break-all; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.menu-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 6px 8px 5px; }
+.seg { display: flex; gap: 4px; padding: 0 4px 4px; }
+.seg button { flex: 1; border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 8px; padding: 7px 4px; font: inherit; font-size: 12px; cursor: pointer; }
+.seg button.active { color: var(--brand); border-color: var(--brand); background: color-mix(in srgb, var(--brand) 12%, transparent); }
+.menu-item { display: block; padding: 9px 8px; margin-top: 4px; color: var(--ink); text-decoration: none; border-radius: 8px; font-size: 13px; border-top: 1px solid var(--line); }
+.menu-item:hover { background: var(--bg); }
 
 main { max-width: 620px; margin: 0 auto; padding: 16px 14px 40px; }
 .view { animation: fade .2s ease; }

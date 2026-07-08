@@ -21,6 +21,29 @@ function toast(msg) {
   toast._t = setTimeout(() => (t.hidden = true), 2600);
 }
 
+// ---------------------------------------------------- appearance / user menu
+function applyTheme(t) {
+  if (t === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("sate-theme", t); } catch (e) {}
+  $$('#themeSeg [data-theme-choice]').forEach((b) => b.classList.toggle("active", b.dataset.themeChoice === t));
+}
+(function userMenu() {
+  let saved = "system";
+  try { saved = localStorage.getItem("sate-theme") || "system"; } catch (e) {}
+  applyTheme(saved);
+  const btn = $("#userBtn"), menu = $("#userMenu");
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = menu.hidden;
+    menu.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+  });
+  document.addEventListener("click", () => { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); });
+  menu.addEventListener("click", (e) => e.stopPropagation());
+  $$('#themeSeg [data-theme-choice]').forEach((b) => b.addEventListener("click", () => applyTheme(b.dataset.themeChoice)));
+})();
+
 function fmt(n) { return Math.round(Number(n) || 0).toLocaleString(); }
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 
@@ -375,6 +398,7 @@ async function boot() {
     return;
   }
   $("#who").textContent = ME.email;
+  $("#menuEmail").textContent = ME.email;
   if (ME.app_name) { $("#brandName").textContent = ME.app_name; document.title = ME.app_name + " — calorie chat"; }
   if (ME.isAdmin) $("#adminTab").hidden = false;
   $("#histDate").value = todayISO();
