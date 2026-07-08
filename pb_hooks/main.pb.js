@@ -33,3 +33,5 @@ routerAdd("PUT", "/api/sate/admin/sources", (e) => require(`${__hooks}/api.js`).
 routerAdd("DELETE", "/api/sate/admin/sources/{id}", (e) => require(`${__hooks}/api.js`).adminDeleteSource(e));
 routerAdd("GET", "/api/sate/admin/prompts", (e) => require(`${__hooks}/api.js`).adminGetPrompts(e));
 routerAdd("PUT", "/api/sate/admin/prompts", (e) => require(`${__hooks}/api.js`).adminPutPrompt(e));
+routerAdd("GET", "/api/sate/admin/lookup", (e) => require(`${__hooks}/api.js`).adminGetLookup(e));
+routerAdd("PUT", "/api/sate/admin/lookup", (e) => require(`${__hooks}/api.js`).adminPutLookup(e));

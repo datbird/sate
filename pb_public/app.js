@@ -336,7 +336,40 @@ async function loadAdmin() {
   loadFoods("");
   loadSources();
   loadPrompts();
+  loadLookup();
 }
+
+// ---------------------------------------------------- barcode lookup sources
+async function loadLookup() {
+  let r;
+  try { r = await api("/admin/lookup"); } catch (e) { return; }
+  $("#lk_usda").value = "";
+  $("#lk_usda").placeholder = r.usda.set ? "key set — " + r.usda.hint + " (blank keeps it)" : "paste key, or leave blank for DEMO_KEY";
+  $("#lk_nix_id").value = r.nutritionix.app_id || "";
+  $("#lk_nix_key").value = "";
+  $("#lk_nix_key").placeholder = r.nutritionix.set ? "set — " + r.nutritionix.hint + " (blank keeps it)" : "x-app-key";
+  $("#lk_fs_id").value = r.fatsecret.client_id || "";
+  $("#lk_fs_secret").value = "";
+  $("#lk_fs_secret").placeholder = r.fatsecret.set ? "set — " + r.fatsecret.hint + " (blank keeps it)" : "client secret";
+  const on = [];
+  if (r.usda.set) on.push("USDA"); if (r.nutritionix.set) on.push("Nutritionix"); if (r.fatsecret.set) on.push("FatSecret");
+  $("#lookupMeta").innerHTML = '<span class="badge">chain: local → Open Food Facts' +
+    (on.length ? " → " + on.join(" → ") : "") + "</span>";
+}
+
+async function saveLookup() {
+  const payload = {
+    usda_api_key: $("#lk_usda").value.trim(),
+    nutritionix_app_id: $("#lk_nix_id").value.trim(),
+    nutritionix_app_key: $("#lk_nix_key").value.trim(),
+    fatsecret_client_id: $("#lk_fs_id").value.trim(),
+    fatsecret_client_secret: $("#lk_fs_secret").value.trim(),
+  };
+  try { await api("/admin/lookup", { method: "PUT", body: JSON.stringify(payload) }); toast("Lookup sources saved"); loadLookup(); }
+  catch (e) { toast(e.message); }
+}
+
+$("#lookupSaveBtn").addEventListener("click", saveLookup);
 
 // ---------------------------------------------------- editable AI prompts
 async function loadPrompts() {

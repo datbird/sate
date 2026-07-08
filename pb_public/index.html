@@ -11,7 +11,7 @@
     <link rel="icon" href="/icons/icon-192.png?v2" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png?v2" />
     <script>try{var t=localStorage.getItem('sate-theme');if(t&&t!=='system')document.documentElement.dataset.theme=t;}catch(e){}</script>
-    <link rel="stylesheet" href="/style.css?v10" />
+    <link rel="stylesheet" href="/style.css?v11" />
   </head>
   <body>
     <header class="topbar">
@@ -172,6 +172,26 @@
             <button class="primary" id="sourceSaveBtn">Add source</button>
           </div>
         </div>
+
+        <h3 class="section">Barcode lookup sources</h3>
+        <p class="hint">When a scanned barcode isn’t in the food database, Sate queries these in order. Open Food Facts needs no key; add keys to widen coverage. Keys are shown only by their last 4.</p>
+        <div class="fooded">
+          <label class="field">USDA FoodData Central API key — free at <code>fdc.nal.usda.gov/api-key-signup</code>; blank uses the shared demo key (low limits)
+            <input type="password" id="lk_usda" placeholder="paste key, or leave blank for DEMO_KEY" />
+          </label>
+          <div class="grid2" style="margin-top:8px">
+            <label class="field">Nutritionix App ID <input type="text" id="lk_nix_id" placeholder="x-app-id" /></label>
+            <label class="field">Nutritionix App Key <input type="password" id="lk_nix_key" placeholder="x-app-key" /></label>
+          </div>
+          <div class="grid2" style="margin-top:8px">
+            <label class="field">FatSecret Client ID <input type="text" id="lk_fs_id" placeholder="client id" /></label>
+            <label class="field">FatSecret Client Secret <input type="password" id="lk_fs_secret" placeholder="client secret" /></label>
+          </div>
+          <div class="row end" style="margin-top:10px">
+            <button class="primary" id="lookupSaveBtn">Save lookup sources</button>
+          </div>
+          <div class="meta" id="lookupMeta"></div>
+        </div>
       </section>
     </main>
 
@@ -201,6 +221,6 @@
 
     <div class="toast" id="toast" hidden></div>
     <script src="/vendor/html5-qrcode.min.js"></script>
-    <script src="/app.js?v10"></script>
+    <script src="/app.js?v11"></script>
   </body>
 </html>

@@ -403,7 +403,176 @@ function fetchOpenFoodFacts(code) {
     kcal: Math.round(kcal), protein: r1(protein), carbs: r1(carbs), fat: r1(fat) };
 }
 
-// Log a scanned barcode: local foods DB first, then Open Food Facts (cached into foods).
+function r1x(x) { return Math.round((Number(x) || 0) * 10) / 10; }
+
+// Barcode-lookup source credentials (stored in settings; all optional).
+function lookupCfg(app) {
+  const s = settingsMap(app);
+  return {
+    usdaKey: (s.usda_api_key || "").trim(),
+    nixId: (s.nutritionix_app_id || "").trim(),
+    nixKey: (s.nutritionix_app_key || "").trim(),
+    fsId: (s.fatsecret_client_id || "").trim(),
+    fsSecret: (s.fatsecret_client_secret || "").trim(),
+  };
+}
+
+function normUpc(s) { return String(s || "").replace(/^0+/, ""); }
+
+// USDA FoodData Central Branded search by UPC (free key or the shared DEMO_KEY; public domain).
+function fetchUSDA(code, apiKey) {
+  const key = apiKey || "DEMO_KEY";
+  const url = "https://api.nal.usda.gov/fdc/v1/foods/search?api_key=" + encodeURIComponent(key) +
+    "&dataType=Branded&pageSize=10&query=" + encodeURIComponent(code);
+  let res;
+  try { res = $http.send({ url: url, method: "GET", timeout: 20 }); } catch (_) { return null; }
+  if (res.statusCode >= 300 || !res.json) return null; // incl. 429 OVER_RATE_LIMIT → skip gracefully
+  const foods = res.json.foods || [];
+  let hit = null;
+  for (const f of foods) { if (normUpc(f.gtinUpc) === normUpc(code)) { hit = f; break; } }
+  if (!hit) return null;
+  const sg = Number(hit.servingSize) || 0;
+  const ln = hit.labelNutrients || {};
+  const lv = (o) => (o && isFinite(o.value)) ? Number(o.value) : 0;
+  // Prefer the Nutrition-Facts label values (already per serving)...
+  let kcal = lv(ln.calories), protein = lv(ln.protein), carbs = lv(ln.carbohydrates), fat = lv(ln.fat);
+  // ...else fall back to the per-100g foodNutrients array scaled by the serving weight.
+  if (!(kcal > 0)) {
+    const per = {};
+    for (const n of (hit.foodNutrients || [])) {
+      const id = String(n.nutrientId || n.nutrientNumber || "");
+      const v = Number(n.value);
+      if (!isFinite(v)) continue;
+      if ((id === "1008" || id === "208" || id === "2048" || id === "2047") && per.kcal === undefined) per.kcal = v;
+      else if (id === "1003" || id === "203") per.protein = v;
+      else if (id === "1004" || id === "204") per.fat = v;
+      else if (id === "1005" || id === "205") per.carbs = v;
+    }
+    if (per.kcal > 0) {
+      const f = sg ? sg / 100 : 1;
+      kcal = per.kcal * f; protein = (per.protein || 0) * f; carbs = (per.carbs || 0) * f; fat = (per.fat || 0) * f;
+    }
+  }
+  if (!(kcal > 0)) return null;
+  const servingG = sg || 100;
+  const sdesc = sg ? (hit.householdServingFullText || (sg + " " + (hit.servingSizeUnit || "g"))) : "100 g";
+  return { name: String(hit.description || "").trim().slice(0, 58),
+    brand: String(hit.brandName || hit.brandOwner || "").trim().slice(0, 30),
+    serving_desc: String(sdesc).slice(0, 40), serving_g: Math.round(servingG),
+    kcal: Math.round(kcal), protein: r1x(protein), carbs: r1x(carbs), fat: r1x(fat) };
+}
+
+// Nutritionix UPC item lookup (BYO app id/key; best US branded + restaurant coverage).
+function fetchNutritionix(code, appId, appKey) {
+  if (!appId || !appKey) return null;
+  const url = "https://trackapi.nutritionix.com/v2/search/item?upc=" + encodeURIComponent(code);
+  let res;
+  try { res = $http.send({ url: url, method: "GET",
+    headers: { "x-app-id": appId, "x-app-key": appKey }, timeout: 20 }); } catch (_) { return null; }
+  if (res.statusCode >= 300 || !res.json) return null;
+  const f = (res.json.foods || [])[0];
+  if (!f) return null;
+  const kcal = num(f.nf_calories);
+  if (!(kcal > 0)) return null;
+  const sdesc = (f.serving_qty && f.serving_unit) ? (f.serving_qty + " " + f.serving_unit) : "1 serving";
+  return { name: String(f.food_name || "").trim().slice(0, 58), brand: String(f.brand_name || "").trim().slice(0, 30),
+    serving_desc: String(sdesc).slice(0, 40), serving_g: Math.round(num(f.serving_weight_grams)),
+    kcal: Math.round(kcal), protein: r1x(f.nf_protein), carbs: r1x(f.nf_total_carbohydrate), fat: r1x(f.nf_total_fat) };
+}
+
+function b64(str) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let out = ""; let i = 0; const b = [];
+  for (let k = 0; k < str.length; k++) b.push(str.charCodeAt(k) & 0xff);
+  while (i < b.length) {
+    const c1 = b[i++], c2 = i < b.length ? b[i++] : NaN, c3 = i < b.length ? b[i++] : NaN;
+    const e1 = c1 >> 2, e2 = ((c1 & 3) << 4) | (c2 >> 4);
+    const e3 = isNaN(c2) ? 64 : (((c2 & 15) << 2) | (c3 >> 6)), e4 = isNaN(c3) ? 64 : (c3 & 63);
+    out += chars[e1] + chars[e2] + (e3 === 64 ? "=" : chars[e3]) + (e4 === 64 ? "=" : chars[e4]);
+  }
+  return out;
+}
+
+// FatSecret OAuth2 token (client_credentials), cached in settings until near expiry.
+function fatsecretToken(app, id, secret) {
+  const now = Math.floor(Date.now() / 1000);
+  const s = settingsMap(app);
+  if (s._fs_token && Number(s._fs_token_exp || 0) > now + 30) return s._fs_token;
+  let res;
+  try {
+    res = $http.send({ url: "https://oauth.fatsecret.com/connect/token", method: "POST",
+      headers: { "Authorization": "Basic " + b64(id + ":" + secret),
+        "Content-Type": "application/x-www-form-urlencoded" },
+      body: "grant_type=client_credentials&scope=barcode+premier", timeout: 20 });
+  } catch (_) { return ""; }
+  if (res.statusCode >= 300 || !res.json || !res.json.access_token) return "";
+  const tok = res.json.access_token;
+  const exp = now + (Number(res.json.expires_in) || 3600);
+  try {
+    const col = app.findCollectionByNameOrId("settings");
+    for (const kv of [["_fs_token", tok], ["_fs_token_exp", String(exp)]]) {
+      let rec; try { rec = app.findFirstRecordByFilter("settings", "key = {:k}", { k: kv[0] }); }
+      catch (_) { rec = new Record(col); rec.set("key", kv[0]); }
+      rec.set("value", kv[1]); app.save(rec);
+    }
+  } catch (_) {}
+  return tok;
+}
+
+// FatSecret barcode → food_id → nutrition (BYO client id/secret; Premier tier for barcode scope).
+function fetchFatSecret(app, code, id, secret) {
+  if (!id || !secret) return null;
+  const tok = fatsecretToken(app, id, secret);
+  if (!tok) return null;
+  let res;
+  try {
+    res = $http.send({ url: "https://platform.fatsecret.com/rest/food/barcode/find-by-id/v1?format=json&barcode=" +
+      encodeURIComponent(code), method: "GET", headers: { "Authorization": "Bearer " + tok }, timeout: 20 });
+  } catch (_) { return null; }
+  if (res.statusCode >= 300 || !res.json) return null;
+  const fid = res.json.food_id && (res.json.food_id.value || res.json.food_id);
+  if (!fid || String(fid) === "0") return null;
+  let d;
+  try {
+    d = $http.send({ url: "https://platform.fatsecret.com/rest/food/v4?format=json&food_id=" + encodeURIComponent(fid),
+      method: "GET", headers: { "Authorization": "Bearer " + tok }, timeout: 20 });
+  } catch (_) { return null; }
+  if (d.statusCode >= 300 || !d.json || !d.json.food) return null;
+  const food = d.json.food;
+  let serv = food.servings && food.servings.serving;
+  if (Array.isArray(serv)) serv = serv[0];
+  if (!serv) return null;
+  const kcal = num(serv.calories);
+  if (!(kcal > 0)) return null;
+  return { name: String(food.food_name || "").trim().slice(0, 58), brand: String(food.brand_name || "").trim().slice(0, 30),
+    serving_desc: String(serv.serving_description || "1 serving").slice(0, 40),
+    serving_g: Math.round(num(serv.metric_serving_amount)),
+    kcal: Math.round(kcal), protein: r1x(serv.protein), carbs: r1x(serv.carbohydrate), fat: r1x(serv.fat) };
+}
+
+// Online barcode fallback chain: Open Food Facts → USDA → Nutritionix → FatSecret. Prefers the
+// first "complete" hit (has a real serving weight); otherwise keeps the first partial result.
+function barcodeLookupOnline(app, code) {
+  const cfg = lookupCfg(app);
+  const chain = [
+    { src: "off", via: "Open Food Facts", fn: () => fetchOpenFoodFacts(code) },
+    { src: "usda", via: "USDA FoodData Central", fn: () => fetchUSDA(code, cfg.usdaKey) },
+    { src: "nutritionix", via: "Nutritionix", fn: () => fetchNutritionix(code, cfg.nixId, cfg.nixKey) },
+    { src: "fatsecret", via: "FatSecret", fn: () => fetchFatSecret(app, code, cfg.fsId, cfg.fsSecret) },
+  ];
+  let partial = null;
+  for (const step of chain) {
+    let food = null;
+    try { food = step.fn(); } catch (_) {}
+    if (!food) continue;
+    const complete = food.kcal > 0 && food.serving_g > 0;
+    if (complete) return { food: food, via: step.via, src: step.src };
+    if (!partial) partial = { food: food, via: step.via, src: step.src };
+  }
+  return partial;
+}
+
+// Log a scanned barcode: local foods DB first, then the online fallback chain (cached into foods).
 function logBarcode(e) {
   const email = identity(e);
   if (!email) return e.json(401, { error: "not authenticated" });
@@ -429,16 +598,17 @@ function logBarcode(e) {
       carbs: food.getFloat("carbs"), fat: food.getFloat("fat") };
     try { food.set("usage_count", (food.getFloat("usage_count") || 0) + 1); app.save(food); } catch (_) {}
   } else {
-    const off = fetchOpenFoodFacts(code);
-    if (!off) return e.json(404, { error: "Barcode not found in the database or Open Food Facts.", barcode: code });
-    via = "Open Food Facts";
-    item = off;
+    const hit = barcodeLookupOnline(app, code);
+    if (!hit) return e.json(404, { error: "Barcode not found in the database, Open Food Facts, or your configured sources.", barcode: code });
+    via = hit.via;
+    item = hit.food;
+    const off = hit.food;
     try { // cache it so next scan is instant + it grows the DB
       const rec = new Record(app.findCollectionByNameOrId("foods"));
       rec.set("name", off.name); rec.set("brand", off.brand); rec.set("serving_desc", off.serving_desc);
       rec.set("serving_g", off.serving_g); rec.set("kcal", off.kcal); rec.set("protein", off.protein);
       rec.set("carbs", off.carbs); rec.set("fat", off.fat); rec.set("category", "");
-      rec.set("aliases", []); rec.set("barcode", code); rec.set("source", "off");
+      rec.set("aliases", []); rec.set("barcode", code); rec.set("source", hit.src);
       rec.set("verified", false); rec.set("usage_count", 1);
       rec.set("search", (off.name + " " + off.brand + " " + code).toLowerCase());
       rec.set("norm_key", FOODS.normKey(off.name, off.brand));
@@ -1008,6 +1178,50 @@ function adminPutPrompt(e) {
   return e.json(200, { ok: true });
 }
 
+// ---- admin: barcode-lookup source credentials ----
+
+function adminGetLookup(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const s = settingsMap(e.app);
+  const set = (v) => !!(v && String(v).trim());
+  return e.json(200, {
+    usda: { set: set(s.usda_api_key), hint: F.redact(s.usda_api_key) },
+    nutritionix: { app_id: s.nutritionix_app_id || "", set: set(s.nutritionix_app_key), hint: F.redact(s.nutritionix_app_key) },
+    fatsecret: { client_id: s.fatsecret_client_id || "", set: set(s.fatsecret_client_secret), hint: F.redact(s.fatsecret_client_secret) },
+  });
+}
+
+function adminPutLookup(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const b = e.requestInfo().body || {};
+  const col = app.findCollectionByNameOrId("settings");
+  const setKey = (k, v) => {
+    let rec;
+    try { rec = app.findFirstRecordByFilter("settings", "key = {:k}", { k: k }); }
+    catch (_) { rec = new Record(col); rec.set("key", k); }
+    rec.set("value", String(v));
+    app.save(rec);
+  };
+  const delKey = (k) => { try { app.delete(app.findFirstRecordByFilter("settings", "key = {:k}", { k: k })); } catch (_) {} };
+  // [key, isSecret] — secrets are kept when submitted blank (so you don't wipe them by re-saving)
+  const fields = [["usda_api_key", true], ["nutritionix_app_id", false], ["nutritionix_app_key", true],
+    ["fatsecret_client_id", false], ["fatsecret_client_secret", true]];
+  for (const f of fields) {
+    if (b[f[0]] === undefined) continue;
+    const v = String(b[f[0]]);
+    if (f[1] && v === "") continue;
+    setKey(f[0], v);
+  }
+  // FatSecret creds changed → drop the cached OAuth token so the new ones take effect
+  if (b.fatsecret_client_id !== undefined || b.fatsecret_client_secret !== undefined) {
+    delKey("_fs_token"); delKey("_fs_token_exp");
+  }
+  return e.json(200, { ok: true });
+}
+
 module.exports = {
   me,
   logText,
@@ -1036,4 +1250,6 @@ module.exports = {
   adminDeleteSource,
   adminGetPrompts,
   adminPutPrompt,
+  adminGetLookup,
+  adminPutLookup,
 };
