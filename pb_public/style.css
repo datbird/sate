@@ -42,7 +42,13 @@ body {
   color: var(--ink);
   min-height: 100dvh;
   padding-bottom: env(safe-area-inset-bottom);
+  /* Disable double-tap-to-zoom and the ~300ms tap delay it costs. Without this a WKWebView holds
+     each tap to watch for a second one, and a slightly-moving finger cancels the click entirely —
+     which is why buttons could feel dead. */
+  touch-action: manipulation;
 }
+button, a, input, textarea, select, label, .tabbar button { touch-action: manipulation; }
+button, a { -webkit-tap-highlight-color: transparent; }
 
 /* top bar */
 .topbar {
