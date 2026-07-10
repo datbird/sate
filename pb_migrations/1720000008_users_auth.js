@@ -26,8 +26,10 @@ migrate(
     col.passwordAuth = { enabled: false, identityFields: ["email"] };
     col.oauth2 = { enabled: false, providers: [] };
 
-    // Only the owner may read/update their own record; nothing is publicly listable.
-    col.listRule = "id = @request.auth.id";
+    // In apple mode PocketBase is internet-facing, so the generic record API matters.
+    // Nothing lists users (a filter rule would still answer anonymous callers with 200 + an
+    // empty page); only the owner may view or update their own record.
+    col.listRule = null;
     col.viewRule = "id = @request.auth.id";
     col.createRule = null; // records are created by the OAuth2 flow, never by clients
     col.updateRule = "id = @request.auth.id";
