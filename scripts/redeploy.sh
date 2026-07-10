@@ -53,6 +53,20 @@ else
   : > "$tmp/labels"
   RESTART="unless-stopped"
 fi
+# SATE_ENV adds or overrides environment variables without disturbing the ones carried over
+# from the running container. Newline-separated KEY=VALUE, e.g.
+#   SATE_ENV='AUTH_MODE=apple' ./scripts/redeploy.sh
+if [ -n "${SATE_ENV:-}" ]; then
+  printf '%s\n' "$SATE_ENV" | while IFS= read -r kv; do
+    [ -n "$kv" ] || continue
+    k="${kv%%=*}"
+    # drop any inherited value for this key, then append the new one
+    grep -v "^${k}=" "$tmp/env" > "$tmp/env.new" 2>/dev/null || : > "$tmp/env.new"
+    printf '%s\n' "$kv" >> "$tmp/env.new"
+    mv "$tmp/env.new" "$tmp/env"
+    echo "  env override: ${k}"
+  done
+fi
 chmod 600 "$tmp/env"
 
 # Refuse to build a container that would come up without its key or its database.
