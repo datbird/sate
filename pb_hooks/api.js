@@ -61,14 +61,14 @@ function identity(e) {
 // Public — the SPA calls this before it has any session, to decide whether to render a
 // Sign in with Apple button or assume the proxy already authenticated the request.
 function authConfig(e) {
+  // Reported in both modes: an operator needs to see that Apple is wired up *before* flipping
+  // AUTH_MODE to apple, otherwise the switch locks everyone out.
   let appleReady = false;
-  if (AUTH_MODE === "apple") {
-    try {
-      const col = e.app.findCollectionByNameOrId("users");
-      const providers = (col.oauth2 && col.oauth2.providers) || [];
-      appleReady = !!col.oauth2.enabled && providers.some((p) => p.name === "apple");
-    } catch (_) {}
-  }
+  try {
+    const col = e.app.findCollectionByNameOrId("users");
+    const providers = (col.oauth2 && col.oauth2.providers) || [];
+    appleReady = !!col.oauth2.enabled && providers.some((p) => p.name === "apple");
+  } catch (_) {}
   return e.json(200, {
     mode: AUTH_MODE,
     apple_configured: appleReady,
