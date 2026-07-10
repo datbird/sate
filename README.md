@@ -104,13 +104,22 @@ with no server-side changes.
 ```sh
 cd mobile
 npm install
-SATE_URL=https://sate.example.com npm run sync   # bake in your instance URL
+SATE_URL=https://sate.example.com \
+SATE_AUTH_HOSTS=myteam.cloudflareaccess.com \
+  npm run sync                                   # bake in your instance + auth-proxy hosts
 npm run open                                     # opens Xcode
 ```
 
 `SATE_URL` is read from the environment and written into the generated
 `ios/App/App/capacitor.config.json`, which is gitignored — your instance URL never lands in the
 repo. Build it in Xcode against your own Apple team and bundle identifier.
+
+**`SATE_AUTH_HOSTS` is required if you use an auth proxy.** Capacitor's webview only navigates
+within `SATE_URL`'s host and hands every other host to the system browser. Your proxy logs you in
+on *its* domain (Cloudflare Access redirects to `<team>.cloudflareaccess.com`), so unless that host
+is listed the login opens in Safari, the session cookie is stored in Safari, and the app itself
+stays logged out. List every host the login flow touches, comma-separated; wildcards work
+(`*.cloudflareaccess.com`).
 
 ## Configuration
 
