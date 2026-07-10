@@ -2,7 +2,7 @@
 
 // Function registry, prompts, key encryption, and config resolution.
 
-const FUNCTIONS = ["vision_estimate", "text_parse", "chat", "daily_summary", "web_lookup"];
+const FUNCTIONS = ["vision_estimate", "text_parse", "chat", "daily_summary", "web_lookup", "activity_estimate"];
 
 const NUTRITION_SCHEMA =
   '{"items":[{"name":string,"qty":string,"kcal":number,"protein":number,"carbs":number,"fat":number,"fiber":number,"sugar":number,"sodium":number,"sat_fat":number}],' +
@@ -34,6 +34,21 @@ const WEB_LOOKUP_SYSTEM =
   NUTRITION_SCHEMA + "\n" + UNITS_LINE + " In the note field, briefly name which source(s) you " +
   "actually used. If nothing is identifiable, return " + EMPTY_TOTAL + ".";
 
+const ACTIVITY_SCHEMA =
+  '{"items":[{"name":string,"duration_min":number,"intensity":string,"kcal_burned":number}],' +
+  '"total":{"kcal_burned":number,"duration_min":number},"note":string}';
+
+const ACTIVITY_SYSTEM =
+  "You are an exercise calorie-burn estimation engine. Given a description of physical activity, " +
+  "estimate the calories burned. Assume an average adult (~70 kg / 155 lb) unless the description " +
+  "says otherwise. Respond ONLY with strict minified JSON (no markdown, no code fences) matching " +
+  "exactly:\n" + ACTIVITY_SCHEMA + "\nduration_min is minutes; kcal_burned is total calories for " +
+  "that activity and duration; intensity is one of light|moderate|vigorous. If the message includes " +
+  "a 'Known activities' list with burn rates, use those rates for matching activities (scaled by " +
+  "duration) instead of estimating from scratch. Infer duration and distance from the text when " +
+  'given (e.g. "3 mile run" at an average pace). If no activity is identifiable, return ' +
+  '{"items":[],"total":{"kcal_burned":0,"duration_min":0},"note":"..."}.';
+
 const CHAT_SYSTEM =
   "You are Sate, a friendly, concise calorie and nutrition coach. Help the user understand and " +
   "manage their intake. Keep replies short and practical. If the user's logged totals for today " +
@@ -52,6 +67,7 @@ const PROMPTS = {
   // Web search grounding can't be combined with forced-JSON response modes, so jsonMode is
   // off and the reply is parsed defensively (parseJSON strips any prose/fences).
   web_lookup: { system: WEB_LOOKUP_SYSTEM, jsonMode: false },
+  activity_estimate: { system: ACTIVITY_SYSTEM, jsonMode: true },
 };
 
 // ---- encryption of provider API keys (AES-256-GCM via $security) ----
@@ -201,6 +217,22 @@ function normalizeNutrition(obj) {
   return { items: clean, total: total, note: String(obj.note || "") };
 }
 
+// Normalize a parsed activity object into a consistent shape with a computed total.
+function normalizeActivity(obj) {
+  const items = Array.isArray(obj.items) ? obj.items : [];
+  const clean = items.map((it) => ({
+    name: String(it.name || "activity"),
+    duration_min: num(it.duration_min),
+    intensity: String(it.intensity || ""),
+    kcal_burned: num(it.kcal_burned),
+  }));
+  const total = clean.reduce(
+    (t, it) => ({ kcal_burned: t.kcal_burned + it.kcal_burned, duration_min: t.duration_min + it.duration_min }),
+    { kcal_burned: 0, duration_min: 0 }
+  );
+  return { items: clean, total: total, note: String(obj.note || "") };
+}
+
 module.exports = {
   FUNCTIONS,
   PROMPTS,
@@ -210,4 +242,5 @@ module.exports = {
   resolveFunction,
   parseJSON,
   normalizeNutrition,
+  normalizeActivity,
 };

@@ -7,6 +7,7 @@
 const P = require(`${__hooks}/providers.js`);
 const F = require(`${__hooks}/functions.js`);
 const FOODS = require(`${__hooks}/foods.js`);
+const ACTS = require(`${__hooks}/activities.js`);
 
 function num(v) {
   const n = Number(v);
@@ -156,26 +157,30 @@ function dayRange(dateStr) {
   return { start: start, end: end };
 }
 
+// A json field reads back as raw bytes via rec.get() on a reloaded record; getString() gives the
+// JSON text in both the in-memory-set and persisted cases, so parse that for native JS objects.
 function readItems(rec) {
-  let v = rec.get("items");
-  if (v == null) return [];
-  if (typeof v === "string") {
-    try {
-      return JSON.parse(v);
-    } catch (_) {
-      return [];
-    }
+  const s = rec.getString("items");
+  if (!s) return [];
+  try {
+    return JSON.parse(s);
+  } catch (_) {
+    return [];
   }
-  return v;
 }
 
 function entryJSON(rec) {
+  const kind = rec.getString("kind") || "food";
   return {
     id: rec.id,
+    kind: kind,
     logged_at: rec.getString("logged_at"),
     source: rec.getString("source"),
     description: rec.getString("description"),
     items: readItems(rec),
+    duration_min: rec.getFloat("duration_min"),
+    distance: rec.getFloat("distance"),
+    intensity: rec.getString("intensity"),
     kcal: rec.getFloat("kcal"),
     protein: rec.getFloat("protein"),
     carbs: rec.getFloat("carbs"),
@@ -201,9 +206,49 @@ function dayEntries(app, email, dateStr) {
   );
 }
 
+// A rolling window for the stats dashboard, anchored on today (UTC). Returns the half-open
+// [start,end) datetime-literal bounds plus the bucket granularity for the trend series.
+function periodWindow(range) {
+  const days = range === "day" ? 1 : range === "week" ? 7 : range === "month" ? 30 : 365;
+  const now = new Date();
+  const endD = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  const startD = new Date(endD);
+  startD.setUTCDate(startD.getUTCDate() - days);
+  const iso = (d) => d.toISOString().slice(0, 10) + " 00:00:00.000Z";
+  return { start: iso(startD), end: iso(endD), days: days, bucket: range === "year" ? "month" : "day" };
+}
+
+// Fetch every entry in [start,end) for a user, paging past the 500-row cap so month/year
+// windows aren't silently truncated. (Volumes are tiny for a personal app; if this ever grows,
+// swap for a SQL SUM(...) GROUP BY via app.db().newQuery.)
+function rangeEntries(app, email, start, end) {
+  const out = [];
+  let offset = 0;
+  for (;;) {
+    const page = app.findRecordsByFilter(
+      "entries",
+      "user_email = {:e} && logged_at >= {:s} && logged_at < {:end}",
+      "-logged_at",
+      500,
+      offset,
+      { e: email, s: start, end: end }
+    );
+    for (const r of page) out.push(r);
+    if (page.length < 500) break;
+    offset += 500;
+  }
+  return out;
+}
+
+function isActivity(rec) { return rec.getString("kind") === "activity"; }
+
+// Intake totals for the ring/goals. Activity entries carry kcal as *burn*, which is never intake,
+// so they're skipped here — burn is surfaced separately by the stats endpoint.
 function sumTotals(records) {
-  const t = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, sodium: 0, sat_fat: 0, count: records.length };
+  const t = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, sodium: 0, sat_fat: 0, count: 0 };
   for (const rec of records) {
+    if (rec.getString("kind") === "activity") continue;
+    t.count += 1;
     t.kcal += rec.getFloat("kcal");
     t.protein += rec.getFloat("protein");
     t.carbs += rec.getFloat("carbs");
@@ -220,9 +265,13 @@ function addEntry(app, email, data) {
   const rec = new Record(app.findCollectionByNameOrId("entries"));
   rec.set("user_email", email);
   rec.set("logged_at", new Date().toISOString());
+  rec.set("kind", data.kind || "food");
   rec.set("source", data.source);
   rec.set("description", data.description || "");
   rec.set("items", data.items || []);
+  rec.set("duration_min", num(data.duration_min));
+  rec.set("distance", num(data.distance));
+  rec.set("intensity", data.intensity || "");
   rec.set("kcal", data.total.kcal);
   rec.set("protein", data.total.protein);
   rec.set("carbs", data.total.carbs);
@@ -296,6 +345,35 @@ function estimate(app, fn, userText, image, email) {
   const trusted = matched.filter((f) => f.getBool("verified"));
   const inDb = fn === "text_parse" ? FOODS.coverageOk(userText, trusted) : false;
   return { parsed: parsed, provider: cfg.provider, model: cfg.model, inDb: inDb };
+}
+
+// The activity counterpart to estimate(): grounds on the activities table, calls the model, and
+// returns a normalized {items, total:{kcal_burned, duration_min}, note}.
+function estimateActivity(app, text, email) {
+  const cfg = resolveFor(app, "activity_estimate", email);
+  let userMsg = text;
+  let matched = [];
+  try {
+    matched = ACTS.searchByText(app, text);
+    const ref = ACTS.referenceBlock(matched);
+    if (ref) userMsg = ref + "\n\nActivity to log:\n" + text;
+  } catch (_) {}
+
+  const reply = P.runProvider({
+    provider: cfg.provider,
+    apiKey: cfg.apiKey,
+    baseUrl: cfg.baseUrl,
+    model: cfg.model,
+    system: promptFor(app, "activity_estimate"),
+    messages: [{ role: "user", text: userMsg }],
+    jsonMode: F.PROMPTS.activity_estimate.jsonMode,
+  });
+  const parsed = F.normalizeActivity(F.parseJSON(reply));
+  try {
+    if (matched.length) ACTS.bumpUsage(app, matched);
+    ACTS.upsertItems(app, parsed.items);
+  } catch (_) {}
+  return { parsed: parsed, provider: cfg.provider, model: cfg.model };
 }
 
 // Build a "prefer these sources" hint from the curated nutrition URLs for web lookups.
@@ -922,6 +1000,239 @@ function deleteEntry(e) {
   return e.json(200, { deleted: id });
 }
 
+// ---------------------------------------------------------------- activity
+
+function activityTotal(kcal) {
+  return { kcal: kcal, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, sodium: 0, sat_fat: 0 };
+}
+
+// POST /api/sate/log/activity — either a picked preset {activity_id, duration_min, distance}
+// (burn computed from its MET) or free text {text} (burn estimated by activity_estimate).
+function logActivity(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  ensureProfile(app, email);
+  const body = e.requestInfo().body || {};
+  const durationIn = num(body.duration_min);
+  const distance = num(body.distance);
+
+  try {
+    // Preset path — deterministic burn from the seeded MET, no AI call.
+    if (body.activity_id) {
+      let act;
+      try { act = app.findRecordById("activities", String(body.activity_id)); } catch (_) { return e.json(404, { error: "unknown activity" }); }
+      const minutes = durationIn > 0 ? durationIn : 30;
+      const kcal = ACTS.burnFor(act, minutes);
+      const name = act.getString("name");
+      try { ACTS.bumpUsage(app, [act]); } catch (_) {}
+      const rec = addEntry(app, email, {
+        kind: "activity", source: "preset",
+        description: name, duration_min: minutes, distance: distance,
+        intensity: body.intensity ? String(body.intensity) : "",
+        items: [{ name: name, duration_min: minutes, kcal_burned: kcal }],
+        total: activityTotal(kcal),
+      });
+      return e.json(200, { entry: entryJSON(rec), note: "", totals: sumTotals(dayEntries(app, email, todayStr())) });
+    }
+
+    // Free-text path — AI estimate.
+    const text = (body.text || "").toString().trim();
+    if (!text) return e.json(400, { error: "text or activity_id is required" });
+    const r = estimateActivity(app, text, email);
+    const t = r.parsed.total;
+    const rec = addEntry(app, email, {
+      kind: "activity", source: "activity_ai",
+      description: text,
+      duration_min: durationIn > 0 ? durationIn : t.duration_min,
+      distance: distance,
+      items: r.parsed.items,
+      total: activityTotal(Math.round(t.kcal_burned)),
+      provider: r.provider, model: r.model,
+    });
+    return e.json(200, { entry: entryJSON(rec), note: r.parsed.note, totals: sumTotals(dayEntries(app, email, todayStr())) });
+  } catch (err) {
+    return e.json(502, { error: String(err.message || err) });
+  }
+}
+
+// GET /api/sate/activities/search?q= — autocomplete for the Activity compose tab. Each row carries
+// its per-minute burn rate so the client can preview kcal live as the user picks a duration.
+function activitiesSearch(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const q = (e.requestInfo().query || {}).q || "";
+  const recs = ACTS.searchByPrefix(app, q, 12);
+  const rate = ACTS.KCAL_PER_MIN_PER_MET;
+  return e.json(200, {
+    activities: recs.map((r) => ({
+      id: r.id,
+      name: r.getString("name"),
+      category: r.getString("category"),
+      met: r.getFloat("met"),
+      kcal_min: Math.round(r.getFloat("met") * rate * 10) / 10,
+    })),
+  });
+}
+
+// GET /api/sate/stats?range=day|week|month|year — server-side rollup for the dashboard.
+function statsRange(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const q = e.requestInfo().query || {};
+  const range = ["day", "week", "month", "year"].indexOf((q.range || "").toString()) !== -1 ? q.range.toString() : "day";
+  const w = periodWindow(range);
+  const recs = rangeEntries(app, email, w.start, w.end);
+
+  const nutrition = [];
+  const activity = [];
+  for (const r of recs) (isActivity(r) ? activity : nutrition).push(r);
+
+  const intake = sumTotals(nutrition);
+  let burn = 0, minutes = 0;
+  for (const r of activity) { burn += r.getFloat("kcal"); minutes += r.getFloat("duration_min"); }
+
+  // Trend series bucketed by day (week/month) or month (year).
+  const bucketOf = (r) => {
+    const s = r.getString("logged_at"); // "YYYY-MM-DD HH:MM..."
+    return w.bucket === "month" ? s.slice(0, 7) : s.slice(0, 10);
+  };
+  const buckets = {};
+  const order = [];
+  for (const r of recs) {
+    const k = bucketOf(r);
+    if (!buckets[k]) { buckets[k] = { bucket: k, in_kcal: 0, out_kcal: 0 }; order.push(k); }
+    if (isActivity(r)) buckets[k].out_kcal += r.getFloat("kcal");
+    else buckets[k].in_kcal += r.getFloat("kcal");
+  }
+  order.sort();
+  const series = order.map((k) => buckets[k]);
+
+  const p = ensureProfile(app, email);
+  const goals = goalsOf(p);
+  const activeDays = new Set(recs.map(bucketOf)).size || 1;
+
+  return e.json(200, {
+    range: range,
+    in: intake,                                  // kcal + 8 nutrients + count, summed over window
+    out: { kcal: Math.round(burn), minutes: Math.round(minutes), workouts: activity.length },
+    avg_in_kcal: Math.round(intake.kcal / activeDays),
+    avg_out_kcal: Math.round(burn / activeDays),
+    goals: goals,
+    series: series,
+  });
+}
+
+// PATCH /api/sate/entries/{id} — edit an existing entry.
+//   { scale: 0.5 }                → scale nutrients (and activity duration/distance) proportionally
+//   { kcal, duration_min, distance, intensity, description }  → direct field overrides
+//   { re_estimate: true, text }   → re-run the AI on new text and replace the estimate
+function updateEntry(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const id = e.request.pathValue("id");
+  let rec;
+  try { rec = app.findRecordById("entries", id); } catch (_) { return e.json(404, { error: "not found" }); }
+  if (rec.getString("user_email") !== email) return e.json(403, { error: "forbidden" });
+  const activity = isActivity(rec);
+  const b = e.requestInfo().body || {};
+
+  try {
+    if (b.re_estimate && (b.text || "").toString().trim()) {
+      const text = b.text.toString().trim();
+      if (activity) {
+        const r = estimateActivity(app, text, email);
+        const t = r.parsed.total;
+        rec.set("description", text);
+        rec.set("items", r.parsed.items);
+        rec.set("duration_min", num(t.duration_min));
+        rec.set("kcal", Math.round(t.kcal_burned));
+        rec.set("source", "activity_ai");
+      } else {
+        const r = estimate(app, "text_parse", text, null, email);
+        rec.set("description", text);
+        rec.set("items", r.parsed.items);
+        for (const k of ["kcal", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "sat_fat"]) rec.set(k, num(r.parsed.total[k]));
+        rec.set("source", "text");
+      }
+    } else if (num(b.scale) > 0 && num(b.scale) !== 1) {
+      const s = num(b.scale);
+      const NUTR = ["kcal", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "sat_fat"];
+      for (const k of NUTR) rec.set(k, +(rec.getFloat(k) * s).toFixed(2));
+      if (activity) {
+        rec.set("duration_min", +(rec.getFloat("duration_min") * s).toFixed(1));
+        if (rec.getFloat("distance")) rec.set("distance", +(rec.getFloat("distance") * s).toFixed(2));
+      }
+      const items = readItems(rec).map((it) => {
+        const o = Object.assign({}, it);
+        for (const k of NUTR.concat(["kcal_burned"])) if (typeof o[k] === "number") o[k] = +(o[k] * s).toFixed(2);
+        return o;
+      });
+      rec.set("items", items);
+    }
+
+    // Direct overrides (applied after scale/re-estimate).
+    if (b.kcal !== undefined) rec.set("kcal", num(b.kcal));
+    if (b.duration_min !== undefined) rec.set("duration_min", num(b.duration_min));
+    if (b.distance !== undefined) rec.set("distance", num(b.distance));
+    if (b.intensity !== undefined) rec.set("intensity", String(b.intensity));
+    if (b.description !== undefined) rec.set("description", String(b.description));
+
+    app.save(rec);
+    return e.json(200, { entry: entryJSON(rec), totals: sumTotals(dayEntries(app, email, todayStr())) });
+  } catch (err) {
+    return e.json(502, { error: String(err.message || err) });
+  }
+}
+
+// ---- admin: activities table (mirrors admin/foods) ----
+function activityJSON(r) {
+  return {
+    id: r.id, name: r.getString("name"), category: r.getString("category"),
+    met: r.getFloat("met"), aliases: ACTS.readAliases(r), source: r.getString("source"),
+    verified: r.getBool("verified"), usage_count: r.getFloat("usage_count"),
+  };
+}
+function adminGetActivities(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const q = e.requestInfo().query || {};
+  const recs = ACTS.searchByPrefix(app, q.q || "", 200);
+  return e.json(200, { activities: recs.map(activityJSON), total: app.countRecords("activities") });
+}
+function adminPutActivity(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const b = e.requestInfo().body || {};
+  const name = String(b.name || "").trim();
+  if (!name) return e.json(400, { error: "name is required" });
+  let rec;
+  if (b.id) { try { rec = app.findRecordById("activities", String(b.id)); } catch (_) { return e.json(404, { error: "not found" }); } }
+  else { rec = new Record(app.findCollectionByNameOrId("activities")); rec.set("source", "user"); rec.set("usage_count", 0); }
+  const aliases = Array.isArray(b.aliases) ? b.aliases : String(b.aliases || "").split(",").map((s) => s.trim()).filter(Boolean);
+  rec.set("name", name);
+  rec.set("category", String(b.category || ""));
+  rec.set("met", num(b.met));
+  rec.set("aliases", aliases);
+  rec.set("verified", !!b.verified);
+  rec.set("search", (name + " " + aliases.join(" ")).toLowerCase());
+  rec.set("norm_key", ACTS.normKey(name));
+  app.save(rec);
+  return e.json(200, { activity: activityJSON(rec) });
+}
+function adminDeleteActivity(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  try { app.delete(app.findRecordById("activities", e.request.pathValue("id"))); } catch (_) { return e.json(404, { error: "not found" }); }
+  return e.json(200, { ok: true });
+}
+
 function setGoals(e) {
   const email = identity(e);
   if (!email) return e.json(401, { error: "not authenticated" });
@@ -1467,6 +1778,13 @@ module.exports = {
   chat,
   listEntries,
   deleteEntry,
+  updateEntry,
+  logActivity,
+  activitiesSearch,
+  statsRange,
+  adminGetActivities,
+  adminPutActivity,
+  adminDeleteActivity,
   setGoals,
   daySummary,
   adminGetProviders,
