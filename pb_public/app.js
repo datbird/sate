@@ -61,13 +61,15 @@ function fmt(n) { return Math.round(Number(n) || 0).toLocaleString(); }
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 
 // ---------------------------------------------------------------- navigation
+// The header tabs and the bottom tab bar are the same nav rendered twice; [data-view] is the
+// contract between them, so neither needs to know the other exists.
 function showView(name) {
   $$(".view").forEach((v) => (v.hidden = v.id !== "view-" + name));
-  $$(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
+  $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   if (name === "history") loadHistory();
   if (name === "admin") loadAdmin();
 }
-$$(".tabs button").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
+$$("[data-view]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
 
 // ---------------------------------------------------------- tracking modes
 // Per-metric display metadata. `get` reads the value from a totals/goals object; `u` is the
@@ -952,7 +954,7 @@ async function start() {
   $("#who").textContent = ME.email;
   $("#menuEmail").textContent = ME.email;
   if (ME.app_name) { $("#brandName").textContent = ME.app_name; document.title = ME.app_name + " — calorie chat"; }
-  if (ME.isAdmin) $("#adminTab").hidden = false;
+  if (ME.isAdmin) $$("[data-admin-only]").forEach((el) => (el.hidden = false));
   $("#histDate").value = todayISO();
   refreshToday();
 }

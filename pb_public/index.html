@@ -11,7 +11,7 @@
     <link rel="icon" href="/icons/icon-192.png?v2" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png?v2" />
     <script>try{var t=localStorage.getItem('sate-theme');if(t&&t!=='system')document.documentElement.dataset.theme=t;}catch(e){}</script>
-    <link rel="stylesheet" href="/style.css?v19" />
+    <link rel="stylesheet" href="/style.css?v20" />
   </head>
   <body>
     <header class="topbar">
@@ -22,7 +22,7 @@
       <nav class="tabs">
         <button data-view="log" class="active">Log</button>
         <button data-view="history">History</button>
-        <button data-view="admin" id="adminTab" hidden>Admin</button>
+        <button data-view="admin" data-admin-only hidden>Admin</button>
       </nav>
       <div class="usermenu">
         <button class="who" id="userBtn" aria-haspopup="true" aria-expanded="false">
@@ -243,6 +243,23 @@
       </div>
     </div>
 
+    <!-- NATIVE-STYLE BOTTOM TAB BAR (phones only; the header tabs take over on wider screens).
+         Same [data-view] contract as the header tabs, so one showView() drives both. -->
+    <nav class="tabbar" id="tabbar">
+      <button data-view="log" class="active" aria-label="Log">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+        <span>Log</span>
+      </button>
+      <button data-view="history" aria-label="History">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+        <span>History</span>
+      </button>
+      <button data-view="admin" data-admin-only hidden aria-label="Admin">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.4"/><circle cx="15" cy="17" r="2.4"/></svg>
+        <span>Admin</span>
+      </button>
+    </nav>
+
     <!-- SIGN IN (AUTH_MODE=apple only; in proxy mode the proxy has already authenticated) -->
     <div class="authwrap" id="authwrap" hidden>
       <div class="authbox">
@@ -260,6 +277,6 @@
     <div class="toast" id="toast" hidden></div>
     <script src="/vendor/pocketbase.umd.js?v1"></script>
     <script src="/vendor/html5-qrcode.min.js"></script>
-    <script src="/app.js?v19"></script>
+    <script src="/app.js?v20"></script>
   </body>
 </html>

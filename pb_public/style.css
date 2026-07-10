@@ -59,6 +59,40 @@ body {
   box-shadow: inset 0 1px 0 var(--hi);
 }
 .brand img { border-radius: 50%; }
+/* ---- native-style bottom tab bar (phones) ------------------------------------------------ */
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  display: flex; justify-content: space-around; align-items: stretch;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-top: 1px solid var(--line);
+  /* clear the home indicator without a hardcoded height */
+  padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+}
+.tabbar button {
+  flex: 1 1 0; min-width: 0; min-height: 48px;   /* 48px = comfortable tap target */
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  border: 0; background: transparent; cursor: pointer;
+  color: var(--muted); font: inherit; font-size: 11px; font-weight: 600;
+  border-radius: 10px; padding: 4px 2px;
+  -webkit-tap-highlight-color: transparent;
+}
+.tabbar button svg { width: 23px; height: 23px; }
+.tabbar button.active { color: var(--brand); }
+.tabbar button.active svg { stroke-width: 2.2; }
+.tabbar[hidden] { display: none; }
+
+/* Phones get the bottom bar; wider screens keep the header tabs.
+   `.topbar .tabs` outranks the plain `.tabs` rule defined below, so these win regardless of order. */
+@media (max-width: 719px) {
+  .topbar .tabs { display: none; }
+  body { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+}
+@media (min-width: 720px) {
+  nav.tabbar { display: none; }
+}
+
 .tabs { display: flex; gap: 4px; margin-left: auto; }
 .tabs button {
   border: 0; background: transparent; color: var(--muted);
