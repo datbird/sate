@@ -22,6 +22,11 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- The shell only talks HTTPS/TLS to a Sate instance and ships no custom cryptography,
+	     which is exempt. Without this, every upload lands in TestFlight as
+	     MISSING_EXPORT_COMPLIANCE and cannot be assigned to testers. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
