@@ -264,7 +264,8 @@ function sumTotals(records) {
 function addEntry(app, email, data) {
   const rec = new Record(app.findCollectionByNameOrId("entries"));
   rec.set("user_email", email);
-  rec.set("logged_at", new Date().toISOString());
+  rec.set("logged_at", data.logged_at ? new Date(data.logged_at).toISOString() : new Date().toISOString());
+  if (data.ext_id) rec.set("ext_id", String(data.ext_id));
   rec.set("kind", data.kind || "food");
   rec.set("source", data.source);
   rec.set("description", data.description || "");
@@ -441,6 +442,12 @@ function netExerciseOf(profile) {
   return profile.getString("net_exercise") !== "off";
 }
 
+// Apple Health sync is opt-in and native-only, so it defaults OFF — on only once the
+// user connects Health from the iOS app (which grants read access and flips this).
+function healthSyncOf(profile) {
+  return profile.getString("health_sync") === "on";
+}
+
 // --------------------------------------------------------------- user routes
 
 function me(e) {
@@ -464,6 +471,7 @@ function me(e) {
     goals: goalsOf(profile),
     track_mode: trackModeOf(profile),
     net_exercise: netExerciseOf(profile),
+    health_sync: healthSyncOf(profile),
     today: today,
     totals: sumTotals(dayEntries(app, email, today)),
   });
@@ -1083,6 +1091,48 @@ function activitiesSearch(e) {
   });
 }
 
+// POST /api/sate/health/sync — import Apple Health workouts from the native app.
+// Body: { workouts: [{ id, name, start, end, duration_min, kcal, distance_m, intensity }] }
+// `id` is the HealthKit workout UUID; it dedupes re-syncs via entries.ext_id. `kcal` is
+// Apple's Active Energy (trustworthy), stored as the burn. Distance is metres → miles.
+function healthSync(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const profile = ensureProfile(app, email);
+  const body = e.requestInfo().body || {};
+  const workouts = Array.isArray(body.workouts) ? body.workouts.slice(0, 500) : [];
+
+  let added = 0, skipped = 0;
+  for (const w of workouts) {
+    const ext = (w && (w.id || w.uuid) || "").toString().trim();
+    if (!ext) { skipped++; continue; }
+    try {
+      const existing = app.findFirstRecordByFilter("entries", "user_email = {:e} && ext_id = {:x}", { e: email, x: ext });
+      if (existing) { skipped++; continue; }
+    } catch (_) { /* not found → import */ }
+    try {
+      const kcal = Math.round(num(w.kcal));
+      const minutes = Math.round(num(w.duration_min));
+      const name = (w.name || "Workout").toString();
+      const distanceMi = num(w.distance_m) > 0 ? +(num(w.distance_m) / 1609.34).toFixed(2) : 0;
+      addEntry(app, email, {
+        kind: "activity", source: "health", ext_id: ext,
+        logged_at: w.start || w.end,
+        description: name, duration_min: minutes, distance: distanceMi,
+        intensity: w.intensity ? String(w.intensity) : "",
+        items: [{ name: name, duration_min: minutes, kcal_burned: kcal }],
+        total: activityTotal(kcal),
+      });
+      added++;
+    } catch (err) { skipped++; }
+  }
+
+  // Reaching this endpoint means Health is connected; keep the flag in sync.
+  if (!healthSyncOf(profile)) { profile.set("health_sync", "on"); app.save(profile); }
+  return e.json(200, { added: added, skipped: skipped, totals: sumTotals(dayEntries(app, email, todayStr())) });
+}
+
 // GET /api/sate/stats?range=day|week|month|year — server-side rollup for the dashboard.
 function statsRange(e) {
   const email = identity(e);
@@ -1259,8 +1309,11 @@ function setGoals(e) {
   if (body.net_exercise !== undefined) {
     profile.set("net_exercise", body.net_exercise ? "on" : "off");
   }
+  if (body.health_sync !== undefined) {
+    profile.set("health_sync", body.health_sync ? "on" : "off");
+  }
   app.save(profile);
-  return e.json(200, { goals: goalsOf(profile), track_mode: trackModeOf(profile), net_exercise: netExerciseOf(profile) });
+  return e.json(200, { goals: goalsOf(profile), track_mode: trackModeOf(profile), net_exercise: netExerciseOf(profile), health_sync: healthSyncOf(profile) });
 }
 
 function daySummary(e) {
@@ -1792,6 +1845,7 @@ module.exports = {
   deleteEntry,
   updateEntry,
   logActivity,
+  healthSync,
   activitiesSearch,
   statsRange,
   adminGetActivities,

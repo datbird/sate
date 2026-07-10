@@ -121,6 +121,8 @@ const TICON = {
 };
 // Opening tag for the small inline icons used in the "in / out / net" subline (sized by .iico).
 const SPARK = '<svg class="iico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">';
+// Apple-Health-style heart glyph for the "Health" source badge (sized by .health svg).
+const HEART = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-7.5-4.9-10-9.3C.6 8.9 1.7 5.5 4.8 4.8 7 4.3 8.9 5.6 12 8.5c3.1-2.9 5-4.2 7.2-3.7 3.1.7 4.2 4.1 2.8 6.9C19.5 16.1 12 21 12 21z"/></svg>';
 
 async function renderHome() {
   let stats = null, feed = null;
@@ -273,9 +275,12 @@ function entryLi(en, readonly) {
   const kcal = activity
     ? `<span class="ekcal out">−${fmt(en.kcal)}<small> cal</small></span>`
     : `<span class="ekcal">${fmt(en.kcal)}<small> kcal</small></span>`;
+  // Apple Health-imported workouts get a small badge so the source is unmistakable.
+  const badge = en.source === "health"
+    ? `<span class="health" title="From Apple Health">${HEART}Health</span>` : "";
   li.innerHTML =
     `<span class="ticon ${activity ? "a" : "n"}">${activity ? TICON.a : TICON.n}</span>` +
-    `<span class="etext"><span class="t">${escapeHtml(title)}</span><span class="s">${escapeHtml(sub)}</span></span>` + kcal;
+    `<span class="etext"><span class="t">${escapeHtml(title)}${badge}</span><span class="s">${escapeHtml(sub)}</span></span>` + kcal;
   if (!readonly) li.addEventListener("click", () => openEdit(en));
   return li;
 }
@@ -516,6 +521,7 @@ function openGoals() {
   f.goal_sodium.value = g.sodium || "";
   $("#goalMode").value = ME.track_mode || "calories";
   $("#goalNet").checked = ME.net_exercise !== false;
+  renderHealthRow();
   goalModeHint();
   goalsDialog.showModal();
 }
@@ -1073,6 +1079,73 @@ function renderFunctions(functions, providers) {
   });
 }
 
+// ------------------------------------------------------------- apple health (native)
+// Read-only workout import. Native-only: the HealthKit plugin exists only inside the iOS
+// shell, so on the web these are no-ops and the Health UI stays hidden.
+function isNativeApp() {
+  return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+function healthPlugin() {
+  if (!window.Capacitor || !window.Capacitor.registerPlugin) return null;
+  return window.Capacitor.registerPlugin("HealthKit");
+}
+
+// Pull recent workouts from Health and POST them for dedup/import. `silent` suppresses the
+// "nothing new" toast used by the auto-sync on launch.
+async function healthSyncNow(silent) {
+  const HK = healthPlugin();
+  if (!HK) return;
+  try {
+    const res = await HK.queryWorkouts({ days: 30 });
+    const workouts = (res && res.workouts) || [];
+    const r = await api("/health/sync", { method: "POST", body: JSON.stringify({ workouts: workouts }) });
+    ME.health_sync = true;
+    if (!silent) toast(r.added ? ("Imported " + r.added + " workout" + (r.added === 1 ? "" : "s")) : "Apple Health up to date");
+    if ($("#view-home") && !$("#view-home").hidden) renderHome();
+    renderHealthRow();
+  } catch (e) {
+    if (!silent) toast((e && e.message) || "Health sync failed");
+  }
+}
+
+// The Connect button: ask HealthKit for read access, then do a first import.
+async function healthConnect() {
+  const HK = healthPlugin();
+  if (!HK) { toast("Apple Health needs the Sate app"); return; }
+  try {
+    const r = await HK.requestAuthorization();
+    if (r && r.available === false) { toast("Apple Health isn't available on this device"); return; }
+    await api("/goals", { method: "PATCH", body: JSON.stringify({ health_sync: true }) });
+    ME.health_sync = true;
+    await healthSyncNow(false);
+  } catch (e) { toast((e && e.message) || "Couldn't connect Apple Health"); }
+}
+
+async function healthDisconnect() {
+  try {
+    const r = await api("/goals", { method: "PATCH", body: JSON.stringify({ health_sync: false }) });
+    if (typeof r.health_sync === "boolean") ME.health_sync = r.health_sync;
+    renderHealthRow();
+    toast("Apple Health disconnected");
+  } catch (e) { toast((e && e.message) || "Couldn't disconnect"); }
+}
+
+// Render the Health row in the Goals dialog. Hidden entirely off-native (no plugin to talk to).
+function renderHealthRow() {
+  const row = $("#healthRow");
+  if (!row) return;
+  if (!isNativeApp()) { row.hidden = true; return; }
+  row.hidden = false;
+  const connected = ME && ME.health_sync;
+  $("#healthStatus").textContent = connected ? "Connected — workouts import automatically" : "Import workouts and their calorie burn";
+  $("#healthActions").innerHTML = connected
+    ? '<button type="button" class="link" id="healthSyncBtn">Sync now</button><button type="button" class="link danger" id="healthDiscBtn">Disconnect</button>'
+    : '<button type="button" class="primary" id="healthConnectBtn">Connect Apple Health</button>';
+  const c = $("#healthConnectBtn"); if (c) c.addEventListener("click", healthConnect);
+  const s = $("#healthSyncBtn"); if (s) s.addEventListener("click", () => healthSyncNow(false));
+  const d = $("#healthDiscBtn"); if (d) d.addEventListener("click", healthDisconnect);
+}
+
 // --------------------------------------------------------------- sign-in (apple mode)
 
 function capacitorBrowser() {
@@ -1133,6 +1206,8 @@ async function start() {
   if (ME.isAdmin) $$("[data-admin-only]").forEach((el) => (el.hidden = false));
   $("#histDate").value = todayISO();
   renderHome();
+  // Native + already connected → quietly pull any workouts logged since last launch.
+  if (isNativeApp() && ME.health_sync) healthSyncNow(true);
 }
 
 async function boot() {

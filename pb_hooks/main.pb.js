@@ -16,6 +16,7 @@ routerAdd("POST", "/api/sate/chat", (e) => require(`${__hooks}/api.js`).chat(e))
 routerAdd("POST", "/api/sate/log/activity", (e) => require(`${__hooks}/api.js`).logActivity(e));
 routerAdd("GET", "/api/sate/activities/search", (e) => require(`${__hooks}/api.js`).activitiesSearch(e));
 routerAdd("GET", "/api/sate/stats", (e) => require(`${__hooks}/api.js`).statsRange(e));
+routerAdd("POST", "/api/sate/health/sync", (e) => require(`${__hooks}/api.js`).healthSync(e));
 routerAdd("GET", "/api/sate/entries", (e) => require(`${__hooks}/api.js`).listEntries(e));
 routerAdd("DELETE", "/api/sate/entries/{id}", (e) => require(`${__hooks}/api.js`).deleteEntry(e));
 routerAdd("PATCH", "/api/sate/entries/{id}", (e) => require(`${__hooks}/api.js`).updateEntry(e));
