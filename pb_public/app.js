@@ -1565,13 +1565,17 @@ async function boot() {
 // Document-level scroll, so we watch window.scrollY. Non-passive touchmove lets us suppress
 // the native overscroll bounce while our own indicator tracks the pull.
 (function setupPullToRefresh() {
-  const THRESHOLD = 70, MAX = 110, DAMP = 0.5;
+  const THRESHOLD = 70, MAX = 110, DAMP = 0.5, SIZE = 34, SETTLE = 56;
+  const EASE = "transform .26s cubic-bezier(.2,.7,.3,1), opacity .2s ease";
   let startY = 0, active = false, pulling = false, busy = false;
 
   const ind = document.createElement("div");
   ind.className = "ptr";
   ind.innerHTML = '<div class="ptr-spin" aria-hidden="true"></div>';
   document.body.appendChild(ind);
+  const main = document.querySelector("main");
+  const header = document.querySelector(".topbar");
+  const headerH = () => (header ? header.offsetHeight : 52);
 
   const atTop = () => (window.scrollY || document.documentElement.scrollTop || 0) <= 0;
   function blocked() {
@@ -1582,14 +1586,18 @@ async function boot() {
     if ((add && !add.hidden) || (edit && !edit.hidden) || (hr && !hr.hidden)) return true;  // compose / edit / HR sheets
     return false;
   }
-  function show(dist) {
-    const d = Math.min(dist, MAX);
-    ind.style.transition = "none";               // track the finger 1:1 during the drag
-    ind.style.transform = "translateY(" + d + "px)";
-    ind.style.opacity = String(Math.min(1, dist / THRESHOLD));
-    ind.classList.toggle("ready", dist >= THRESHOLD);
+  // Pull the whole page (main) down by `d`; the spinner rides just above the content, tucked
+  // behind the opaque sticky header at rest and revealed into the gap as the page slides down.
+  function place(d, animate) {
+    const t = animate ? EASE : "none";
+    main.style.transition = t; ind.style.transition = t;
+    main.style.transform = d ? "translateY(" + d + "px)" : "";
+    ind.style.transform = "translateY(" + (headerH() - SIZE + d) + "px)";
+    ind.style.opacity = String(Math.min(1, d / THRESHOLD));
+    ind.classList.toggle("ready", d >= THRESHOLD);
   }
-  function reset() { ind.style.transition = ""; ind.style.transform = ""; ind.style.opacity = ""; ind.classList.remove("ready", "spin"); }
+  function show(dist) { place(Math.min(dist, MAX), false); }
+  function reset() { place(0, true); ind.classList.remove("ready", "spin"); }
 
   window.addEventListener("touchstart", (e) => {
     if (busy || e.touches.length !== 1 || blocked() || !atTop()) { active = false; return; }
@@ -1611,8 +1619,7 @@ async function boot() {
     if (!ind.classList.contains("ready")) { reset(); return; }
     busy = true;
     ind.classList.add("spin");
-    ind.style.transition = "";                   // animate the settle to the spin position
-    ind.style.transform = "translateY(56px)";
+    place(SETTLE, true);         // settle the page + spinner into the refreshing position
     ind.style.opacity = "1";
     try { await refreshHome(); } catch (_) {} finally { busy = false; reset(); }
   }, { passive: true });

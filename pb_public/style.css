@@ -341,8 +341,10 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .healthintlbl { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; font-size: 13px; font-weight: 600; }
 .healthintlbl select { width: auto; flex: 0 0 auto; font-size: 13px; padding: 6px 8px; }
 
-/* Pull-to-refresh indicator (Home). Fixed at the top; JS drives transform/opacity as you pull. */
-.ptr { position: fixed; top: calc(env(safe-area-inset-top) - 6px); left: 50%; margin-left: -17px; z-index: 60;
+/* Pull-to-refresh indicator (Home). Sits BELOW the sticky header (z-index 4 < 5) so it's hidden
+   behind it at rest and revealed into the gap as the page (main) slides down. JS drives the
+   transform/opacity; the page translation lives on <main>. */
+.ptr { position: fixed; top: 0; left: 50%; margin-left: -17px; z-index: 4;
   width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
   border-radius: 50%; background: var(--card); border: 1px solid var(--line);
   box-shadow: 0 4px 16px rgba(0,0,0,.22); opacity: 0; transform: translateY(0); pointer-events: none;
