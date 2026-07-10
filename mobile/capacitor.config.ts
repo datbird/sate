@@ -31,11 +31,10 @@ const config: CapacitorConfig = {
   appId: 'com.beamflash.sate',
   appName: 'Sate',
   webDir: 'www',
-  ios: {
-    // Sate is a dark/light-aware SPA; let it paint its own background rather than flashing white.
-    backgroundColor: '#ffffff',
-    contentInset: 'always',
-  },
+  // No `ios` block on purpose. `contentInset: 'always'` insets the webview off the notch and home
+  // indicator, exposing the native view behind it, and `backgroundColor` paints that view a single
+  // static colour that can't follow the light/dark theme. The page already handles the safe areas
+  // itself with env(safe-area-inset-*) under `viewport-fit=cover`, so let it draw edge to edge.
   ...(url
     ? {
         server: {

@@ -33,10 +33,14 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
+/* html carries the background too: with viewport-fit=cover the webview draws edge to edge, and
+   iOS paints the rubber-band overscroll area from <html>, not <body>. */
+html { background: var(--bg); }
 body {
   font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   background: var(--bg);
   color: var(--ink);
+  min-height: 100dvh;
   padding-bottom: env(safe-area-inset-bottom);
 }
 
