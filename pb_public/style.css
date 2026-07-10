@@ -341,6 +341,25 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .healthintlbl { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; font-size: 13px; font-weight: 600; }
 .healthintlbl select { width: auto; flex: 0 0 auto; font-size: 13px; padding: 6px 8px; }
 
+/* Admin section tabs + panels */
+.admin-tabs { margin: 2px 0 16px; overflow-x: auto; }
+.admin-sect[hidden] { display: none; }
+.prov-hint { font-size: 11px; font-weight: 400; color: var(--muted); }
+.model-cell { display: block; min-width: 0; }
+.model-cell select { width: 100%; }
+.limitrow { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.limithead { font-weight: 700; margin-bottom: 8px; }
+.usagerow { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.usagerow .up { font-weight: 600; }
+.usagerow .um { font-size: 12px; color: var(--muted); }
+.usagerow.over .um { color: #dc2626; }
+.pricebox { margin-top: 12px; }
+.pricebox summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 0; }
+.pricerow { display: grid; grid-template-columns: 1fr 1.4fr 5em 5em auto; gap: 6px; align-items: center; padding: 4px 0; font-size: 12px; }
+.pricerow.head { color: var(--muted); font-weight: 600; }
+.pricerow .pm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pricerow input { font-size: 12px; padding: 5px 6px; min-width: 0; }
+
 /* Pull-to-refresh indicator (Home). Sits BELOW the sticky header (z-index 4 < 5) so it's hidden
    behind it at rest and revealed into the gap as the page (main) slides down. JS drives the
    transform/opacity; the page translation lives on <main>. */

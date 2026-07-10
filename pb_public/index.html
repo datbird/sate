@@ -11,7 +11,7 @@
     <link rel="icon" href="/icons/icon-192.png?v2" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png?v2" />
     <script>try{var t=localStorage.getItem('sate-theme');if(t&&t!=='system')document.documentElement.dataset.theme=t;}catch(e){}</script>
-    <link rel="stylesheet" href="/style.css?v30" />
+    <link rel="stylesheet" href="/style.css?v31" />
   </head>
   <body>
     <header class="topbar">
@@ -97,6 +97,14 @@
 
       <!-- ADMIN VIEW -->
       <section id="view-admin" class="view" hidden>
+        <div class="seg admin-tabs" id="adminTabs">
+          <button class="on" type="button" data-group="ai">AI</button>
+          <button type="button" data-group="instance">Instance</button>
+          <button type="button" data-group="users">Users</button>
+          <button type="button" data-group="data">Data</button>
+        </div>
+
+        <div class="admin-sect" data-group="instance" hidden>
         <h3 class="section">Instance</h3>
         <p class="hint">Manage this Sate deployment as a whole.</p>
         <div class="card" id="instanceCard">
@@ -112,7 +120,9 @@
           <div class="row end"><button class="primary" id="saveInstance">Save instance settings</button></div>
           <div class="meta" id="instanceMeta"></div>
         </div>
+        </div>
 
+        <div class="admin-sect" data-group="ai">
         <h3 class="section">AI Providers — bring your own keys</h3>
         <p class="hint">Keys are encrypted at rest and shown only by their last 4 characters.</p>
         <div id="providers"></div>
@@ -120,14 +130,22 @@
         <h3 class="section">AI Functions — global defaults per task</h3>
         <p class="hint">These are the instance-wide defaults everyone uses. <b>Image interpretation</b> is the photo→nutrition model; the <b>Normal AI</b> rows cover text, chat, recap, and web lookup. Individual users can override these in <b>Users &amp; Admins</b> below. Model lists load live once a provider key is set. 👁 = supports photos.</p>
         <div id="functions"></div>
-        <datalist id="dl-anthropic"></datalist>
-        <datalist id="dl-openai"></datalist>
-        <datalist id="dl-google"></datalist>
 
         <h3 class="section">AI Prompts — customize what each function tells the AI</h3>
         <p class="hint">Override the built-in system prompt for any function. Clear the box and save to restore the default.</p>
         <div id="prompts"></div>
 
+        <h3 class="section">AI Limits — cap each provider by tokens or budget</h3>
+        <p class="hint">Set a monthly token cap and/or a monthly $ budget per provider. When a provider is over its cap, calls routed to it fail with a clear message until you raise the limit or the month rolls over. Leave a field blank/0 for no limit.</p>
+        <div id="aiLimits"></div>
+
+        <h3 class="section">AI Usage — this month</h3>
+        <p class="hint">Tokens used and estimated spend per provider this calendar month, against any caps above. Costs use the editable price table below.</p>
+        <div id="aiUsage"></div>
+        <details class="pricebox"><summary>Model prices (USD per 1M tokens)</summary><div id="aiPrices"></div></details>
+        </div>
+
+        <div class="admin-sect" data-group="users" hidden>
         <h3 class="section">Users &amp; Admins</h3>
         <p class="hint">Promote anyone on the allow-list to admin. Emails in <code>ADMIN_EMAILS</code> are always admin. Use <b>AI models</b> on any user to override the global Normal-AI or Image-interpretation model just for them.</p>
         <ul class="users" id="users"></ul>
@@ -135,7 +153,9 @@
           <input type="email" id="newAdminEmail" placeholder="email to make admin" />
           <button class="primary" id="addAdminBtn">Add admin</button>
         </div>
+        </div>
 
+        <div class="admin-sect" data-group="data" hidden>
         <h3 class="section">Food database</h3>
         <p class="hint">The AI grounds estimates on these and auto-adds new foods (unverified) as it learns. <span id="foodCount"></span></p>
         <div class="row">
@@ -213,6 +233,7 @@
             <button class="primary" id="lookupSaveBtn">Save lookup sources</button>
           </div>
           <div class="meta" id="lookupMeta"></div>
+        </div>
         </div>
       </section>
     </main>
@@ -330,6 +351,6 @@
     <div class="toast" id="toast" hidden></div>
     <script src="/vendor/pocketbase.umd.js?v1"></script>
     <script src="/vendor/html5-qrcode.min.js"></script>
-    <script src="/app.js?v30"></script>
+    <script src="/app.js?v31"></script>
   </body>
 </html>

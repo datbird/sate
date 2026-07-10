@@ -8,6 +8,7 @@ const P = require(`${__hooks}/providers.js`);
 const F = require(`${__hooks}/functions.js`);
 const FOODS = require(`${__hooks}/foods.js`);
 const ACTS = require(`${__hooks}/activities.js`);
+const AL = require(`${__hooks}/ailimits.js`);
 
 function num(v) {
   const n = Number(v);
@@ -37,7 +38,7 @@ const ADMINS = env("ADMIN_EMAILS")
   .split(",")
   .map((s) => s.trim())
   .filter((s) => s.length > 0);
-const VALID_PROVIDERS = ["anthropic", "openai", "google"];
+const VALID_PROVIDERS = ["anthropic", "openai", "google", "openrouter"];
 const SETTING_KEYS = ["app_name", "default_goal_kcal", "default_goal_protein", "default_goal_carbs", "default_goal_fat"];
 
 // ------------------------------------------------------------------ helpers
@@ -308,6 +309,16 @@ function resolveFor(app, fn, email) {
   return F.resolveFunction(app, fn, userModelOverride(app, email, fn));
 }
 
+// Central AI dispatch: enforce this provider's monthly limits, run the call, then record token
+// usage. Returns the reply text (same value callers previously got straight from P.runProvider).
+// req carries provider/model/apiKey/baseUrl/system/messages/image/jsonMode/webSearch.
+function callAI(app, req) {
+  AL.checkLimit(app, req.provider, req.model);
+  const r = P.runProvider(req);
+  AL.recordUsage(app, req.provider, req.model, r.input, r.output);
+  return r.text;
+}
+
 function estimate(app, fn, userText, image, email) {
   const cfg = resolveFor(app, fn, email);
   const p = F.PROMPTS[fn];
@@ -323,7 +334,7 @@ function estimate(app, fn, userText, image, email) {
     } catch (_) {}
   }
 
-  const reply = P.runProvider({
+  const reply = callAI(app, {
     provider: cfg.provider,
     apiKey: cfg.apiKey,
     baseUrl: cfg.baseUrl,
@@ -360,7 +371,7 @@ function estimateActivity(app, text, email) {
     if (ref) userMsg = ref + "\n\nActivity to log:\n" + text;
   } catch (_) {}
 
-  const reply = P.runProvider({
+  const reply = callAI(app, {
     provider: cfg.provider,
     apiKey: cfg.apiKey,
     baseUrl: cfg.baseUrl,
@@ -403,7 +414,7 @@ function webEstimate(app, text, email) {
   const cfg = resolveFor(app, "web_lookup", email);
   const hint = sourcesHint(app);
   const userMsg = (hint ? hint + "\n\n" : "") + "Food/meal to research and estimate:\n" + text;
-  const reply = P.runProvider({
+  const reply = callAI(app, {
     provider: cfg.provider,
     apiKey: cfg.apiKey,
     baseUrl: cfg.baseUrl,
@@ -1020,7 +1031,7 @@ function chat(e) {
     `${Math.round(totals.fat)}g fat across ${totals.count} entries.`;
   try {
     const cfg = resolveFor(app, "chat", email);
-    const reply = P.runProvider({
+    const reply = callAI(app, {
       provider: cfg.provider,
       apiKey: cfg.apiKey,
       baseUrl: cfg.baseUrl,
@@ -1487,7 +1498,7 @@ function daySummary(e) {
     `${Math.round(totals.carbs)}g carbs, ${Math.round(totals.fat)}g fat.`;
   try {
     const cfg = resolveFor(app, "daily_summary", email);
-    const reply = P.runProvider({
+    const reply = callAI(app, {
       provider: cfg.provider,
       apiKey: cfg.apiKey,
       baseUrl: cfg.baseUrl,
@@ -1621,6 +1632,58 @@ function adminPutFunction(e) {
   if (body.model !== undefined) rec.set("model", String(body.model));
   if (body.enabled !== undefined) rec.set("enabled", !!body.enabled);
   app.save(rec);
+  return e.json(200, { ok: true });
+}
+
+// ---- AI usage / limits / prices — per-provider caps by token count or $ budget ----
+
+// This month's per-provider token usage + estimated cost + configured caps.
+function adminGetUsage(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  return e.json(200, { providers: AL.usageSummary(e.app, VALID_PROVIDERS) });
+}
+
+// Configured limit per provider (0 = unlimited).
+function adminGetLimits(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const limits = VALID_PROVIDERS.map((p) => {
+    const l = AL.limitFor(app, p) || { monthly_tokens: 0, usd_budget: 0, in_cap: 0, out_cap: 0 };
+    return { provider: p, monthly_tokens: l.monthly_tokens, usd_budget: l.usd_budget, in_cap: l.in_cap, out_cap: l.out_cap };
+  });
+  return e.json(200, { limits: limits });
+}
+
+function adminSetLimit(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const body = e.requestInfo().body || {};
+  const provider = (body.provider || "").toString();
+  if (VALID_PROVIDERS.indexOf(provider) === -1) return e.json(400, { error: "invalid provider" });
+  AL.setLimit(e.app, provider, {
+    monthly_tokens: body.monthly_tokens, usd_budget: body.usd_budget,
+    in_cap: body.in_cap, out_cap: body.out_cap,
+  });
+  return e.json(200, { ok: true });
+}
+
+function adminGetPrices(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  return e.json(200, { prices: AL.pricesList(e.app) });
+}
+
+function adminSetPrice(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const body = e.requestInfo().body || {};
+  const provider = (body.provider || "").toString();
+  const model = (body.model || "").toString();
+  if (VALID_PROVIDERS.indexOf(provider) === -1) return e.json(400, { error: "invalid provider" });
+  if (!model) return e.json(400, { error: "model required" });
+  AL.setPrice(e.app, provider, model, body.in_usd, body.out_usd);
   return e.json(200, { ok: true });
 }
 
@@ -2009,6 +2072,11 @@ module.exports = {
   adminGetModels,
   adminGetFunctions,
   adminPutFunction,
+  adminGetUsage,
+  adminGetLimits,
+  adminSetLimit,
+  adminGetPrices,
+  adminSetPrice,
   adminGetSettings,
   adminPutSettings,
   adminGetUsers,

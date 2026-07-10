@@ -71,6 +71,8 @@ function showView(name) {
   if (name === "admin") loadAdmin();
 }
 $$("[data-view]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
+// Admin section tabs (AI / Instance / Users / Data) — one-time wiring; buttons are static markup.
+$$("#adminTabs button").forEach((b) => b.addEventListener("click", () => setAdminSect(b.dataset.group)));
 
 // ---------------------------------------------------------- tracking modes
 // Per-metric display metadata. `get` reads the value from a totals/goals object; `u` is the
@@ -605,13 +607,111 @@ async function loadAdmin() {
       catch (_) { MODELS[p.name] = []; }
     })
   );
-  populateDatalists();
   renderFunctions(functions, providers);
   renderUsers(usersResp.users);
   loadFoods("");
   loadSources();
   loadPrompts();
   loadLookup();
+  loadAiLimits();
+  loadAiUsage();
+  loadAiPrices();
+}
+
+// ---- Admin section tabs (AI / Instance / Users / Data) ----
+function setAdminSect(group) {
+  $$("#adminTabs button").forEach((b) => b.classList.toggle("on", b.dataset.group === group));
+  $$(".admin-sect").forEach((s) => (s.hidden = s.dataset.group !== group));
+}
+
+// ---- AI limits (per-provider token / $ caps) ----
+async function loadAiLimits() {
+  const wrap = $("#aiLimits");
+  if (!wrap) return;
+  let limits = [];
+  try { limits = (await api("/admin/limits")).limits || []; } catch (e) { wrap.innerHTML = `<p class="hint">${escapeHtml(e.message)}</p>`; return; }
+  wrap.innerHTML = "";
+  limits.forEach((l) => {
+    const meta = PROVIDER_META[l.provider] || { label: l.provider };
+    const el = document.createElement("div");
+    el.className = "limitrow";
+    el.innerHTML =
+      `<div class="limithead">${escapeHtml(meta.label)}</div>` +
+      `<div class="grid2">` +
+      `<label class="field">Monthly token cap <input type="number" min="0" step="1000" data-k="monthly_tokens" value="${l.monthly_tokens || ""}" placeholder="unlimited" /></label>` +
+      `<label class="field">Monthly budget (USD) <input type="number" min="0" step="0.5" data-k="usd_budget" value="${l.usd_budget || ""}" placeholder="unlimited" /></label>` +
+      `</div>` +
+      `<div class="row end"><button class="primary small" data-save>Save</button></div>`;
+    el.querySelector("[data-save]").onclick = async () => {
+      const payload = {
+        provider: l.provider,
+        monthly_tokens: +el.querySelector('[data-k="monthly_tokens"]').value || 0,
+        usd_budget: +el.querySelector('[data-k="usd_budget"]').value || 0,
+      };
+      try { await api("/admin/limit", { method: "POST", body: JSON.stringify(payload) }); toast(l.provider + " limit saved"); loadAiUsage(); }
+      catch (e) { toast(e.message); }
+    };
+    wrap.appendChild(el);
+  });
+}
+
+// ---- AI usage (this month, per provider) ----
+async function loadAiUsage() {
+  const wrap = $("#aiUsage");
+  if (!wrap) return;
+  let rows = [];
+  try { rows = (await api("/admin/usage")).providers || []; } catch (e) { wrap.innerHTML = `<p class="hint">${escapeHtml(e.message)}</p>`; return; }
+  const fmt = (n) => (n || 0).toLocaleString();
+  wrap.innerHTML = rows.map((r) => {
+    const meta = PROVIDER_META[r.provider] || { label: r.provider };
+    const capTok = r.limit.monthly_tokens || 0, capUsd = r.limit.usd_budget || 0;
+    const tokPart = capTok ? `${fmt(r.tokens)} / ${fmt(capTok)} tok` : `${fmt(r.tokens)} tok`;
+    const usdPart = capUsd ? `$${r.cost_usd.toFixed(2)} / $${capUsd.toFixed(2)}` : `$${r.cost_usd.toFixed(2)}`;
+    const over = (capTok && r.tokens >= capTok) || (capUsd && r.cost_usd >= capUsd);
+    return `<div class="usagerow${over ? " over" : ""}"><span class="up">${escapeHtml(meta.label)}</span>` +
+      `<span class="um">${tokPart} · ${usdPart} · ${fmt(r.calls)} calls${over ? " · <b>over limit</b>" : ""}</span></div>`;
+  }).join("") || '<p class="hint">No AI usage recorded yet this month.</p>';
+}
+
+// ---- AI model prices (USD per 1M tokens) ----
+async function loadAiPrices() {
+  const wrap = $("#aiPrices");
+  if (!wrap) return;
+  let prices = [];
+  try { prices = (await api("/admin/prices")).prices || []; } catch (_) { prices = []; }
+  prices.sort((a, b) => (a.provider + a.model < b.provider + b.model ? -1 : 1));
+  wrap.innerHTML =
+    `<div class="pricerow head"><span>Provider</span><span>Model</span><span>In $/1M</span><span>Out $/1M</span><span></span></div>` +
+    prices.map((p, i) =>
+      `<div class="pricerow" data-i="${i}"><span>${escapeHtml(p.provider)}</span><span class="pm">${escapeHtml(p.model)}</span>` +
+      `<input type="number" step="0.01" min="0" data-k="in_usd" value="${p.in_usd}" />` +
+      `<input type="number" step="0.01" min="0" data-k="out_usd" value="${p.out_usd}" />` +
+      `<button class="link" data-save>Save</button></div>`
+    ).join("") +
+    `<div class="pricerow add"><input type="text" id="npProv" placeholder="provider" /><input type="text" id="npModel" placeholder="model id" />` +
+    `<input type="number" step="0.01" id="npIn" placeholder="in" /><input type="number" step="0.01" id="npOut" placeholder="out" />` +
+    `<button class="link" id="npAdd">Add</button></div>`;
+  wrap.querySelectorAll(".pricerow[data-i] [data-save]").forEach((btn) => {
+    btn.onclick = async () => {
+      const row = btn.closest(".pricerow"); const p = prices[+row.dataset.i];
+      try {
+        await api("/admin/price", { method: "POST", body: JSON.stringify({
+          provider: p.provider, model: p.model,
+          in_usd: row.querySelector('[data-k="in_usd"]').value, out_usd: row.querySelector('[data-k="out_usd"]').value,
+        }) });
+        toast("price saved"); loadAiUsage();
+      } catch (e) { toast(e.message); }
+    };
+  });
+  const add = wrap.querySelector("#npAdd");
+  if (add) add.onclick = async () => {
+    const prov = $("#npProv").value.trim(), model = $("#npModel").value.trim();
+    if (!prov || !model) { toast("provider and model required"); return; }
+    try {
+      await api("/admin/price", { method: "POST", body: JSON.stringify({ provider: prov, model: model, in_usd: $("#npIn").value, out_usd: $("#npOut").value }) });
+      toast("price added"); loadAiPrices(); loadAiUsage();
+    } catch (e) { toast(e.message); }
+  };
 }
 
 // ---------------------------------------------------- barcode lookup sources
@@ -731,22 +831,45 @@ $("#saveInstance").addEventListener("click", async () => {
   } catch (e) { toast(e.message); }
 });
 
-function populateDatalists() {
-  for (const prov of ["anthropic", "openai", "google"]) {
-    const dl = $("#dl-" + prov);
-    if (!dl) continue;
-    const list = MODELS[prov] || [];
-    dl.innerHTML = list
-      .map((m) => `<option value="${escapeHtml(m.id)}">${m.vision ? "👁 " : ""}${escapeHtml(m.label || m.id)}</option>`)
+// Live model catalog per provider → a native <select> (replaces the old <datalist> inputs, which
+// filtered options to the typed text and wouldn't let you browse/change). Always keeps the saved
+// model as an option, and adds an "Other…" escape hatch for a model the live list doesn't include.
+function modelSelectHTML(provider, selected, attrs) {
+  const list = MODELS[provider] || [];
+  const ids = list.map((m) => m.id);
+  let opts = "";
+  if (!ids.length) {
+    opts += `<option value="${escapeHtml(selected || "")}">${selected ? escapeHtml(selected) : "— set this provider's API key to load models —"}</option>`;
+  } else {
+    if (selected && ids.indexOf(selected) === -1)
+      opts += `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)} (saved)</option>`;
+    opts += list
+      .map((m) => `<option value="${escapeHtml(m.id)}" ${m.id === selected ? "selected" : ""}>${m.vision ? "👁 " : ""}${escapeHtml(m.label || m.id)}</option>`)
       .join("");
   }
+  opts += `<option value="__custom__">Other — type a model id…</option>`;
+  return `<select ${attrs || 'data-k="model"'}>${opts}</select>`;
 }
 
+// Wire a model <select>: picking "Other…" prompts for a custom model id and adds it as an option.
+function wireModelSelect(sel, fallback) {
+  if (!sel) return;
+  sel.addEventListener("change", () => {
+    if (sel.value !== "__custom__") return;
+    const v = (prompt("Enter a model id:", "") || "").trim();
+    if (v) {
+      let o = Array.prototype.find.call(sel.options, (x) => x.value === v);
+      if (!o) { o = document.createElement("option"); o.value = v; o.textContent = v; sel.insertBefore(o, sel.options[sel.options.length - 1]); }
+      sel.value = v;
+    } else { sel.value = fallback || ""; }
+  });
+}
+
+// Fetch a provider's live model list on demand (when a provider dropdown changes).
 async function fetchModelsIfNeeded(prov) {
   if (MODELS[prov]) return;
   try { const r = await api("/admin/models?provider=" + prov); MODELS[prov] = r.models || []; }
   catch (_) { MODELS[prov] = []; }
-  populateDatalists();
 }
 
 function provOptions(selected) {
@@ -763,19 +886,17 @@ function overrideRow(u, cat, label) {
   row.innerHTML =
     `<span class="uov-label">${label}</span>` +
     `<select data-cat="${cat}" data-k="provider">${provOptions(prov)}</select>` +
-    `<input type="text" data-cat="${cat}" data-k="model" value="${escapeHtml(model || "")}" placeholder="global default" />`;
-  const sel = row.querySelector("select");
-  const inp = row.querySelector("input");
-  const sync = (clear) => {
-    const has = !!sel.value;
-    inp.disabled = !has;
-    inp.placeholder = has ? "model id (pick or type)" : "uses global default";
-    inp.setAttribute("list", has ? "dl-" + sel.value : "");
-    if (has) fetchModelsIfNeeded(sel.value);
-    else if (clear) inp.value = "";
+    `<span class="model-cell" data-cat="${cat}"></span>`;
+  const sel = row.querySelector('[data-k="provider"]');
+  const cell = row.querySelector(".model-cell");
+  const renderCell = async (cur) => {
+    if (!sel.value) { cell.innerHTML = '<span class="muted">uses global default</span>'; return; }
+    await fetchModelsIfNeeded(sel.value);
+    cell.innerHTML = modelSelectHTML(sel.value, cur || "", `data-cat="${cat}" data-k="model"`);
+    wireModelSelect(cell.querySelector("select"), cur || "");
   };
-  sel.addEventListener("change", () => sync(true));
-  sync(false);
+  sel.addEventListener("change", () => renderCell(""));
+  renderCell(model);
   return row;
 }
 
@@ -1020,14 +1141,22 @@ $("#sourceSaveBtn").addEventListener("click", () => {
   saveSource({ title, url, notes: $("#sNotes").value.trim(), enabled: $("#sEnabled").checked }, false);
 });
 
+const PROVIDER_META = {
+  anthropic: { label: "Anthropic (Claude)", hint: "console.anthropic.com" },
+  openai: { label: "OpenAI", hint: "platform.openai.com/api-keys" },
+  google: { label: "Google (Gemini)", hint: "aistudio.google.com/apikey" },
+  openrouter: { label: "OpenRouter", hint: "openrouter.ai/keys — one key, 300+ models" },
+};
+
 function renderProviders(providers) {
   const wrap = $("#providers");
   wrap.innerHTML = "";
   providers.forEach((p) => {
+    const meta = PROVIDER_META[p.name] || { label: p.name, hint: "" };
     const el = document.createElement("div");
     el.className = "prov";
     el.innerHTML =
-      `<h4>${p.name}</h4>` +
+      `<h4>${escapeHtml(meta.label)}${meta.hint ? ` <span class="prov-hint">${escapeHtml(meta.hint)}</span>` : ""}</h4>` +
       `<div class="grid">` +
       `<input type="password" placeholder="${p.key_set ? "Key set — " + p.key_hint : "Paste API key"}" data-k="key" />` +
       `<label class="switch"><input type="checkbox" data-k="enabled" ${p.enabled ? "checked" : ""}/> enabled</label>` +
@@ -1074,20 +1203,22 @@ function renderFunctions(functions, providers) {
       `<label class="switch"><input type="checkbox" data-k="enabled" ${fn.enabled ? "checked" : ""}/> on</label>` +
       `</div>` +
       `<div class="grid" style="margin-top:8px">` +
-      `<input type="text" list="dl-${fn.provider}" value="${escapeHtml(fn.model || "")}" placeholder="model id (pick or type)" data-k="model" />` +
+      `<span class="model-cell">${modelSelectHTML(fn.provider, fn.model)}</span>` +
       `<button class="primary" data-save>Save</button>` +
       `</div>`;
-    const modelInput = el.querySelector('[data-k="model"]');
     const provSel = el.querySelector('[data-k="provider"]');
-    provSel.addEventListener("change", () => {
-      modelInput.setAttribute("list", "dl-" + provSel.value);
-      fetchModelsIfNeeded(provSel.value);
+    const cell = el.querySelector(".model-cell");
+    wireModelSelect(cell.querySelector("select"), fn.model);
+    provSel.addEventListener("change", async () => {
+      await fetchModelsIfNeeded(provSel.value);
+      cell.innerHTML = modelSelectHTML(provSel.value, "");
+      wireModelSelect(cell.querySelector("select"), "");
     });
     el.querySelector("[data-save]").onclick = async () => {
       const payload = {
         fn: fn.fn,
         provider: provSel.value,
-        model: modelInput.value.trim(),
+        model: (cell.querySelector('[data-k="model"]') || {}).value || "",
         enabled: el.querySelector('[data-k="enabled"]').checked,
       };
       try { await api("/admin/functions", { method: "PUT", body: JSON.stringify(payload) }); toast(fn.fn + " saved"); }

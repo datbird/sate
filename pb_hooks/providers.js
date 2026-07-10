@@ -70,7 +70,8 @@ function runAnthropic(req) {
   if (res.statusCode >= 300) fail("anthropic", res);
 
   const parts = (res.json.content || []).filter((c) => c.type === "text").map((c) => c.text);
-  return parts.join("\n").trim();
+  const u = res.json.usage || {};
+  return { text: parts.join("\n").trim(), input: u.input_tokens || 0, output: u.output_tokens || 0 };
 }
 
 // ------------------------------------------------------------------- OpenAI
@@ -117,7 +118,12 @@ function runOpenAI(req) {
   });
   if (res.statusCode >= 300) fail("openai", res);
 
-  return (res.json.choices[0].message.content || "").trim();
+  const u = res.json.usage || {};
+  return {
+    text: (res.json.choices[0].message.content || "").trim(),
+    input: u.prompt_tokens || 0,
+    output: u.completion_tokens || 0,
+  };
 }
 
 // ------------------------------------------------------------------- Google
@@ -152,9 +158,15 @@ function runGoogle(req) {
 
   const cand = (res.json.candidates || [])[0];
   const parts = cand && cand.content && cand.content.parts ? cand.content.parts : [];
-  return parts.map((p) => p.text || "").join("").trim();
+  const u = res.json.usageMetadata || {};
+  return {
+    text: parts.map((p) => p.text || "").join("").trim(),
+    input: u.promptTokenCount || 0,
+    output: u.candidatesTokenCount || 0,
+  };
 }
 
+// Every runX returns { text, input, output } — input/output are token counts for usage/limits.
 function runProvider(req) {
   switch (req.provider) {
     case "anthropic":
@@ -163,6 +175,10 @@ function runProvider(req) {
       return runOpenAI(req);
     case "google":
       return runGoogle(req);
+    case "openrouter":
+      // OpenRouter is OpenAI-compatible; just point the base at their gateway.
+      if (!req.baseUrl) req.baseUrl = "https://openrouter.ai/api/v1";
+      return runOpenAI(req);
     default:
       throw new Error("unknown provider: " + req.provider);
   }
@@ -216,6 +232,23 @@ function listModels(req) {
       .map((m) => m.name.replace("models/", ""))
       .filter((n) => !skip.test(n))
       .map((id) => ({ id: id, label: id, vision: true }));
+  }
+
+  if (req.provider === "openrouter") {
+    const res = $http.send({
+      url: (req.baseUrl || "https://openrouter.ai/api/v1") + "/models",
+      method: "GET",
+      headers: req.apiKey ? { Authorization: "Bearer " + req.apiKey } : {},
+      timeout: 30,
+    });
+    if (res.statusCode >= 300) fail("openrouter", res);
+    return (res.json.data || [])
+      .map((m) => {
+        const arch = m.architecture || {};
+        const mods = arch.input_modalities || (arch.modality ? String(arch.modality).split("+") : []);
+        return { id: m.id, label: m.name || m.id, vision: (mods || []).indexOf("image") !== -1 };
+      })
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
   throw new Error("unknown provider: " + req.provider);
