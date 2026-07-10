@@ -96,6 +96,15 @@ body {
   nav.tabbar { display: none; }
 }
 
+/* iOS zooms the page when a focused control's text is < 16px. Must cover phones in *either*
+   orientation, so it uses the same narrow-OR-short test as the nav — the old max-width:560px rule
+   missed landscape (a phone is ~850px wide then) and the page zoomed on every tap into a field. */
+@media (max-width: 719px), (max-height: 520px) {
+  input, select, textarea,
+  .fooded input, .prov input, .fn input, .fn select,
+  .uov-row select, .uov-row input, .prompt-ta, dialog input, #goalMode { font-size: 16px; }
+}
+
 .tabs { display: flex; gap: 4px; margin-left: auto; }
 .tabs button {
   border: 0; background: transparent; color: var(--muted);
@@ -330,11 +339,6 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
   .who { max-width: none; padding: 0; border: 0; }
   .who .who-email, .who .caret { display: none; }
   .avatar { width: 34px; height: 34px; font-size: 14px; }
-
-  /* iOS zooms any focused control whose text is < 16px — keep form text at 16px on phones. */
-  input, select, textarea,
-  .fooded input, .prov input, .fn input, .fn select,
-  .uov-row select, .uov-row input, .prompt-ta, dialog input, #goalMode { font-size: 16px; }
 
   /* Comfortable tap targets for inline row actions. */
   .link { padding: 6px 8px; }
