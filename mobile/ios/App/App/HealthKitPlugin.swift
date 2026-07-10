@@ -16,6 +16,8 @@ public class HealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "isAvailable", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestAuthorization", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "queryWorkouts", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "queryHeartRate", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "queryBodyStats", returnType: CAPPluginReturnPromise),
     ]
 
     private let store = HKHealthStore()
@@ -25,6 +27,11 @@ public class HealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
         if let e = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) { t.insert(e) }
         if let d = HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning) { t.insert(d) }
         if let c = HKObjectType.quantityType(forIdentifier: .distanceCycling) { t.insert(c) }
+        // "Add from heart rate" needs the HR series plus the body stats the Keytel formula uses.
+        if let hr = HKObjectType.quantityType(forIdentifier: .heartRate) { t.insert(hr) }
+        if let m = HKObjectType.quantityType(forIdentifier: .bodyMass) { t.insert(m) }
+        if let dob = HKObjectType.characteristicType(forIdentifier: .dateOfBirth) { t.insert(dob) }
+        if let sex = HKObjectType.characteristicType(forIdentifier: .biologicalSex) { t.insert(sex) }
         return t
     }
 
@@ -79,6 +86,81 @@ public class HealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
                 ]
             }
             call.resolve(["workouts": workouts])
+        }
+        store.execute(query)
+    }
+
+    // Heart-rate series for the last `hours` (default 24), ascending, downsampled to ≤ ~500
+    // points so the graph payload stays small. Each point is { t: ISO8601, bpm: Int }.
+    @objc func queryHeartRate(_ call: CAPPluginCall) {
+        guard HKHealthStore.isHealthDataAvailable(),
+              let hrType = HKObjectType.quantityType(forIdentifier: .heartRate) else {
+            call.resolve(["samples": []])
+            return
+        }
+        let hours = call.getInt("hours") ?? 24
+        let start = Calendar.current.date(byAdding: .hour, value: -max(1, hours), to: Date()) ?? Date()
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: Date(), options: .strictStartDate)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+        let query = HKSampleQuery(sampleType: hrType, predicate: predicate,
+                                  limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, samples, error in
+            if let error = error {
+                call.reject("Heart-rate query failed: \(error.localizedDescription)")
+                return
+            }
+            let unit = HKUnit.count().unitDivided(by: .minute())
+            let iso = ISO8601DateFormatter()
+            let all = (samples as? [HKQuantitySample]) ?? []
+            let stride = max(1, all.count / 500)
+            var out: [[String: Any]] = []
+            var i = 0
+            while i < all.count {
+                let s = all[i]
+                out.append([
+                    "t": iso.string(from: s.startDate),
+                    "bpm": Int(s.quantity.doubleValue(for: unit).rounded()),
+                ])
+                i += stride
+            }
+            call.resolve(["samples": out])
+        }
+        store.execute(query)
+    }
+
+    // Weight (kg), age (yr), and sex for the HR→kcal formula. Any value Apple Health doesn't
+    // have comes back null; the web layer then falls back to the profile or asks the user.
+    @objc func queryBodyStats(_ call: CAPPluginCall) {
+        var result: [String: Any] = ["weight_kg": NSNull(), "age": NSNull(), "sex": NSNull()]
+
+        if let dob = try? store.dateOfBirthComponents(), let birthYear = dob.year {
+            let now = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+            if let nowYear = now.year {
+                var age = nowYear - birthYear
+                if let bm = dob.month, let bd = dob.day, let nm = now.month, let nd = now.day,
+                   (nm < bm || (nm == bm && nd < bd)) { age -= 1 }
+                if age > 0 && age < 130 { result["age"] = age }
+            }
+        }
+        if let sex = try? store.biologicalSex() {
+            switch sex.biologicalSex {
+            case .male: result["sex"] = "male"
+            case .female: result["sex"] = "female"
+            default: break
+            }
+        }
+
+        guard HKHealthStore.isHealthDataAvailable(),
+              let massType = HKObjectType.quantityType(forIdentifier: .bodyMass) else {
+            call.resolve(result)
+            return
+        }
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        let query = HKSampleQuery(sampleType: massType, predicate: nil, limit: 1, sortDescriptors: [sort]) { _, samples, _ in
+            if let s = (samples as? [HKQuantitySample])?.first {
+                result["weight_kg"] = s.quantity.doubleValue(for: .gramUnit(with: .kilo))
+            }
+            call.resolve(result)
         }
         store.execute(query)
     }

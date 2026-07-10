@@ -398,7 +398,8 @@ function renderAddBody() {
       `<input id="actInput" placeholder="Search activities… e.g. running" autocomplete="off"></div>` +
       `<div class="dur"><label>Duration</label><input id="actDur" type="number" min="1" value="30"> <label>min</label></div>` +
       `<div class="reslist" id="actResults"></div>` +
-      `<button class="aibtn" id="actAI" style="border-color:color-mix(in srgb,var(--activity) 45%,var(--line));color:var(--activity)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/></svg>Estimate with AI — describe the workout</button>`;
+      `<button class="aibtn" id="actAI" style="border-color:color-mix(in srgb,var(--activity) 45%,var(--line));color:var(--activity)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/></svg>Estimate with AI — describe the workout</button>` +
+      (isNativeApp() ? `<button class="aibtn" id="actHR" style="border-color:color-mix(in srgb,var(--activity) 45%,var(--line));color:var(--activity)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l2.5 6 4-14 2.5 8H22"/></svg>From heart rate — pick a window from your watch</button>` : "");
     const inp = $("#actInput");
     const runSearch = async () => {
       let acts = [];
@@ -412,6 +413,7 @@ function renderAddBody() {
     inp.addEventListener("input", () => { clearTimeout(actTimer); actTimer = setTimeout(runSearch, 180); });
     $("#actDur").addEventListener("input", () => { clearTimeout(actTimer); actTimer = setTimeout(runSearch, 180); });
     $("#actAI").addEventListener("click", () => logActivityText(inp.value || $("#actInput").value));
+    const hrb = $("#actHR"); if (hrb) hrb.addEventListener("click", openHrPicker);
     runSearch();
     setTimeout(() => inp.focus(), 60);
   }
@@ -531,6 +533,11 @@ function openGoals() {
   $("#goalMode").value = ME.track_mode || "calories";
   $("#goalNet").checked = ME.net_exercise !== false;
   renderHealthRow();
+  const hrRow = $("#hrMethodRow");
+  if (hrRow) {
+    hrRow.hidden = !isNativeApp();
+    if (isNativeApp()) $("#hrMethod").value = ME.hr_estimate_method === "ai" ? "ai" : "formula";
+  }
   goalModeHint();
   goalsDialog.showModal();
 }
@@ -546,10 +553,12 @@ $("#goalsForm").addEventListener("submit", async (e) => {
     goal_kcal: f.goal_kcal.value, goal_protein: f.goal_protein.value,
     goal_carbs: f.goal_carbs.value, goal_fat: f.goal_fat.value, goal_sodium: f.goal_sodium.value,
   };
+  if (isNativeApp() && $("#hrMethod")) payload.hr_estimate_method = $("#hrMethod").value;
   const r = await api("/goals", { method: "PATCH", body: JSON.stringify(payload) });
   ME.goals = r.goals;
   if (r.track_mode) ME.track_mode = r.track_mode;
   if (typeof r.net_exercise === "boolean") ME.net_exercise = r.net_exercise;
+  if (r.hr_estimate_method) ME.hr_estimate_method = r.hr_estimate_method;
   renderHome();
   toast("Goals saved");
 });
@@ -1204,6 +1213,253 @@ async function onHealthIntervalChange(ev) {
   }
 }
 
+// ------------------------------------------------------ add from heart rate (native)
+// Retroactively log unlogged exertion the watch captured only as heart rate: read the last 24h
+// of HR, drag a window on the graph, name it, and Sate estimates the burn (Keytel formula by
+// default, or AI). Native-only — HR is unreadable on the web. State lives in HR while open.
+let HR = null;
+
+// Client-side twin of the backend Keytel (api.js keytelKcalPerMin) for instant drag preview;
+// the server recomputes authoritatively on save.
+function keytelPerMin(hr, w, a, sex) {
+  w = w > 0 ? w : 70; a = a > 0 ? a : 40;
+  const male = (-55.0969 + 0.6309 * hr + 0.1988 * w + 0.2017 * a) / 4.184;
+  const female = (-20.4022 + 0.4472 * hr - 0.1263 * w + 0.074 * a) / 4.184;
+  const s = (sex || "").toLowerCase();
+  const v = s === "male" ? male : s === "female" ? female : (male + female) / 2;
+  return Math.max(0, v);
+}
+function hrMethod() { return ME && ME.hr_estimate_method === "ai" ? "ai" : "formula"; }
+function hrClock(ms) { try { return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); } catch (_) { return ""; } }
+
+function openHrPicker() {
+  closeAdd();
+  const bg = $("#hrBg"), sheet = $("#hrSheet");
+  bg.hidden = false; sheet.hidden = false;
+  bg.onclick = closeHrPicker;
+  $("#hrBody").innerHTML = '<div class="hrload">Reading the last 24 hours of heart rate…</div>';
+  loadHr();
+}
+function closeHrPicker() { $("#hrBg").hidden = true; $("#hrSheet").hidden = true; HR = null; }
+
+async function loadHr() {
+  const HK = healthPlugin();
+  if (!HK) { $("#hrBody").innerHTML = '<div class="hrload">Apple Health needs the Sate app.</div>'; return; }
+  // Heart rate + body stats are read types this build added; ensure they're authorized (iOS
+  // only prompts for types not yet determined, so this is a no-op once granted).
+  try { await HK.requestAuthorization(); } catch (_) {}
+  let samples = [], body = { weight_kg: 0, age: 0, sex: "" };
+  try {
+    const r = await HK.queryHeartRate({ hours: 24 });
+    samples = ((r && r.samples) || [])
+      .map((s) => ({ t: Date.parse(s.t), bpm: +s.bpm }))
+      .filter((s) => s.t && s.bpm > 0)
+      .sort((a, b) => a.t - b.t);
+  } catch (_) {}
+  try {
+    const b = await HK.queryBodyStats();
+    if (b) body = { weight_kg: +b.weight_kg || 0, age: +b.age || 0, sex: (b.sex || "").toLowerCase() };
+  } catch (_) {}
+  // Fill any gaps Apple Health didn't have from the saved profile.
+  if (!body.weight_kg) body.weight_kg = +ME.body_weight_kg || 0;
+  if (!body.age) body.age = +ME.body_age || 0;
+  if (!body.sex) body.sex = (ME.body_sex || "").toLowerCase();
+
+  if (!samples.length) {
+    $("#hrBody").innerHTML =
+      '<div class="hrload">No heart-rate data in the last 24 hours.<br>Wear your watch, then try again.</div>' +
+      '<div class="row end"><button class="link" id="hrCancel">Close</button></div>';
+    $("#hrCancel").addEventListener("click", closeHrPicker);
+    return;
+  }
+  const tMin = samples[0].t, tMax = samples[samples.length - 1].t;
+  const span = tMax - tMin;
+  // Default selection: the most recent ~30 min (clamped to what's available).
+  const selEnd = tMax;
+  const selStart = Math.max(tMin, tMax - Math.min(30 * 60000, Math.max(span * 0.25, 5 * 60000)));
+  HR = { samples, tMin, tMax, selStart, selEnd, body };
+  renderHr();
+}
+
+// Fixed SVG geometry + time/bpm scales for the current HR data.
+function hrGeom() {
+  const W = 340, H = 148, x0 = 4, x1 = W - 4, y0 = 10, y1 = H - 20;
+  const bpms = HR.samples.map((s) => s.bpm);
+  const loB = Math.max(30, Math.min.apply(null, bpms) - 5);
+  const hiB = Math.max.apply(null, bpms) + 5;
+  const span = HR.tMax - HR.tMin || 1, brange = hiB - loB || 1;
+  return {
+    W, H, x0, x1, y0, y1, loB, hiB,
+    tx: (t) => x0 + (x1 - x0) * (t - HR.tMin) / span,
+    ty: (b) => y1 - (y1 - y0) * (b - loB) / brange,
+    xt: (x) => HR.tMin + span * (Math.max(x0, Math.min(x1, x)) - x0) / (x1 - x0),
+  };
+}
+
+// Stats over the currently-selected window.
+function hrStats() {
+  const inSel = HR.samples.filter((s) => s.t >= HR.selStart && s.t <= HR.selEnd);
+  if (!inSel.length) return { avg: 0, max: 0, min: 0, n: 0 };
+  let sum = 0, max = 0, min = 1e9;
+  for (const s of inSel) { sum += s.bpm; if (s.bpm > max) max = s.bpm; if (s.bpm < min) min = s.bpm; }
+  return { avg: Math.round(sum / inSel.length), max: max, min: min, n: inSel.length };
+}
+function hrDurationMin() { return Math.max(1, Math.round((HR.selEnd - HR.selStart) / 60000)); }
+
+// Body stats currently in effect (live-edited fields override the resolved defaults).
+function hrCurrentBody() {
+  const w = $("#hrWeight"), a = $("#hrAge"), s = $("#hrSex");
+  return {
+    weight_kg: w && w.value ? (+w.value / 2.2046226) : HR.body.weight_kg,
+    age: a && a.value ? +a.value : HR.body.age,
+    sex: s && s.value ? s.value : HR.body.sex,
+  };
+}
+function hrNeedsBody() {
+  if (hrMethod() === "ai") return false; // AI doesn't need body stats
+  const b = hrCurrentBody();
+  return !(b.weight_kg > 0) || !(b.age > 0);
+}
+
+function renderHr() {
+  const g = hrGeom();
+  const line = HR.samples.map((s, i) => (i ? "L" : "M") + g.tx(s.t).toFixed(1) + " " + g.ty(s.bpm).toFixed(1)).join(" ");
+  // A few hour ticks across the window.
+  let ticks = "";
+  for (let i = 0; i <= 4; i++) {
+    const t = HR.tMin + (HR.tMax - HR.tMin) * (i / 4), x = g.tx(t);
+    ticks += `<text x="${x.toFixed(1)}" y="${g.H - 6}" class="hrtick" text-anchor="${i === 0 ? "start" : i === 4 ? "end" : "middle"}">${hrClock(t)}</text>`;
+  }
+  const bodyFields = `
+    <div class="hrbody" id="hrBodyFields"${hrNeedsBody() ? "" : " hidden"}>
+      <div class="hrbodylbl">For an accurate estimate</div>
+      <div class="hrbodygrid">
+        <label>Weight (lb)<input type="number" id="hrWeight" min="0" inputmode="decimal" value="${HR.body.weight_kg ? Math.round(HR.body.weight_kg * 2.2046226) : ""}"></label>
+        <label>Age<input type="number" id="hrAge" min="0" inputmode="numeric" value="${HR.body.age || ""}"></label>
+        <label>Sex<select id="hrSex"><option value=""${HR.body.sex ? "" : " selected"}>—</option><option value="male"${HR.body.sex === "male" ? " selected" : ""}>Male</option><option value="female"${HR.body.sex === "female" ? " selected" : ""}>Female</option></select></label>
+      </div>
+    </div>`;
+
+  $("#hrBody").innerHTML =
+    `<div class="hrgraphwrap">
+      <svg id="hrSvg" viewBox="0 0 ${g.W} ${g.H}" preserveAspectRatio="none">
+        <rect id="hrBand" x="0" y="${g.y0}" width="0" height="${g.y1 - g.y0}" class="hrband"/>
+        <path d="${line}" fill="none" class="hrline"/>
+        <line id="hrH0" class="hrhandle" x1="0" y1="${g.y0}" x2="0" y2="${g.y1}"/>
+        <line id="hrH1" class="hrhandle" x1="0" y1="${g.y0}" x2="0" y2="${g.y1}"/>
+        <circle id="hrG0" class="hrgrip" cx="0" cy="${g.y1}" r="7"/>
+        <circle id="hrG1" class="hrgrip" cx="0" cy="${g.y1}" r="7"/>
+        ${ticks}
+      </svg>
+    </div>
+    <div class="hrreadout" id="hrReadout"></div>
+    <input id="hrName" class="hrname" placeholder="Name this activity — e.g. Yard work" autocomplete="off" maxlength="80">
+    ${bodyFields}
+    <div class="row end hractions">
+      <button class="link" id="hrCancel">Cancel</button>
+      <button class="primary" id="hrSave">Add activity</button>
+    </div>`;
+
+  hrPaint();
+  const svg = $("#hrSvg");
+  attachHrDrag(svg);
+  $("#hrCancel").addEventListener("click", closeHrPicker);
+  $("#hrSave").addEventListener("click", saveHr);
+  ["hrWeight", "hrAge", "hrSex"].forEach((id) => { const el = $("#" + id); if (el) el.addEventListener("input", hrPaint); });
+}
+
+// Update the band, handles, and readout without rebuilding the SVG (keeps dragging smooth).
+function hrPaint() {
+  const g = hrGeom();
+  const xs = g.tx(HR.selStart), xe = g.tx(HR.selEnd);
+  const band = $("#hrBand"); if (band) { band.setAttribute("x", xs.toFixed(1)); band.setAttribute("width", Math.max(0, xe - xs).toFixed(1)); }
+  const set = (id, x) => { const el = $("#" + id); if (el) { el.setAttribute("x1", x.toFixed(1)); el.setAttribute("x2", x.toFixed(1)); } };
+  const setc = (id, x) => { const el = $("#" + id); if (el) el.setAttribute("cx", x.toFixed(1)); };
+  set("hrH0", xs); set("hrH1", xe); setc("hrG0", xs); setc("hrG1", xe);
+
+  const st = hrStats(), mins = hrDurationMin(), method = hrMethod();
+  const bf = $("#hrBodyFields"); if (bf) bf.hidden = !hrNeedsBody();
+  let est;
+  if (method === "ai") {
+    est = "calories estimated by AI on save";
+  } else {
+    const b = hrCurrentBody();
+    est = "~" + Math.round(keytelPerMin(st.avg, b.weight_kg, b.age, b.sex) * mins) + " cal";
+  }
+  const ro = $("#hrReadout");
+  if (ro) ro.innerHTML =
+    `<b>${est}</b><span>${hrClock(HR.selStart)}–${hrClock(HR.selEnd)} · ${mins} min · avg ${st.avg}${st.max ? " / max " + st.max : ""} bpm</span>`;
+}
+
+// Drag either handle (whichever the pointer is nearer) to reshape the window.
+function attachHrDrag(svg) {
+  const g = hrGeom();
+  let active = null;
+  const timeAt = (clientX) => {
+    const r = svg.getBoundingClientRect();
+    return g.xt(g.x0 + (clientX - r.left) / r.width * (g.x1 - g.x0));
+  };
+  const move = (which, t) => {
+    const MIN = 60000;
+    if (which === "start") HR.selStart = Math.min(t, HR.selEnd - MIN);
+    else HR.selEnd = Math.max(t, HR.selStart + MIN);
+    HR.selStart = Math.max(HR.tMin, HR.selStart);
+    HR.selEnd = Math.min(HR.tMax, HR.selEnd);
+    hrPaint();
+  };
+  svg.addEventListener("pointerdown", (ev) => {
+    ev.preventDefault();
+    const t = timeAt(ev.clientX);
+    active = Math.abs(t - HR.selStart) <= Math.abs(t - HR.selEnd) ? "start" : "end";
+    try { svg.setPointerCapture(ev.pointerId); } catch (_) {}
+    move(active, t);
+  });
+  svg.addEventListener("pointermove", (ev) => { if (active) move(active, timeAt(ev.clientX)); });
+  const done = () => { active = null; };
+  svg.addEventListener("pointerup", done);
+  svg.addEventListener("pointercancel", done);
+}
+
+async function saveHr(confirmOverlap) {
+  const name = ($("#hrName").value || "").trim();
+  if (!name) { toast("Give it a name"); $("#hrName").focus(); return; }
+  const st = hrStats();
+  if (!st.n) { toast("That window has no heart-rate data"); return; }
+  if (hrNeedsBody()) { toast("Add your weight and age for the formula"); return; }
+  const btn = $("#hrSave"); if (btn) btn.disabled = true;
+  const b = hrCurrentBody();
+  const payload = {
+    name: name,
+    start: new Date(HR.selStart).toISOString(),
+    end: new Date(HR.selEnd).toISOString(),
+    duration_min: hrDurationMin(),
+    avg_hr: st.avg, max_hr: st.max, min_hr: st.min,
+    weight_kg: b.weight_kg, age: b.age, sex: b.sex,
+    confirm_overlap: !!confirmOverlap,
+  };
+  try {
+    const r = await api("/log/heart-rate", { method: "POST", body: JSON.stringify(payload) });
+    if (r && r.overlap) {
+      if (btn) btn.disabled = false;
+      if (confirm("This window " + r.warning + ". Add it anyway?")) return saveHr(true);
+      return;
+    }
+    // Persist any body stats the user typed so we don't ask again.
+    if ($("#hrBodyFields") && ($("#hrWeight").value || $("#hrAge").value || $("#hrSex").value)) {
+      try {
+        const g = await api("/goals", { method: "PATCH", body: JSON.stringify({ body_weight_kg: b.weight_kg, body_age: b.age, body_sex: b.sex }) });
+        ME.body_weight_kg = g.body_weight_kg; ME.body_age = g.body_age; ME.body_sex = g.body_sex;
+      } catch (_) {}
+    }
+    closeHrPicker();
+    toast(r.kcal ? ("Logged " + name + " · " + r.kcal + " cal burned") : ("Logged " + name));
+    renderHome();
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    toast((e && e.message) || "Couldn't log activity");
+  }
+}
+
 // --------------------------------------------------------------- sign-in (apple mode)
 
 function capacitorBrowser() {
@@ -1322,8 +1578,8 @@ async function boot() {
     const home = document.getElementById("view-home");
     if (!home || home.hidden) return true;
     if (document.querySelector("dialog[open]")) return true;               // goals dialog
-    const add = document.getElementById("addSheet"), edit = document.getElementById("editSheet");
-    if ((add && !add.hidden) || (edit && !edit.hidden)) return true;        // compose / edit sheets
+    const add = document.getElementById("addSheet"), edit = document.getElementById("editSheet"), hr = document.getElementById("hrSheet");
+    if ((add && !add.hidden) || (edit && !edit.hidden) || (hr && !hr.hidden)) return true;  // compose / edit / HR sheets
     return false;
   }
   function show(dist) {

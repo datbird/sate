@@ -456,6 +456,38 @@ function healthSyncIntervalOf(profile) {
   return isNaN(v) || v < 0 ? 1440 : v;
 }
 
+// Body stats the HR→kcal (Keytel) formula needs. Read from Apple Health when available (the
+// client passes them per-call), else the user's saved profile values, else neutral defaults.
+function bodyStatsOf(profile) {
+  return {
+    weight_kg: profile.getFloat("body_weight_kg") || 0,
+    age: Math.round(profile.getFloat("body_age")) || 0,
+    sex: (profile.getString("body_sex") || "").toLowerCase(),
+  };
+}
+
+// Which method turns a heart-rate window into a calorie burn: the deterministic Keytel formula
+// (default) or the AI activity_estimate function. Only "ai" flips it.
+function hrMethodOf(profile) {
+  return profile.getString("hr_estimate_method") === "ai" ? "ai" : "formula";
+}
+
+// Keytel et al. (2005) kcal/min from heart rate, using weight (kg), age (yr), and sex. Unknown
+// sex → average the male/female equations. Defaults fill missing inputs; clamped ≥ 0 (the
+// regression can go slightly negative at rest-level HR).
+function keytelKcalPerMin(hr, weightKg, age, sex) {
+  const w = weightKg > 0 ? weightKg : 70;
+  const a = age > 0 ? age : 40;
+  const male = (-55.0969 + 0.6309 * hr + 0.1988 * w + 0.2017 * a) / 4.184;
+  const female = (-20.4022 + 0.4472 * hr - 0.1263 * w + 0.074 * a) / 4.184;
+  const s = (sex || "").toLowerCase();
+  let v;
+  if (s === "male" || s === "m") v = male;
+  else if (s === "female" || s === "f") v = female;
+  else v = (male + female) / 2;
+  return Math.max(0, v);
+}
+
 // --------------------------------------------------------------- user routes
 
 function me(e) {
@@ -482,6 +514,10 @@ function me(e) {
     health_sync: healthSyncOf(profile),
     health_sync_interval: healthSyncIntervalOf(profile),
     health_synced_at: profile.getString("health_synced_at"),
+    hr_estimate_method: hrMethodOf(profile),
+    body_weight_kg: profile.getFloat("body_weight_kg") || 0,
+    body_age: Math.round(profile.getFloat("body_age")) || 0,
+    body_sex: profile.getString("body_sex") || "",
     today: today,
     totals: sumTotals(dayEntries(app, email, today)),
   });
@@ -1081,6 +1117,82 @@ function logActivity(e) {
   }
 }
 
+// POST /api/sate/log/heart-rate — turn a selected heart-rate window into a named activity.
+// Body: { name, start, end, duration_min, avg_hr, max_hr, min_hr,
+//         weight_kg?, age?, sex?, method?, confirm_overlap? }
+// Burn is estimated by the deterministic Keytel formula (default) or the AI activity_estimate
+// function, per the user's hr_estimate_method preference (overridable per call via `method`).
+// Guards double-counting: if the window overlaps an existing activity (e.g. an auto-imported
+// workout), it returns { warning, overlap } unless confirm_overlap is set.
+function logHeartRate(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const profile = ensureProfile(app, email);
+  const body = e.requestInfo().body || {};
+
+  const name = (body.name || "").toString().trim() || "Heart-rate activity";
+  const avgHr = num(body.avg_hr);
+  const maxHr = num(body.max_hr);
+  const start = body.start ? new Date(body.start) : null;
+  const end = body.end ? new Date(body.end) : null;
+  let minutes = Math.round(num(body.duration_min));
+  if ((!minutes || minutes <= 0) && start && end) minutes = Math.max(1, Math.round((end - start) / 60000));
+  if (!minutes || minutes <= 0) return e.json(400, { error: "duration_min (or start+end) required" });
+  if (!avgHr) return e.json(400, { error: "avg_hr required" });
+
+  // Overlap guard — scan the day(s) the window touches for an activity that intersects it.
+  if (!body.confirm_overlap && start && end) {
+    try {
+      const dates = [start.toISOString().slice(0, 10)];
+      const endDate = end.toISOString().slice(0, 10);
+      if (endDate !== dates[0]) dates.push(endDate);
+      for (const d of dates) {
+        for (const rec of dayEntries(app, email, d)) {
+          if (!isActivity(rec)) continue;
+          const rs = new Date(rec.getString("logged_at"));
+          const re = new Date(rs.getTime() + (num(rec.getFloat("duration_min")) || 0) * 60000);
+          if (rs < end && re > start) {
+            return e.json(200, { warning: 'overlaps "' + rec.getString("description") + '"', overlap: true });
+          }
+        }
+      }
+    } catch (_) { /* best-effort guard; never block the log on it */ }
+  }
+
+  // Estimate the burn per the chosen method.
+  const method = (body.method === "ai" || body.method === "formula") ? body.method : hrMethodOf(profile);
+  let kcal = 0, provider = "", model = "", note = "";
+  if (method === "ai") {
+    const desc = name + " — about " + minutes + " min at avg " + Math.round(avgHr) + " bpm" +
+      (maxHr ? ", peak " + Math.round(maxHr) + " bpm" : "");
+    try {
+      const r = estimateActivity(app, desc, email);
+      kcal = Math.round(num(r.parsed.total.kcal_burned));
+      provider = r.provider; model = r.model; note = r.parsed.note || "";
+    } catch (err) { return e.json(502, { error: String(err.message || err) }); }
+  } else {
+    const st = bodyStatsOf(profile);
+    const weight = num(body.weight_kg) || st.weight_kg;
+    const age = num(body.age) || st.age;
+    const sex = (body.sex || st.sex || "").toString();
+    kcal = Math.round(keytelKcalPerMin(avgHr, weight, age, sex) * minutes);
+  }
+  if (kcal < 0) kcal = 0;
+
+  const rec = addEntry(app, email, {
+    kind: "activity", source: "heart_rate",
+    logged_at: start ? start.toISOString() : undefined,
+    description: name,
+    duration_min: minutes,
+    intensity: "avg " + Math.round(avgHr) + (maxHr ? " / max " + Math.round(maxHr) : "") + " bpm",
+    items: [{ name: name, duration_min: minutes, kcal_burned: kcal, avg_hr: Math.round(avgHr), max_hr: Math.round(maxHr) }],
+    total: activityTotal(kcal),
+    provider: provider, model: model,
+  });
+  return e.json(200, { entry: entryJSON(rec), method: method, kcal: kcal, note: note, totals: sumTotals(dayEntries(app, email, todayStr())) });
+}
+
 // GET /api/sate/activities/search?q= — autocomplete for the Activity compose tab. Each row carries
 // its per-minute burn rate so the client can preview kcal live as the user picks a duration.
 function activitiesSearch(e) {
@@ -1330,8 +1442,28 @@ function setGoals(e) {
     const v = parseInt(body.health_sync_interval, 10);
     if (!isNaN(v) && v >= 0) profile.set("health_sync_interval", String(v));
   }
+  if (body.hr_estimate_method !== undefined) {
+    profile.set("hr_estimate_method", body.hr_estimate_method === "ai" ? "ai" : "formula");
+  }
+  if (body.body_weight_kg !== undefined && body.body_weight_kg !== null && body.body_weight_kg !== "") {
+    profile.set("body_weight_kg", Number(body.body_weight_kg) || 0);
+  }
+  if (body.body_age !== undefined && body.body_age !== null && body.body_age !== "") {
+    profile.set("body_age", Number(body.body_age) || 0);
+  }
+  if (body.body_sex !== undefined) {
+    const s = String(body.body_sex).toLowerCase();
+    profile.set("body_sex", (s === "male" || s === "female") ? s : "");
+  }
   app.save(profile);
-  return e.json(200, { goals: goalsOf(profile), track_mode: trackModeOf(profile), net_exercise: netExerciseOf(profile), health_sync: healthSyncOf(profile), health_sync_interval: healthSyncIntervalOf(profile) });
+  return e.json(200, {
+    goals: goalsOf(profile), track_mode: trackModeOf(profile), net_exercise: netExerciseOf(profile),
+    health_sync: healthSyncOf(profile), health_sync_interval: healthSyncIntervalOf(profile),
+    hr_estimate_method: hrMethodOf(profile),
+    body_weight_kg: profile.getFloat("body_weight_kg") || 0,
+    body_age: Math.round(profile.getFloat("body_age")) || 0,
+    body_sex: profile.getString("body_sex") || "",
+  });
 }
 
 function daySummary(e) {
@@ -1863,6 +1995,7 @@ module.exports = {
   deleteEntry,
   updateEntry,
   logActivity,
+  logHeartRate,
   healthSync,
   activitiesSearch,
   statsRange,

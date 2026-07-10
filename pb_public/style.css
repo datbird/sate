@@ -353,6 +353,26 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .ptr.ready .ptr-spin { transform: rotate(180deg); }
 .ptr.spin .ptr-spin { animation: ptrspin .7s linear infinite; }
 @keyframes ptrspin { to { transform: rotate(360deg); } }
+
+/* Add-from-heart-rate picker */
+.hrmethodrow { margin-bottom: 14px; }
+.hrload { padding: 26px 8px; text-align: center; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.hrgraphwrap { margin: 6px 0 4px; }
+#hrSvg { width: 100%; height: 168px; display: block; touch-action: none; overflow: visible; }
+.hrline { stroke: var(--activity); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.hrband { fill: color-mix(in srgb, var(--activity) 16%, transparent); }
+.hrhandle { stroke: var(--activity); stroke-width: 2; }
+.hrgrip { fill: var(--activity); stroke: var(--card); stroke-width: 2; }
+.hrtick { fill: var(--muted); font-size: 9px; }
+.hrreadout { display: flex; flex-direction: column; gap: 2px; padding: 8px 2px 12px; }
+.hrreadout b { font-size: 18px; color: var(--activity); }
+.hrreadout span { font-size: 12px; color: var(--muted); }
+.hrname { width: 100%; margin-bottom: 12px; }
+.hrbody { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+.hrbodylbl { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.hrbodygrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.hrbodygrid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.hractions { gap: 10px; }
 .link.danger { color: var(--danger, #dc2626); }
 
 /* toast */
