@@ -4,12 +4,25 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
 let ME = null;
+let AUTH = { mode: "proxy", apple_configured: false };
+let PB = null; // PocketBase client — only created in apple mode
 
 async function api(path, opts) {
-  const res = await fetch("/api/sate" + path, Object.assign({ headers: { "content-type": "application/json" } }, opts));
+  const o = Object.assign({}, opts);
+  o.headers = Object.assign({ "content-type": "application/json" }, o.headers);
+  // In proxy mode the proxy authenticates the request; in apple mode we carry a PocketBase token.
+  if (PB && PB.authStore.isValid) o.headers["Authorization"] = PB.authStore.token;
+  const res = await fetch("/api/sate" + path, o);
   let data = {};
   try { data = await res.json(); } catch (_) {}
-  if (!res.ok) throw new Error(data.error || res.status + " error");
+  if (!res.ok) {
+    // A stale token is indistinguishable from never having signed in — send them back to sign-in.
+    if (res.status === 401 && AUTH.mode === "apple") {
+      if (PB) PB.authStore.clear();
+      showSignIn();
+    }
+    throw new Error(data.error || res.status + " error");
+  }
   return data;
 }
 
@@ -885,11 +898,52 @@ function renderFunctions(functions, providers) {
   });
 }
 
+// --------------------------------------------------------------- sign-in (apple mode)
+
+function capacitorBrowser() {
+  return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser) || null;
+}
+
+// Apple refuses to render its sign-in page inside an embedded webview, so natively we hand the URL
+// to the system browser (ASWebAuthenticationSession). On the web a popup keeps this page alive,
+// which matters: PocketBase delivers the auth code back over a realtime subscription held here.
+async function openAuthUrl(url) {
+  const B = capacitorBrowser();
+  if (B) return B.open({ url: url, presentationStyle: "popover" });
+  const w = window.open(url, "_blank", "width=520,height=700");
+  if (!w) throw new Error("Popup blocked — allow popups for this site, then try again.");
+}
+
+function showSignIn() { $("#authwrap").hidden = false; }
+function hideSignIn() { $("#authwrap").hidden = true; }
+
+async function signInWithApple() {
+  const btn = $("#appleSignIn");
+  const note = $("#authNote");
+  btn.disabled = true;
+  note.className = "authnote";
+  note.textContent = "Opening Apple…";
+  try {
+    await PB.collection("users").authWithOAuth2({ provider: "apple", urlCallback: openAuthUrl });
+    const B = capacitorBrowser();
+    if (B) { try { await B.close(); } catch (_) {} }
+    hideSignIn();
+    await start();
+  } catch (e) {
+    note.className = "authnote err";
+    note.textContent = (e && e.message) || "Sign-in failed.";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // --------------------------------------------------------------------- boot
-async function boot() {
+
+async function start() {
   try {
     ME = await api("/me");
   } catch (e) {
+    if (AUTH.mode === "apple") return; // api() already sent them back to sign-in
     document.body.innerHTML = '<div style="padding:40px;text-align:center;font:16px system-ui">' +
       "🔒 Not authenticated.<br><br>Sate must sit behind an auth proxy (Cloudflare Access), " +
       "or set <code>DEV_EMAIL</code> for local development.</div>";
@@ -901,5 +955,40 @@ async function boot() {
   if (ME.isAdmin) $("#adminTab").hidden = false;
   $("#histDate").value = todayISO();
   refreshToday();
+}
+
+async function boot() {
+  try {
+    const res = await fetch("/api/sate/auth-config");
+    if (res.ok) AUTH = await res.json();
+  } catch (_) {}
+
+  if (AUTH.mode !== "apple") return start();
+
+  PB = new PocketBase(window.location.origin);
+  $("#authBrand").textContent = AUTH.app_name || "Sate";
+  $("#appleSignIn").addEventListener("click", signInWithApple);
+
+  // Cloudflare's logout URL is meaningless once Sate owns the session.
+  const out = document.querySelector('.menu a[href="/cdn-cgi/access/logout"]');
+  if (out) {
+    out.removeAttribute("href");
+    out.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      PB.authStore.clear();
+      window.location.reload();
+    });
+  }
+
+  if (!AUTH.apple_configured) {
+    showSignIn();
+    $("#appleSignIn").disabled = true;
+    const note = $("#authNote");
+    note.className = "authnote err";
+    note.textContent = "Sign in with Apple isn't configured on this instance.";
+    return;
+  }
+  if (!PB.authStore.isValid) return showSignIn();
+  return start();
 }
 boot();
