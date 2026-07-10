@@ -35,6 +35,10 @@
 	<string>Sate uses your photo library so you can log a meal from a photo you already took.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Sate reads your workouts and the calories they burned so it can log your activity and add exercise calories to your daily budget.</string>
+	<!-- Sate never writes to Health, but the HealthKit entitlement permits writes, so Apple
+	     (ITMS-90683) requires this string regardless. Kept truthful. -->
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Sate does not write any data to Apple Health.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
