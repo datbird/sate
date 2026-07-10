@@ -329,11 +329,30 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .checkrow input { width: auto; margin-top: 3px; flex: 0 0 auto; }
 .checkrow span { display: flex; flex-direction: column; gap: 2px; font-weight: 600; }
 .checkrow small { font-weight: 400; font-size: 12px; color: var(--muted); }
-.healthrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.healthrow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 10px; }
 .healthinfo { display: flex; flex-direction: column; gap: 2px; }
 .healthinfo small { font-size: 12px; color: var(--muted); }
 .healthactions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: 0 0 auto; }
 .healthactions .primary { padding: 7px 12px; font-size: 13px; }
+/* Interval picker wraps to its own full-width line under the status/actions. Guard hidden
+   explicitly per the scanner-modal trap (an explicit display would beat the hidden attr). */
+.healthsyncopts { flex: 1 0 100%; margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--line); }
+.healthsyncopts[hidden] { display: none; }
+.healthintlbl { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; font-size: 13px; font-weight: 600; }
+.healthintlbl select { width: auto; flex: 0 0 auto; font-size: 13px; padding: 6px 8px; }
+
+/* Pull-to-refresh indicator (Home). Fixed at the top; JS drives transform/opacity as you pull. */
+.ptr { position: fixed; top: calc(env(safe-area-inset-top) - 6px); left: 50%; margin-left: -17px; z-index: 60;
+  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: var(--card); border: 1px solid var(--line);
+  box-shadow: 0 4px 16px rgba(0,0,0,.22); opacity: 0; transform: translateY(0); pointer-events: none;
+  transition: transform .22s ease, opacity .2s ease; }
+.ptr-spin { width: 18px; height: 18px; border-radius: 50%;
+  border: 2.5px solid color-mix(in srgb, var(--brand) 28%, transparent); border-top-color: var(--brand);
+  transition: transform .15s ease; }
+.ptr.ready .ptr-spin { transform: rotate(180deg); }
+.ptr.spin .ptr-spin { animation: ptrspin .7s linear infinite; }
+@keyframes ptrspin { to { transform: rotate(360deg); } }
 .link.danger { color: var(--danger, #dc2626); }
 
 /* toast */

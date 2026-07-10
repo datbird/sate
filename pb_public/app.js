@@ -136,6 +136,15 @@ async function renderHome() {
   renderFeed(feed.entries || []);
 }
 
+// Explicit refresh (pull-to-refresh on Home). Unlike the launch auto-sync this ignores the
+// interval throttle — a deliberate pull always pulls Health now, then re-renders the dashboard.
+async function refreshHome() {
+  if (isNativeApp() && ME && ME.health_sync) {
+    try { await healthSyncNow(true); } catch (_) {}
+  }
+  await renderHome();
+}
+
 // Ring markup for an intake totals object, using the user's tracking mode (reuses MODES/METRIC).
 // opts.days scales the per-day goals to the window (so a week's sum compares to a week's goal);
 // opts.netBurn adds exercise calories to the budget, but only when the ring tracks calories.
@@ -1090,6 +1099,26 @@ function healthPlugin() {
   return window.Capacitor.registerPlugin("HealthKit");
 }
 
+// Auto-sync-on-open throttle. Sync only if Health is connected AND enough time has passed
+// since the last sync. interval 0 = every launch; never synced = due. Purely a launch-time
+// check — nothing polls in the background.
+const HEALTH_INTERVALS = [
+  [0, "Every time I open the app"],
+  [60, "At most once an hour"],
+  [360, "At most every 6 hours"],
+  [1440, "Once a day"],
+  [4320, "Every 3 days"],
+  [10080, "Weekly"],
+];
+function healthSyncDue() {
+  if (!ME || !ME.health_sync) return false;
+  const interval = Number(ME.health_sync_interval);
+  if (!interval) return true; // 0 / unset → sync on every open
+  const last = ME.health_synced_at ? Date.parse(ME.health_synced_at) : 0;
+  if (!last) return true; // connected but never synced
+  return Date.now() - last >= interval * 60000;
+}
+
 // Pull recent workouts from Health and POST them for dedup/import. `silent` suppresses the
 // "nothing new" toast used by the auto-sync on launch.
 async function healthSyncNow(silent) {
@@ -1100,6 +1129,7 @@ async function healthSyncNow(silent) {
     const workouts = (res && res.workouts) || [];
     const r = await api("/health/sync", { method: "POST", body: JSON.stringify({ workouts: workouts }) });
     ME.health_sync = true;
+    ME.health_synced_at = r.synced_at || new Date().toISOString();
     if (!silent) toast(r.added ? ("Imported " + r.added + " workout" + (r.added === 1 ? "" : "s")) : "Apple Health up to date");
     if ($("#view-home") && !$("#view-home").hidden) renderHome();
     renderHealthRow();
@@ -1144,6 +1174,34 @@ function renderHealthRow() {
   const c = $("#healthConnectBtn"); if (c) c.addEventListener("click", healthConnect);
   const s = $("#healthSyncBtn"); if (s) s.addEventListener("click", () => healthSyncNow(false));
   const d = $("#healthDiscBtn"); if (d) d.addEventListener("click", healthDisconnect);
+
+  // Auto-sync interval picker — only meaningful while connected.
+  const opts = $("#healthSyncOpts");
+  if (opts) {
+    if (connected) {
+      const cur = Number(ME.health_sync_interval);
+      opts.hidden = false;
+      opts.innerHTML = '<label class="healthintlbl">Auto-sync when I open the app' +
+        '<select id="healthInterval">' +
+        HEALTH_INTERVALS.map(([v, l]) => '<option value="' + v + '"' + (v === cur ? " selected" : "") + ">" + l + "</option>").join("") +
+        "</select></label>";
+      $("#healthInterval").addEventListener("change", onHealthIntervalChange);
+    } else {
+      opts.hidden = true;
+      opts.innerHTML = "";
+    }
+  }
+}
+
+async function onHealthIntervalChange(ev) {
+  const v = parseInt(ev.target.value, 10);
+  try {
+    const r = await api("/goals", { method: "PATCH", body: JSON.stringify({ health_sync_interval: v }) });
+    if (r && typeof r.health_sync_interval === "number") ME.health_sync_interval = r.health_sync_interval;
+    toast("Auto-sync updated");
+  } catch (e) {
+    toast((e && e.message) || "Couldn't update auto-sync");
+  }
 }
 
 // --------------------------------------------------------------- sign-in (apple mode)
@@ -1206,8 +1264,9 @@ async function start() {
   if (ME.isAdmin) $$("[data-admin-only]").forEach((el) => (el.hidden = false));
   $("#histDate").value = todayISO();
   renderHome();
-  // Native + already connected → quietly pull any workouts logged since last launch.
-  if (isNativeApp() && ME.health_sync) healthSyncNow(true);
+  // Native + connected + past the user's chosen interval → quietly pull new workouts.
+  // Throttled at launch only; nothing syncs in the background.
+  if (isNativeApp() && healthSyncDue()) healthSyncNow(true);
 }
 
 async function boot() {
@@ -1244,4 +1303,63 @@ async function boot() {
   if (!PB.authStore.isValid) return showSignIn();
   return start();
 }
+
+// ------------------------------------------------------ pull-to-refresh (home)
+// Drag the Home view down from the very top to force a refresh (Health sync + re-render).
+// Document-level scroll, so we watch window.scrollY. Non-passive touchmove lets us suppress
+// the native overscroll bounce while our own indicator tracks the pull.
+(function setupPullToRefresh() {
+  const THRESHOLD = 70, MAX = 110, DAMP = 0.5;
+  let startY = 0, active = false, pulling = false, busy = false;
+
+  const ind = document.createElement("div");
+  ind.className = "ptr";
+  ind.innerHTML = '<div class="ptr-spin" aria-hidden="true"></div>';
+  document.body.appendChild(ind);
+
+  const atTop = () => (window.scrollY || document.documentElement.scrollTop || 0) <= 0;
+  function blocked() {
+    const home = document.getElementById("view-home");
+    if (!home || home.hidden) return true;
+    if (document.querySelector("dialog[open]")) return true;               // goals dialog
+    const add = document.getElementById("addSheet"), edit = document.getElementById("editSheet");
+    if ((add && !add.hidden) || (edit && !edit.hidden)) return true;        // compose / edit sheets
+    return false;
+  }
+  function show(dist) {
+    const d = Math.min(dist, MAX);
+    ind.style.transition = "none";               // track the finger 1:1 during the drag
+    ind.style.transform = "translateY(" + d + "px)";
+    ind.style.opacity = String(Math.min(1, dist / THRESHOLD));
+    ind.classList.toggle("ready", dist >= THRESHOLD);
+  }
+  function reset() { ind.style.transition = ""; ind.style.transform = ""; ind.style.opacity = ""; ind.classList.remove("ready", "spin"); }
+
+  window.addEventListener("touchstart", (e) => {
+    if (busy || e.touches.length !== 1 || blocked() || !atTop()) { active = false; return; }
+    startY = e.touches[0].clientY; active = true; pulling = false;
+  }, { passive: true });
+
+  window.addEventListener("touchmove", (e) => {
+    if (!active || busy) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy <= 0 || !atTop()) { if (pulling) { pulling = false; reset(); } if (!atTop()) active = false; return; }
+    pulling = true;
+    e.preventDefault();          // suppress native rubber-band while we own the pull
+    show(dy * DAMP);
+  }, { passive: false });
+
+  window.addEventListener("touchend", async () => {
+    if (!active || !pulling) { active = false; return; }
+    active = false; pulling = false;
+    if (!ind.classList.contains("ready")) { reset(); return; }
+    busy = true;
+    ind.classList.add("spin");
+    ind.style.transition = "";                   // animate the settle to the spin position
+    ind.style.transform = "translateY(56px)";
+    ind.style.opacity = "1";
+    try { await refreshHome(); } catch (_) {} finally { busy = false; reset(); }
+  }, { passive: true });
+})();
+
 boot();

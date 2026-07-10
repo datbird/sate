@@ -448,6 +448,14 @@ function healthSyncOf(profile) {
   return profile.getString("health_sync") === "on";
 }
 
+// Minutes the app waits between auto-syncs when it opens. "0" = every launch; unset/invalid
+// reads back as the daily default. The throttle is applied client-side at launch (never in
+// the background) using this value + health_synced_at.
+function healthSyncIntervalOf(profile) {
+  const v = parseInt(profile.getString("health_sync_interval"), 10);
+  return isNaN(v) || v < 0 ? 1440 : v;
+}
+
 // --------------------------------------------------------------- user routes
 
 function me(e) {
@@ -472,6 +480,8 @@ function me(e) {
     track_mode: trackModeOf(profile),
     net_exercise: netExerciseOf(profile),
     health_sync: healthSyncOf(profile),
+    health_sync_interval: healthSyncIntervalOf(profile),
+    health_synced_at: profile.getString("health_synced_at"),
     today: today,
     totals: sumTotals(dayEntries(app, email, today)),
   });
@@ -1128,9 +1138,13 @@ function healthSync(e) {
     } catch (err) { skipped++; }
   }
 
-  // Reaching this endpoint means Health is connected; keep the flag in sync.
-  if (!healthSyncOf(profile)) { profile.set("health_sync", "on"); app.save(profile); }
-  return e.json(200, { added: added, skipped: skipped, totals: sumTotals(dayEntries(app, email, todayStr())) });
+  // Reaching this endpoint means Health is connected; keep the flag in sync and stamp the
+  // sync time so the client's launch throttle can tell how long it's been.
+  const syncedAt = new Date().toISOString();
+  profile.set("health_synced_at", syncedAt);
+  if (!healthSyncOf(profile)) profile.set("health_sync", "on");
+  app.save(profile);
+  return e.json(200, { added: added, skipped: skipped, synced_at: syncedAt, totals: sumTotals(dayEntries(app, email, todayStr())) });
 }
 
 // GET /api/sate/stats?range=day|week|month|year — server-side rollup for the dashboard.
@@ -1312,8 +1326,12 @@ function setGoals(e) {
   if (body.health_sync !== undefined) {
     profile.set("health_sync", body.health_sync ? "on" : "off");
   }
+  if (body.health_sync_interval !== undefined) {
+    const v = parseInt(body.health_sync_interval, 10);
+    if (!isNaN(v) && v >= 0) profile.set("health_sync_interval", String(v));
+  }
   app.save(profile);
-  return e.json(200, { goals: goalsOf(profile), track_mode: trackModeOf(profile), net_exercise: netExerciseOf(profile), health_sync: healthSyncOf(profile) });
+  return e.json(200, { goals: goalsOf(profile), track_mode: trackModeOf(profile), net_exercise: netExerciseOf(profile), health_sync: healthSyncOf(profile), health_sync_interval: healthSyncIntervalOf(profile) });
 }
 
 function daySummary(e) {
