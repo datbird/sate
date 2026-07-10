@@ -953,6 +953,9 @@ async function start() {
   }
   $("#who").textContent = ME.email;
   $("#menuEmail").textContent = ME.email;
+  // Prefer the profile name's initial; fall back to the email's. Never render an empty circle.
+  const who = (ME.name || ME.email || "").trim();
+  $("#avatar").textContent = who ? who[0] : "?";
   if (ME.app_name) { $("#brandName").textContent = ME.app_name; document.title = ME.app_name + " — calorie chat"; }
   if (ME.isAdmin) $$("[data-admin-only]").forEach((el) => (el.hidden = false));
   $("#histDate").value = todayISO();

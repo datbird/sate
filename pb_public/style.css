@@ -99,12 +99,22 @@ body {
   font-weight: 600; padding: 6px 10px; border-radius: 8px; cursor: pointer;
 }
 .tabs button.active { color: var(--brand); background: color-mix(in srgb, var(--brand) 12%, transparent); }
-.usermenu { position: relative; }
-.who { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 12px; color: var(--muted); background: transparent; border: 0; cursor: pointer; max-width: 160px; padding: 5px 7px; border-radius: 8px; }
+/* Hugs the right edge on its own: the header tabs used to do this with margin-left:auto, but
+   they're hidden on phones now, which left the account button stranded next to the brand. */
+.usermenu { position: relative; margin-left: auto; }
+.who { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; color: var(--muted); background: transparent; border: 0; cursor: pointer; max-width: 200px; padding: 4px 6px; border-radius: 999px; }
 .who .who-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .who .caret { font-size: 9px; opacity: .8; }
 .who:hover { background: color-mix(in srgb, var(--muted) 16%, transparent); }
-.menu { position: absolute; right: 0; top: calc(100% + 8px); background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 34px rgba(0,0,0,.28); padding: 6px; min-width: 214px; z-index: 30; }
+.avatar {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--brand) 18%, transparent);
+  color: var(--brand); font-weight: 700; font-size: 13px; line-height: 1;
+  text-transform: uppercase; user-select: none;
+}
+/* Anchored to the right edge, and never wider than the viewport. */
+.menu { position: absolute; right: 0; left: auto; top: calc(100% + 8px); background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 34px rgba(0,0,0,.28); padding: 6px; min-width: 214px; max-width: min(280px, calc(100vw - 20px)); z-index: 30; }
 .menu-email { font-size: 12px; color: var(--muted); padding: 6px 8px; word-break: break-all; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
 .menu-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 6px 8px 5px; }
 .seg { display: flex; gap: 4px; padding: 0 4px 4px; }
@@ -313,9 +323,10 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
   .brand img { width: 30px; height: 30px; }
   .tabs { gap: 2px; }
   .tabs button { padding: 6px 8px; font-size: 13px; }
-  .who { max-width: none; padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; }
-  .who .who-email { display: none; }
-  .who .caret { font-size: 11px; }
+  /* Phones show the avatar alone — a bare caret pill read as an empty dot. */
+  .who { max-width: none; padding: 0; border: 0; }
+  .who .who-email, .who .caret { display: none; }
+  .avatar { width: 34px; height: 34px; font-size: 14px; }
 
   /* iOS zooms any focused control whose text is < 16px — keep form text at 16px on phones. */
   input, select, textarea,
