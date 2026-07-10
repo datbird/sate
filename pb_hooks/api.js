@@ -435,6 +435,12 @@ function trackModeOf(profile) {
   return TRACK_MODES.indexOf(m) !== -1 ? m : "calories";
 }
 
+// "Add exercise calories to my budget" — on unless the profile explicitly opted out.
+// Existing/unset profiles read back as on, matching how most trackers behave.
+function netExerciseOf(profile) {
+  return profile.getString("net_exercise") !== "off";
+}
+
 // --------------------------------------------------------------- user routes
 
 function me(e) {
@@ -457,6 +463,7 @@ function me(e) {
     app_name: settingsMap(app).app_name || "Sate",
     goals: goalsOf(profile),
     track_mode: trackModeOf(profile),
+    net_exercise: netExerciseOf(profile),
     today: today,
     totals: sumTotals(dayEntries(app, email, today)),
   });
@@ -1116,11 +1123,13 @@ function statsRange(e) {
 
   return e.json(200, {
     range: range,
+    days: w.days,                                // calendar days in the window (goal scaling)
     in: intake,                                  // kcal + 8 nutrients + count, summed over window
     out: { kcal: Math.round(burn), minutes: Math.round(minutes), workouts: activity.length },
     avg_in_kcal: Math.round(intake.kcal / activeDays),
     avg_out_kcal: Math.round(burn / activeDays),
     goals: goals,
+    net_exercise: netExerciseOf(p),
     series: series,
   });
 }
@@ -1247,8 +1256,11 @@ function setGoals(e) {
   if (body.track_mode !== undefined && TRACK_MODES.indexOf(String(body.track_mode)) !== -1) {
     profile.set("track_mode", String(body.track_mode));
   }
+  if (body.net_exercise !== undefined) {
+    profile.set("net_exercise", body.net_exercise ? "on" : "off");
+  }
   app.save(profile);
-  return e.json(200, { goals: goalsOf(profile), track_mode: trackModeOf(profile) });
+  return e.json(200, { goals: goalsOf(profile), track_mode: trackModeOf(profile), net_exercise: netExerciseOf(profile) });
 }
 
 function daySummary(e) {

@@ -135,16 +135,20 @@ async function renderHome() {
 }
 
 // Ring markup for an intake totals object, using the user's tracking mode (reuses MODES/METRIC).
-function ringHTML(totals, goals) {
+// opts.days scales the per-day goals to the window (so a week's sum compares to a week's goal);
+// opts.netBurn adds exercise calories to the budget, but only when the ring tracks calories.
+function ringHTML(totals, goals, opts) {
   const mode = modeOf();
+  const days = (opts && opts.days) || 1;
+  const netBurn = (opts && mode.primary === "kcal") ? (opts.netBurn || 0) : 0;
   const pm = METRIC[mode.primary];
   const val = pm.get(totals || {});
-  const goal = pm.goalKey ? (goals[pm.goalKey] || 0) : 0;
+  const goal = (pm.goalKey ? (goals[pm.goalKey] || 0) * days : 0) + netBurn;
   const pct = goal ? Math.min(100, (val / goal) * 100) : 0;
   const ushort = pm.u ? " " + pm.u : (mode.primary === "kcal" ? " kcal" : "");
   const sub = goal ? "of " + fmt(goal) + ushort : (pm.u || pm.label);
   const macros = mode.stats.map((key) => {
-    const m = METRIC[key], v = m.get(totals || {}), g = m.goalKey ? (goals[m.goalKey] || 0) : 0;
+    const m = METRIC[key], v = m.get(totals || {}), g = m.goalKey ? (goals[m.goalKey] || 0) * days : 0;
     return `<div class="macro"><b>${fmt(v)}${m.u}</b><span>${m.label}${g ? " / " + fmt(g) : ""}</span></div>`;
   }).join("");
   return `<div class="ringwrap"><div class="ring" style="--pct:${pct.toFixed(1)};--rc:${RC.nutrition}">` +
@@ -181,6 +185,17 @@ function renderStats(s) {
   const inKcal = s.in.kcal || 0, out = s.out || { kcal: 0, minutes: 0, workouts: 0 };
   const nutSeries = s.series.map((b) => b.in_kcal);
   const actSeries = s.series.map((b) => b.out_kcal);
+  const days = s.days || 1;
+  const burnKcal = out.kcal || 0;
+  // Net-exercise: exercise calories raise the calorie budget, if the user hasn't opted out and
+  // the ring actually tracks calories (calories/balanced modes). Server can also force it off.
+  const applyNet = !!(ME && ME.net_exercise) && s.net_exercise !== false && modeOf().primary === "kcal" && burnKcal > 0;
+  const ringOpts = { days: days, netBurn: applyNet ? burnKcal : 0 };
+  // "Goal 2,000 + 280 burned = 2,280 · eaten 1,565 → 715 left"
+  const netCaption = () => {
+    const base = (goals.kcal || 0) * days, eff = base + burnKcal, left = eff - inKcal;
+    return `<div class="subline">Budget ${fmt(base)} + ${fmt(burnKcal)} burned = <b>${fmt(eff)}</b> · eaten ${fmt(inKcal)} → ${fmt(Math.abs(Math.round(left)))} ${left >= 0 ? "left" : "over"}</div>`;
+  };
 
   if (HOME.scope === "activity") {
     if (HOME.chart === "line") {
@@ -192,8 +207,11 @@ function renderStats(s) {
         `<div class="ring-inner"><strong>${fmt(out.kcal)}</strong><small>cal burned</small></div></div>` +
         `<div class="kpis"><div class="kpi"><b>${fmt(out.minutes)}</b><span>active min</span></div>` +
         `<div class="kpi"><b>${fmt(out.workouts)}</b><span>workouts</span></div></div></div>`;
+      const netMsg = (ME && ME.net_exercise && s.net_exercise !== false)
+        ? "Exercise calories are added to your daily budget."
+        : "Burn is shown as context — not added to your food budget.";
       body.innerHTML = ring + (HOME.chart === "hybrid" && actSeries.length > 1 ? sparkBars(actSeries) : "") +
-        `<div class="subline">Burn is shown as context — never subtracted from your food budget.</div>`;
+        `<div class="subline">${netMsg}</div>`;
     }
     return;
   }
@@ -203,10 +221,11 @@ function renderStats(s) {
     body.innerHTML = lineChart(nutSeries, goals.kcal, RC.nutrition) +
       `<div class="avgrow"><span>Avg intake <b>${fmt(s.avg_in_kcal)} kcal</b></span><span>Goal <b>${fmt(goals.kcal)}</b></span></div>`;
   } else {
-    const both = HOME.scope === "both"
+    const both = applyNet ? netCaption()
+      : HOME.scope === "both"
       ? `<div class="subline"><span style="color:var(--brand)">${SPARK}<path d="M8 3v7a2 2 0 0 0 4 0V3"/><path d="M10 12v9"/><ellipse cx="16" cy="6.4" rx="2.2" ry="3.4" fill="none"/><path d="M16 9.8V21"/></svg></span> in ${fmt(inKcal)} kcal · <span style="color:var(--activity)">${SPARK}<circle cx="13" cy="4" r="1"/><path d="M4 17l5 1 .75-1.5"/><path d="M15 21v-4l-4-3 1-6"/><path d="M7 12V9l5-1 3 3 3 1"/></svg></span> out ${fmt(out.kcal)} cal · net ${fmt(inKcal - out.kcal)}</div>`
       : `<div class="subline">${s.range === "day" ? "Today" : "This " + s.range} · ring tracks ${METRIC[modeOf().primary].label} vs goal</div>`;
-    body.innerHTML = ringHTML(s.in, goals) + (HOME.chart === "hybrid" && nutSeries.length > 1 ? sparkBars(nutSeries) : "") + both;
+    body.innerHTML = ringHTML(s.in, goals, ringOpts) + (HOME.chart === "hybrid" && nutSeries.length > 1 ? sparkBars(nutSeries) : "") + both;
   }
 }
 // Wire the Home controls with a generic segmented handler ([data-*] is the contract).
@@ -496,6 +515,7 @@ function openGoals() {
   f.goal_fat.value = g.fat || "";
   f.goal_sodium.value = g.sodium || "";
   $("#goalMode").value = ME.track_mode || "calories";
+  $("#goalNet").checked = ME.net_exercise !== false;
   goalModeHint();
   goalsDialog.showModal();
 }
@@ -507,12 +527,14 @@ $("#goalsForm").addEventListener("submit", async (e) => {
   const f = e.target;
   const payload = {
     track_mode: f.track_mode.value,
+    net_exercise: $("#goalNet").checked,
     goal_kcal: f.goal_kcal.value, goal_protein: f.goal_protein.value,
     goal_carbs: f.goal_carbs.value, goal_fat: f.goal_fat.value, goal_sodium: f.goal_sodium.value,
   };
   const r = await api("/goals", { method: "PATCH", body: JSON.stringify(payload) });
   ME.goals = r.goals;
   if (r.track_mode) ME.track_mode = r.track_mode;
+  if (typeof r.net_exercise === "boolean") ME.net_exercise = r.net_exercise;
   renderHome();
   toast("Goals saved");
 });
