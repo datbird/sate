@@ -120,9 +120,24 @@ All config is via environment variables:
 |----------|:--------:|-------------|
 | `APP_ENCRYPTION_KEY` | ✅ | Exactly 32 chars. Encrypts provider keys. `openssl rand -hex 16`. |
 | `ADMIN_EMAILS` | ✅ | Comma-separated emails granted the Admin panel. |
-| `AUTH_EMAIL_HEADER` | — | Header carrying the authenticated email. Default `Cf-Access-Authenticated-User-Email`. |
+| `AUTH_MODE` | — | `proxy` (default) or `apple`. See below. |
+| `AUTH_EMAIL_HEADER` | — | `proxy` mode only. Header carrying the authenticated email. Default `Cf-Access-Authenticated-User-Email`. |
 | `DEV_EMAIL` | — | **Local dev only** — impersonate this email with no proxy. Never set in prod. |
 | `SUPERUSER_EMAIL` / `SUPERUSER_PASSWORD` | — | Auto-create the PocketBase dashboard superuser (`/_/`). |
+
+### Choosing an auth mode
+
+**`AUTH_MODE=proxy`** (the default) means Sate has no login of its own. An auth proxy in front of it
+authenticates the user and injects their email as a header, which Sate trusts. This is why the
+container must be published on loopback only — anything that can reach the origin directly can
+forge that header and become any user.
+
+**`AUTH_MODE=apple`** means Sate authenticates people itself, with Sign in with Apple against its
+`users` collection. The proxy header is then **ignored entirely**, so the origin can be exposed
+directly. Sate becomes its own security boundary.
+
+Note the two are mutually exclusive by design, not stacked: if you leave an auth proxy in front of
+`AUTH_MODE=apple`, users will be asked to log in twice.
 
 ## Putting it behind Cloudflare Access
 

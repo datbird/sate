@@ -23,6 +23,12 @@ function env(name) {
   return "";
 }
 
+// How users are identified:
+//   "proxy" — trust an email header injected by an auth proxy (Cloudflare Access, oauth2-proxy…).
+//             The origin MUST be reachable only through that proxy, or anyone can forge the header.
+//   "apple" — Sate authenticates users itself, via Sign in with Apple on the `users` collection.
+//             The origin may be exposed directly; the proxy header is ignored entirely.
+const AUTH_MODE = (env("AUTH_MODE") || "proxy").toLowerCase().trim() === "apple" ? "apple" : "proxy";
 const AUTH_HEADER = env("AUTH_EMAIL_HEADER") || "Cf-Access-Authenticated-User-Email";
 const DEV_EMAIL = env("DEV_EMAIL").toLowerCase().trim();
 const ADMINS = env("ADMIN_EMAILS")
@@ -36,9 +42,38 @@ const SETTING_KEYS = ["app_name", "default_goal_kcal", "default_goal_protein", "
 // ------------------------------------------------------------------ helpers
 
 function identity(e) {
+  if (AUTH_MODE === "apple") {
+    // Deliberately does NOT fall back to AUTH_HEADER: in this mode the origin can be public,
+    // and honouring the header would let anyone authenticate as anyone.
+    try {
+      if (e.auth) {
+        const email = (e.auth.email() || "").toLowerCase().trim();
+        if (email) return email;
+      }
+    } catch (_) {}
+    return DEV_EMAIL;
+  }
   let email = e.request.header.get(AUTH_HEADER) || "";
   if (!email && DEV_EMAIL) email = DEV_EMAIL;
   return email.toLowerCase().trim();
+}
+
+// Public — the SPA calls this before it has any session, to decide whether to render a
+// Sign in with Apple button or assume the proxy already authenticated the request.
+function authConfig(e) {
+  let appleReady = false;
+  if (AUTH_MODE === "apple") {
+    try {
+      const col = e.app.findCollectionByNameOrId("users");
+      const providers = (col.oauth2 && col.oauth2.providers) || [];
+      appleReady = !!col.oauth2.enabled && providers.some((p) => p.name === "apple");
+    } catch (_) {}
+  }
+  return e.json(200, {
+    mode: AUTH_MODE,
+    apple_configured: appleReady,
+    app_name: settingsMap(e.app).app_name || "Sate",
+  });
 }
 
 function isEnvAdmin(email) {
@@ -326,7 +361,12 @@ function trackModeOf(profile) {
 
 function me(e) {
   const email = identity(e);
-  if (!email) return e.json(401, { error: "not authenticated (no auth-proxy header)" });
+  if (!email) {
+    return e.json(401, {
+      error: AUTH_MODE === "apple" ? "not authenticated (sign in required)" : "not authenticated (no auth-proxy header)",
+      auth_mode: AUTH_MODE,
+    });
+  }
   const app = e.app;
   const profile = ensureProfile(app, email);
   const today = todayStr();
@@ -335,6 +375,7 @@ function me(e) {
     name: profile.getString("name"),
     role: profile.getString("role"),
     isAdmin: resolveIsAdmin(app, email),
+    auth_mode: AUTH_MODE,
     app_name: settingsMap(app).app_name || "Sate",
     goals: goalsOf(profile),
     track_mode: trackModeOf(profile),
@@ -1064,7 +1105,8 @@ function adminGetSettings(e) {
   return e.json(200, {
     settings: settingsMap(e.app),
     env_admins: ADMINS,
-    auth_header: AUTH_HEADER,
+    auth_mode: AUTH_MODE,
+    auth_header: AUTH_MODE === "proxy" ? AUTH_HEADER : null,
   });
 }
 
@@ -1417,6 +1459,7 @@ function adminPutLookup(e) {
 }
 
 module.exports = {
+  authConfig,
   me,
   logText,
   logPhoto,

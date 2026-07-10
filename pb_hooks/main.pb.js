@@ -5,6 +5,9 @@
 // (require caches, so this is cheap after the first call.) The static frontend is served
 // automatically from ./pb_public.
 
+// Unauthenticated on purpose: the SPA needs to know which auth mode is active before it can log in.
+routerAdd("GET", "/api/sate/auth-config", (e) => require(`${__hooks}/api.js`).authConfig(e));
+
 routerAdd("GET", "/api/sate/me", (e) => require(`${__hooks}/api.js`).me(e));
 routerAdd("POST", "/api/sate/log/text", (e) => require(`${__hooks}/api.js`).logText(e));
 routerAdd("POST", "/api/sate/log/photo", (e) => require(`${__hooks}/api.js`).logPhoto(e));
