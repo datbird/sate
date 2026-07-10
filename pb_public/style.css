@@ -83,13 +83,16 @@ body {
 .tabbar button.active svg { stroke-width: 2.2; }
 .tabbar[hidden] { display: none; }
 
-/* Phones get the bottom bar; wider screens keep the header tabs.
-   `.topbar .tabs` outranks the plain `.tabs` rule defined below, so these win regardless of order. */
-@media (max-width: 719px) {
+/* Phones get the bottom bar; only genuinely large screens keep the header tabs.
+   Width alone isn't enough: a phone in landscape is ~850px wide but only ~400px tall, so it must
+   still be treated as a phone. The two queries are exact complements — narrow OR short → bottom
+   bar; wide AND tall → header tabs — so exactly one applies at any size.
+   `.topbar .tabs` outranks the plain `.tabs` rule below, so these win regardless of source order. */
+@media (max-width: 719px), (max-height: 520px) {
   .topbar .tabs { display: none; }
   body { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
 }
-@media (min-width: 720px) {
+@media (min-width: 720px) and (min-height: 521px) {
   nav.tabbar { display: none; }
 }
 
