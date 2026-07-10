@@ -11,7 +11,7 @@
     <link rel="icon" href="/icons/icon-192.png?v2" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png?v2" />
     <script>try{var t=localStorage.getItem('sate-theme');if(t&&t!=='system')document.documentElement.dataset.theme=t;}catch(e){}</script>
-    <link rel="stylesheet" href="/style.css?v24" />
+    <link rel="stylesheet" href="/style.css?v25" />
   </head>
   <body>
     <header class="topbar">
@@ -20,7 +20,7 @@
         <span id="brandName">Sate</span>
       </div>
       <nav class="tabs">
-        <button data-view="log" class="active">Log</button>
+        <button data-view="home" class="active">Home</button>
         <button data-view="history">History</button>
         <button data-view="admin" data-admin-only hidden>Admin</button>
       </nav>
@@ -44,34 +44,45 @@
     </header>
 
     <main>
-      <!-- LOG VIEW -->
-      <section id="view-log" class="view">
-        <p class="creed">Understand every meal, without the manual logging.</p>
-        <div class="ring-card">
-          <div class="ring" id="ring">
-            <div class="ring-inner">
-              <strong id="ringKcal">0</strong>
-              <small id="ringGoal">kcal</small>
+      <!-- HOME VIEW -->
+      <section id="view-home" class="view">
+        <!-- scope filter: drives both the stats and the feed -->
+        <div class="seg scope" id="scope">
+          <button class="on" data-scope="both">Both</button>
+          <button data-scope="nutrition">Nutrition</button>
+          <button data-scope="activity">Activity</button>
+        </div>
+
+        <!-- stats -->
+        <div class="statcard">
+          <div class="stathead">
+            <div class="range" id="range">
+              <button class="on" data-range="day">Day</button>
+              <button data-range="week">Week</button>
+              <button data-range="month">Month</button>
+              <button data-range="year">Year</button>
+            </div>
+            <div class="charttoggle" id="charts">
+              <button class="on" data-chart="ring" title="Ring" aria-label="Ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="8"/></svg></button>
+              <button data-chart="line" title="Trend" aria-label="Trend"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 3 6-8"/></svg></button>
+              <button data-chart="hybrid" title="Hybrid" aria-label="Hybrid"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="8" cy="9" r="4.5"/><path d="M3 19h18" stroke-linecap="round"/><path d="M14 19v-4M18 19v-7" stroke-linecap="round"/></svg></button>
             </div>
           </div>
-          <div class="macros" id="macros"></div>
-          <div class="modecap" id="modeCap" hidden></div>
+          <div id="statbody"></div>
           <button class="link" id="goalsBtn">Set goals</button>
         </div>
 
-        <div class="composer">
-          <input id="foodInput" type="text" placeholder="What did you eat? e.g. two eggs and toast" autocomplete="off" />
-          <input id="photoInput" type="file" accept="image/*" capture="environment" hidden />
-          <button id="scanBtn" title="Scan barcode" aria-label="Scan barcode" class="icon-btn">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 5v14M7 5v14M11 5v14M13 5v14M17 5v14M21 5v14"/></svg>
-          </button>
-          <button id="photoBtn" title="Photo" class="icon-btn">📷</button>
-          <button id="sendBtn" class="primary">Log</button>
-        </div>
-        <div class="chatline" id="chatline"></div>
+        <!-- add -->
+        <button class="addbtn" id="addBtn" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          Add to log
+        </button>
 
-        <h3 class="section">Today</h3>
-        <ul class="entries" id="entries"></ul>
+        <!-- feed -->
+        <h3 class="section" id="feedlbl">Today</h3>
+        <div class="chatline" id="chatline"></div>
+        <ul class="entries" id="feed"></ul>
+        <input id="photoInput" type="file" accept="image/*" capture="environment" hidden />
       </section>
 
       <!-- HISTORY VIEW -->
@@ -247,9 +258,9 @@
     <!-- NATIVE-STYLE BOTTOM TAB BAR (phones only; the header tabs take over on wider screens).
          Same [data-view] contract as the header tabs, so one showView() drives both. -->
     <nav class="tabbar" id="tabbar">
-      <button data-view="log" class="active" aria-label="Log">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
-        <span>Log</span>
+      <button data-view="home" class="active" aria-label="Home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>
+        <span>Home</span>
       </button>
       <button data-view="history" aria-label="History">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
@@ -275,9 +286,28 @@
       </div>
     </div>
 
+    <!-- COMPOSE OVERLAY (the + button) -->
+    <div class="sheet-bg" id="addBg" hidden></div>
+    <div class="sheet" id="addSheet" hidden>
+      <div class="grab"></div>
+      <div class="seg scope" id="addScope">
+        <button class="on" data-add="nutrition"><svg class="tico" style="color:var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v7a2 2 0 0 0 4 0V3"/><path d="M10 12v9"/><ellipse cx="16" cy="6.4" rx="2.2" ry="3.4"/><path d="M16 9.8V21"/></svg>Nutrition</button>
+        <button data-add="activity"><svg class="tico" style="color:var(--activity)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4" r="1"/><path d="M4 17l5 1 .75-1.5"/><path d="M15 21v-4l-4-3 1-6"/><path d="M7 12V9l5-1 3 3 3 1"/></svg>Activity</button>
+      </div>
+      <div id="addBody"></div>
+    </div>
+
+    <!-- EDIT ENTRY SHEET (tap any entry) -->
+    <div class="sheet-bg" id="editBg" hidden></div>
+    <div class="sheet" id="editSheet" hidden>
+      <div class="grab"></div>
+      <h3 id="editTitle">Edit entry</h3>
+      <div id="editBody"></div>
+    </div>
+
     <div class="toast" id="toast" hidden></div>
     <script src="/vendor/pocketbase.umd.js?v1"></script>
     <script src="/vendor/html5-qrcode.min.js"></script>
-    <script src="/app.js?v24"></script>
+    <script src="/app.js?v25"></script>
   </body>
 </html>

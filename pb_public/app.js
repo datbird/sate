@@ -66,6 +66,7 @@ function todayISO() { return new Date().toISOString().slice(0, 10); }
 function showView(name) {
   $$(".view").forEach((v) => (v.hidden = v.id !== "view-" + name));
   $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
+  if (name === "home") renderHome();
   if (name === "history") loadHistory();
   if (name === "admin") loadAdmin();
 }
@@ -104,160 +105,316 @@ const MODES = {
 };
 function modeOf() { return MODES[(ME && ME.track_mode)] || MODES.calories; }
 
-// -------------------------------------------------------------------- totals
-function renderTotals(totals, goals) {
-  totals = totals || {};
-  goals = goals || {};
-  const mode = modeOf();
-  const pm = METRIC[mode.primary];
-  const val = pm.get(totals);
-  const goal = pm.goalKey ? (goals[pm.goalKey] || 0) : 0;
-
-  $("#ringKcal").textContent = fmt(val);
-  const ushort = pm.u ? " " + pm.u : (mode.primary === "kcal" ? " kcal" : "");
-  $("#ringGoal").textContent = goal ? "of " + fmt(goal) + ushort : (pm.u ? pm.u : pm.label);
-  const pct = goal ? Math.min(100, (val / goal) * 100) : 0;
-  $("#ring").style.setProperty("--pct", pct.toFixed(1));
-
-  // Secondary stats row
-  const stat = (key) => {
-    const m = METRIC[key];
-    const v = m.get(totals);
-    const g = m.goalKey ? (goals[m.goalKey] || 0) : 0;
-    return `<div class="macro"><b>${fmt(v)}${m.u}</b><span>${m.label}${g ? " / " + fmt(g) : ""}</span></div>`;
-  };
-  $("#macros").innerHTML = mode.stats.map(stat).join("");
-
-  // Mode caption under the ring
-  const cap = $("#modeCap");
-  cap.hidden = false;
-  const goalTxt = goal ? " · goal " + fmt(goal) + ushort : "";
-  cap.textContent = mode.label + " · ring tracks " + pm.label + goalTxt;
-}
-
-function entryLi(en, onDel) {
-  const li = document.createElement("li");
-  li.className = "entry";
-  const items = (en.items || []).map((i) => i.name).join(", ");
-  li.innerHTML =
-    `<div class="body"><div class="title">${escapeHtml(en.description || items || "Entry")}</div>` +
-    `<div class="sub"><span class="badge">${en.source || ""}</span> ${escapeHtml(items)}` +
-    `${en.protein ? " · " + fmt(en.protein) + "g P" : ""}</div></div>` +
-    `<div class="kcal">${fmt(en.kcal)}</div>`;
-  if (onDel) {
-    const btn = document.createElement("button");
-    btn.className = "del"; btn.textContent = "✕"; btn.title = "Delete";
-    btn.onclick = () => onDel(en.id);
-    li.appendChild(btn);
-  }
-  return li;
-}
 
 function escapeHtml(s) {
   return String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
 // ---------------------------------------------------------------------- log
-async function refreshToday() {
-  const data = await api("/entries?date=" + todayISO());
-  renderTotals(data.totals, ME.goals);
-  const ul = $("#entries");
+// -------------------------------------------------------------- Home dashboard
+const HOME = { scope: "both", range: "day", chart: "ring" };
+const RC = { nutrition: "var(--brand)", activity: "var(--activity)" };
+// The two type icons (kept identical to the compose tabs and the mockup).
+const TICON = {
+  n: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v7a2 2 0 0 0 4 0V3"/><path d="M10 12v9"/><ellipse cx="16" cy="6.4" rx="2.2" ry="3.4"/><path d="M16 9.8V21"/></svg>',
+  a: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4" r="1"/><path d="M4 17l5 1 .75-1.5"/><path d="M15 21v-4l-4-3 1-6"/><path d="M7 12V9l5-1 3 3 3 1"/></svg>',
+};
+// Opening tag for the small inline icons used in the "in / out / net" subline (sized by .iico).
+const SPARK = '<svg class="iico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">';
+
+async function renderHome() {
+  let stats = null, feed = null;
+  try {
+    [stats, feed] = await Promise.all([
+      api("/stats?range=" + HOME.range),
+      api("/entries?date=" + todayISO()),
+    ]);
+  } catch (e) { toast(e.message); return; }
+  renderStats(stats);
+  renderFeed(feed.entries || []);
+}
+
+// Ring markup for an intake totals object, using the user's tracking mode (reuses MODES/METRIC).
+function ringHTML(totals, goals) {
+  const mode = modeOf();
+  const pm = METRIC[mode.primary];
+  const val = pm.get(totals || {});
+  const goal = pm.goalKey ? (goals[pm.goalKey] || 0) : 0;
+  const pct = goal ? Math.min(100, (val / goal) * 100) : 0;
+  const ushort = pm.u ? " " + pm.u : (mode.primary === "kcal" ? " kcal" : "");
+  const sub = goal ? "of " + fmt(goal) + ushort : (pm.u || pm.label);
+  const macros = mode.stats.map((key) => {
+    const m = METRIC[key], v = m.get(totals || {}), g = m.goalKey ? (goals[m.goalKey] || 0) : 0;
+    return `<div class="macro"><b>${fmt(v)}${m.u}</b><span>${m.label}${g ? " / " + fmt(g) : ""}</span></div>`;
+  }).join("");
+  return `<div class="ringwrap"><div class="ring" style="--pct:${pct.toFixed(1)};--rc:${RC.nutrition}">` +
+    `<div class="ring-inner"><strong>${fmt(val)}</strong><small>${sub}</small></div></div>` +
+    `<div class="macros">${macros}</div></div>`;
+}
+
+function lineChart(pts, goal, accent) {
+  const w = 360, h = 150, n = pts.length;
+  if (n < 2) return `<div class="subline">Not enough data yet for a trend — keep logging.</div>`;
+  const max = Math.max(goal || 0, Math.max.apply(null, pts)) * 1.1 || 1;
+  const step = w / (n - 1);
+  const xy = pts.map((v, i) => [i * step, h - (v / max) * h]);
+  const d = xy.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const area = d + ` L${w} ${h} L0 ${h} Z`;
+  const gy = goal ? (h - (goal / max) * h).toFixed(1) : -1;
+  const end = xy[xy.length - 1];
+  return `<div class="chart"><svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">` +
+    `<defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${accent}" stop-opacity=".28"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/></linearGradient></defs>` +
+    (goal ? `<line x1="0" y1="${gy}" x2="${w}" y2="${gy}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4" opacity=".5"/>` : "") +
+    `<path d="${area}" fill="url(#lg)"/><path d="${d}" fill="none" stroke="${accent}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>` +
+    `<circle cx="${end[0].toFixed(1)}" cy="${end[1].toFixed(1)}" r="4.5" fill="${accent}" stroke="var(--card)" stroke-width="2.5"/></svg></div>`;
+}
+
+function sparkBars(pts) {
+  const max = Math.max.apply(null, pts) || 1;
+  return `<div class="spark">` + pts.map((v, i) =>
+    `<i class="${i === pts.length - 1 ? "today" : ""}" style="height:${((v / max) * 100).toFixed(0)}%"></i>`).join("") + `</div>`;
+}
+
+function renderStats(s) {
+  const body = $("#statbody");
+  const goals = (s.goals || ME.goals || {});
+  const inKcal = s.in.kcal || 0, out = s.out || { kcal: 0, minutes: 0, workouts: 0 };
+  const nutSeries = s.series.map((b) => b.in_kcal);
+  const actSeries = s.series.map((b) => b.out_kcal);
+
+  if (HOME.scope === "activity") {
+    if (HOME.chart === "line") {
+      body.innerHTML = lineChart(actSeries, 0, RC.activity) +
+        `<div class="avgrow"><span>Avg burn <b>${fmt(s.avg_out_kcal)} cal</b></span><span>Total <b>${fmt(out.kcal)}</b></span></div>`;
+    } else {
+      const pct = Math.min(100, Math.round((out.kcal / 500) * 100));
+      const ring = `<div class="ringwrap"><div class="ring" style="--pct:${pct};--rc:${RC.activity}">` +
+        `<div class="ring-inner"><strong>${fmt(out.kcal)}</strong><small>cal burned</small></div></div>` +
+        `<div class="kpis"><div class="kpi"><b>${fmt(out.minutes)}</b><span>active min</span></div>` +
+        `<div class="kpi"><b>${fmt(out.workouts)}</b><span>workouts</span></div></div></div>`;
+      body.innerHTML = ring + (HOME.chart === "hybrid" && actSeries.length > 1 ? sparkBars(actSeries) : "") +
+        `<div class="subline">Burn is shown as context — never subtracted from your food budget.</div>`;
+    }
+    return;
+  }
+
+  // nutrition or both
+  if (HOME.chart === "line") {
+    body.innerHTML = lineChart(nutSeries, goals.kcal, RC.nutrition) +
+      `<div class="avgrow"><span>Avg intake <b>${fmt(s.avg_in_kcal)} kcal</b></span><span>Goal <b>${fmt(goals.kcal)}</b></span></div>`;
+  } else {
+    const both = HOME.scope === "both"
+      ? `<div class="subline"><span style="color:var(--brand)">${SPARK}<path d="M8 3v7a2 2 0 0 0 4 0V3"/><path d="M10 12v9"/><ellipse cx="16" cy="6.4" rx="2.2" ry="3.4" fill="none"/><path d="M16 9.8V21"/></svg></span> in ${fmt(inKcal)} kcal · <span style="color:var(--activity)">${SPARK}<circle cx="13" cy="4" r="1"/><path d="M4 17l5 1 .75-1.5"/><path d="M15 21v-4l-4-3 1-6"/><path d="M7 12V9l5-1 3 3 3 1"/></svg></span> out ${fmt(out.kcal)} cal · net ${fmt(inKcal - out.kcal)}</div>`
+      : `<div class="subline">${s.range === "day" ? "Today" : "This " + s.range} · ring tracks ${METRIC[modeOf().primary].label} vs goal</div>`;
+    body.innerHTML = ringHTML(s.in, goals) + (HOME.chart === "hybrid" && nutSeries.length > 1 ? sparkBars(nutSeries) : "") + both;
+  }
+}
+// Wire the Home controls with a generic segmented handler ([data-*] is the contract).
+function segControl(sel, key, after) {
+  $(sel).addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button"); if (!btn) return;
+    $$(sel + " button").forEach((b) => b.classList.remove("on"));
+    btn.classList.add("on");
+    HOME[key] = btn.dataset[key];
+    after();
+  });
+}
+segControl("#scope", "scope", renderHome);   // scope changes both stats + feed
+segControl("#range", "range", renderHome);   // range refetches stats
+segControl("#charts", "chart", () => api("/stats?range=" + HOME.range).then(renderStats).catch(() => {}));
+$("#addBtn").addEventListener("click", openAdd);
+$("#addBg").addEventListener("click", closeAdd);
+$("#editBg").addEventListener("click", closeEdit);
+$$("#addScope button").forEach((b) => b.addEventListener("click", () => setAddTab(b.dataset.add)));
+
+function renderFeed(entries) {
+  $("#feedlbl").textContent = "Today";
+  const scope = HOME.scope;
+  const rows = entries.filter((en) => scope === "both" || (scope === "nutrition" && en.kind !== "activity") || (scope === "activity" && en.kind === "activity"));
+  const ul = $("#feed");
   ul.innerHTML = "";
-  if (!data.entries.length) ul.innerHTML = '<li class="hint">Nothing logged yet — describe a meal or snap a photo.</li>';
-  data.entries.forEach((en) => ul.appendChild(entryLi(en, deleteEntry)));
+  if (!rows.length) {
+    ul.innerHTML = '<li class="hint" style="color:var(--muted);font-size:13px;padding:10px 2px">Nothing logged yet — tap <b>+ Add to log</b>.</li>';
+    return;
+  }
+  rows.forEach((en) => ul.appendChild(entryLi(en)));
+}
+
+function entryLi(en, readonly) {
+  const li = document.createElement(readonly ? "div" : "button");
+  li.className = "entry" + (readonly ? " readonly" : "");
+  li.type = readonly ? "" : "button";
+  const activity = en.kind === "activity";
+  const items = (en.items || []).map((i) => i.name).join(", ");
+  const title = en.description || items || (activity ? "Activity" : "Entry");
+  const timeStr = timeOf(en.logged_at);
+  const sub = activity
+    ? [timeStr, en.duration_min ? Math.round(en.duration_min) + " min" : "", en.intensity].filter(Boolean).join(" · ")
+    : [timeStr, items || en.source].filter(Boolean).join(" · ");
+  const kcal = activity
+    ? `<span class="ekcal out">−${fmt(en.kcal)}<small> cal</small></span>`
+    : `<span class="ekcal">${fmt(en.kcal)}<small> kcal</small></span>`;
+  li.innerHTML =
+    `<span class="ticon ${activity ? "a" : "n"}">${activity ? TICON.a : TICON.n}</span>` +
+    `<span class="etext"><span class="t">${escapeHtml(title)}</span><span class="s">${escapeHtml(sub)}</span></span>` + kcal;
+  if (!readonly) li.addEventListener("click", () => openEdit(en));
+  return li;
+}
+
+function timeOf(iso) {
+  try {
+    const d = new Date((iso || "").replace(" ", "T").replace(/Z?$/, "Z"));
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  } catch (_) { return ""; }
 }
 
 async function deleteEntry(id) {
   await api("/entries/" + id, { method: "DELETE" });
-  refreshToday();
+  renderHome();
 }
 
-async function logText() {
-  const input = $("#foodInput");
-  const text = input.value.trim();
-  if (!text) return;
-  setBusy(true, "Estimating…");
+// --------------------------------------------------------------- logging flows
+// Free-text meal → text_parse. Called from the compose overlay's Nutrition tab.
+async function logMeal(text) {
+  if (!text.trim()) return;
+  closeAdd();
+  toast("Estimating…");
   try {
-    const r = await api("/log/text", { method: "POST", body: JSON.stringify({ text }) });
-    input.value = "";
-    renderChatResult(r);
-    refreshToday();
-  } catch (e) {
-    toast(e.message);
-  } finally {
-    setBusy(false);
-  }
+    const r = await api("/log/text", { method: "POST", body: JSON.stringify({ text: text.trim() }) });
+    toast(r.note || `Logged ${fmt(r.entry.kcal)} kcal.`);
+    renderHome();
+  } catch (e) { toast(e.message); }
 }
 
-function renderChatResult(r) {
-  const cl = $("#chatline");
-  cl.innerHTML = "";
-  const msg = document.createElement("div");
-  msg.className = "chatmsg";
-  msg.textContent = r.note || `Logged ${fmt(r.entry.kcal)} kcal.`;
-  cl.appendChild(msg);
-  // Not found in the local DB → offer an on-demand web search to replace the guess.
-  if (!r.in_db) {
-    const warn = document.createElement("div");
-    warn.className = "chatwarn";
-    warn.textContent = "⚠ Not in your food database — this is a best guess.";
-    cl.appendChild(warn);
-    const btn = document.createElement("button");
-    btn.className = "primary websearch";
-    btn.textContent = "🔎 Search the web";
-    btn.onclick = () => webLookup(r.entry.id, btn);
-    cl.appendChild(btn);
-  }
-}
-
-async function webLookup(entryId, btn) {
-  btn.disabled = true;
-  btn.textContent = "Searching the web…";
+async function webLookup(entryId) {
+  toast("Searching the web…");
   try {
     const r = await api("/entries/" + entryId + "/web-lookup", { method: "POST" });
-    const cl = $("#chatline");
-    cl.innerHTML = "";
-    const m = document.createElement("div");
-    m.className = "chatmsg";
-    m.textContent = r.note || `Updated to ${fmt(r.entry.kcal)} kcal from the web.`;
-    cl.appendChild(m);
-    refreshToday();
-  } catch (e) {
-    toast(e.message);
-    btn.disabled = false;
-    btn.textContent = "🔎 Search the web";
-  }
+    toast(r.note || `Updated to ${fmt(r.entry.kcal)} kcal from the web.`);
+    renderHome();
+  } catch (e) { toast(e.message); }
 }
 
 async function logPhoto(file) {
   const dataUrl = await new Promise((resolve, reject) => {
     const fr = new FileReader();
-    fr.onload = () => resolve(fr.result);
-    fr.onerror = reject;
+    fr.onload = () => resolve(fr.result); fr.onerror = reject;
     fr.readAsDataURL(file);
   });
-  setBusy(true, "Analyzing photo…");
+  closeAdd();
+  toast("Analyzing photo…");
   try {
     const r = await api("/log/photo", { method: "POST", body: JSON.stringify({ image: dataUrl }) });
-    $("#chatline").textContent = r.note || `Logged ${fmt(r.entry.kcal)} kcal from photo.`;
-    refreshToday();
-  } catch (e) {
-    toast(e.message);
-  } finally {
-    setBusy(false);
+    toast(r.note || `Logged ${fmt(r.entry.kcal)} kcal from photo.`);
+    renderHome();
+  } catch (e) { toast(e.message); }
+}
+$("#photoInput").addEventListener("change", (e) => { if (e.target.files[0]) logPhoto(e.target.files[0]); e.target.value = ""; });
+
+async function logActivityPreset(id, minutes) {
+  closeAdd();
+  toast("Logging…");
+  try {
+    const r = await api("/log/activity", { method: "POST", body: JSON.stringify({ activity_id: id, duration_min: minutes }) });
+    toast(`Logged ${r.entry.description} — ${fmt(r.entry.kcal)} cal burned.`);
+    renderHome();
+  } catch (e) { toast(e.message); }
+}
+async function logActivityText(text) {
+  if (!text.trim()) return;
+  closeAdd();
+  toast("Estimating…");
+  try {
+    const r = await api("/log/activity", { method: "POST", body: JSON.stringify({ text: text.trim() }) });
+    toast(r.note || `Logged ${fmt(r.entry.kcal)} cal burned.`);
+    renderHome();
+  } catch (e) { toast(e.message); }
+}
+
+// -------------------------------------------------------------- compose overlay
+let addTab = "nutrition";
+function openAdd() { addTab = "nutrition"; setAddTab("nutrition"); $("#addBg").hidden = false; $("#addSheet").hidden = false; }
+function closeAdd() { $("#addBg").hidden = true; $("#addSheet").hidden = true; }
+function setAddTab(t) {
+  addTab = t;
+  $$("#addScope button").forEach((b) => b.classList.toggle("on", b.dataset.add === t));
+  renderAddBody();
+}
+
+let actTimer = null;
+function renderAddBody() {
+  const b = $("#addBody");
+  if (addTab === "nutrition") {
+    b.innerHTML =
+      `<div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h7" stroke-linecap="round"/></svg>` +
+      `<input id="mealInput" placeholder="What did you eat? e.g. two eggs and toast" autocomplete="off"></div>` +
+      `<div class="methods">` +
+      `<button class="method" id="mBarcode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 5v14M7 5v14M11 5v14M14 5v14M18 5v14M21 5v14"/></svg><b>Barcode</b><span>scan a package</span></button>` +
+      `<button class="method" id="mPhoto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="3"/><circle cx="12" cy="13.5" r="3.5"/><path d="M9 7l1.5-2h3L15 7"/></svg><b>Photo AI</b><span>snap your plate</span></button>` +
+      `</div>` +
+      `<button class="aibtn" id="mLog" style="background:var(--brand);color:var(--brand-ink);border-style:solid;border-color:var(--brand)">Log this meal</button>`;
+    const inp = $("#mealInput");
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") logMeal(inp.value); });
+    $("#mLog").addEventListener("click", () => logMeal(inp.value));
+    $("#mBarcode").addEventListener("click", () => { closeAdd(); openScanner(); });
+    $("#mPhoto").addEventListener("click", () => $("#photoInput").click());
+    setTimeout(() => inp.focus(), 60);
+  } else {
+    b.innerHTML =
+      `<div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4" stroke-linecap="round"/></svg>` +
+      `<input id="actInput" placeholder="Search activities… e.g. running" autocomplete="off"></div>` +
+      `<div class="dur"><label>Duration</label><input id="actDur" type="number" min="1" value="30"> <label>min</label></div>` +
+      `<div class="reslist" id="actResults"></div>` +
+      `<button class="aibtn" id="actAI" style="border-color:color-mix(in srgb,var(--activity) 45%,var(--line));color:var(--activity)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/></svg>Estimate with AI — describe the workout</button>`;
+    const inp = $("#actInput");
+    const runSearch = async () => {
+      let acts = [];
+      try { acts = (await api("/activities/search?q=" + encodeURIComponent(inp.value))).activities || []; } catch (_) {}
+      const dur = Math.max(1, +$("#actDur").value || 30);
+      $("#actResults").innerHTML = acts.map((a) =>
+        `<button class="res" data-id="${a.id}"><div class="rt"><b>${escapeHtml(a.name)}</b><span>${a.kcal_min} cal/min · ~${Math.round(a.kcal_min * dur)} cal for ${dur} min</span></div><span class="add">+</span></button>`
+      ).join("") || '<div class="grouplbl">No matches — try the AI estimate below</div>';
+      $$("#actResults .res").forEach((r) => r.addEventListener("click", () => logActivityPreset(r.dataset.id, Math.max(1, +$("#actDur").value || 30))));
+    };
+    inp.addEventListener("input", () => { clearTimeout(actTimer); actTimer = setTimeout(runSearch, 180); });
+    $("#actDur").addEventListener("input", () => { clearTimeout(actTimer); actTimer = setTimeout(runSearch, 180); });
+    $("#actAI").addEventListener("click", () => logActivityText(inp.value || $("#actInput").value));
+    runSearch();
+    setTimeout(() => inp.focus(), 60);
   }
 }
 
-function setBusy(on, msg) {
-  $("#sendBtn").disabled = on;
-  $("#photoBtn").disabled = on;
-  if (on && msg) $("#chatline").textContent = msg;
+// ------------------------------------------------------------------- edit sheet
+let editEntry = null;
+function openEdit(en) {
+  editEntry = en;
+  const activity = en.kind === "activity";
+  $("#editTitle").textContent = en.description || "Edit entry";
+  const unit = activity ? "cal burned" : "kcal";
+  const scales = [["½", 0.5], ["¾", 0.75], ["1¼", 1.25], ["1½", 1.5], ["2×", 2]];
+  $("#editBody").innerHTML =
+    `<div class="subline" style="text-align:left;margin:0 0 10px">Currently <b style="color:var(--ink)">${fmt(en.kcal)} ${unit}</b>${activity && en.duration_min ? " · " + Math.round(en.duration_min) + " min" : ""}</div>` +
+    `<div class="menu-label" style="padding-left:0">Adjust the amount</div>` +
+    `<div class="quickscale">${scales.map(([l, v]) => `<button data-scale="${v}">${l}</button>`).join("")}</div>` +
+    `<div class="menu-label" style="padding-left:0">${activity ? "Or re-describe the workout" : "Or re-describe the meal"}</div>` +
+    `<div class="editrow"><input id="editText" placeholder="${activity ? "e.g. a 5 mile run" : "e.g. half a cup of rice"}" value="${escapeHtml(en.description || "")}"></div>` +
+    `<div class="sheet-actions"><button class="primary" id="editApply" style="flex:1">Re-estimate</button><button class="danger-btn" id="editDelete">Delete</button></div>`;
+  $$("#editBody [data-scale]").forEach((b) => b.addEventListener("click", () => applyEdit({ scale: +b.dataset.scale })));
+  $("#editApply").addEventListener("click", () => applyEdit({ re_estimate: true, text: $("#editText").value }));
+  $("#editDelete").addEventListener("click", async () => { await deleteEntry(en.id); closeEdit(); });
+  $("#editBg").hidden = false; $("#editSheet").hidden = false;
 }
-
-$("#sendBtn").addEventListener("click", logText);
-$("#foodInput").addEventListener("keydown", (e) => { if (e.key === "Enter") logText(); });
-$("#photoBtn").addEventListener("click", () => $("#photoInput").click());
-$("#photoInput").addEventListener("change", (e) => { if (e.target.files[0]) logPhoto(e.target.files[0]); e.target.value = ""; });
+function closeEdit() { $("#editBg").hidden = true; $("#editSheet").hidden = true; editEntry = null; }
+async function applyEdit(payload) {
+  if (!editEntry) return;
+  closeEdit();
+  toast("Updating…");
+  try {
+    const r = await api("/entries/" + editEntry.id, { method: "PATCH", body: JSON.stringify(payload) });
+    toast(`Updated to ${fmt(r.entry.kcal)} ${r.entry.kind === "activity" ? "cal" : "kcal"}.`);
+    renderHome();
+  } catch (e) { toast(e.message); }
+}
 
 // -------------------------------------------------------- barcode scanning
 let scanner = null;
@@ -306,11 +463,8 @@ async function onScan(decodedText) {
     try {
       const r = await api("/log/barcode", { method: "POST", body: JSON.stringify({ barcode: gtin }) });
       await closeScanner();
-      const cl = $("#chatline"); cl.innerHTML = "";
-      const m = document.createElement("div"); m.className = "chatmsg";
-      m.textContent = `Logged ${r.name} — ${fmt(r.entry.kcal)} kcal (via ${r.found_via}).`;
-      cl.appendChild(m);
-      refreshToday();
+      toast(`Logged ${r.name} — ${fmt(r.entry.kcal)} kcal (via ${r.found_via}).`);
+      renderHome();
     } catch (e) {
       $("#scanStatus").textContent = e.message + " — try again, or type it in.";
       scanBusy = false;
@@ -322,12 +476,9 @@ async function onScan(decodedText) {
   } else {
     // any other text (incl. a meal typed into a QR) → treat as a meal description
     await closeScanner();
-    $("#foodInput").value = raw;
-    logText();
+    logMeal(raw);
   }
 }
-
-$("#scanBtn").addEventListener("click", openScanner);
 $("#scanClose").addEventListener("click", closeScanner);
 
 // ------------------------------------------------------------------- goals
@@ -362,7 +513,7 @@ $("#goalsForm").addEventListener("submit", async (e) => {
   const r = await api("/goals", { method: "PATCH", body: JSON.stringify(payload) });
   ME.goals = r.goals;
   if (r.track_mode) ME.track_mode = r.track_mode;
-  refreshToday();
+  renderHome();
   toast("Goals saved");
 });
 
@@ -375,7 +526,7 @@ async function loadHistory() {
   const ul = $("#histEntries");
   ul.innerHTML = "";
   if (!data.entries.length) ul.innerHTML = '<li class="hint">No entries for this day.</li>';
-  data.entries.forEach((en) => ul.appendChild(entryLi(en, null)));
+  data.entries.forEach((en) => ul.appendChild(entryLi(en, true)));
 }
 $("#histDate").addEventListener("change", loadHistory);
 $("#summaryBtn").addEventListener("click", async () => {
@@ -959,7 +1110,7 @@ async function start() {
   if (ME.app_name) { $("#brandName").textContent = ME.app_name; document.title = ME.app_name + " — calorie chat"; }
   if (ME.isAdmin) $$("[data-admin-only]").forEach((el) => (el.hidden = false));
   $("#histDate").value = todayISO();
-  refreshToday();
+  renderHome();
 }
 
 async function boot() {
