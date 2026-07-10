@@ -89,6 +89,29 @@ SATE_DATA=/srv/sate SATE_PORT=127.0.0.1:8090 ADMIN_EMAILS=you@example.com \
 Running the published image instead? Just `docker pull ghcr.io/datbird/sate:latest` and
 recreate the container with the same `-v` and `APP_ENCRYPTION_KEY` as before.
 
+## iOS app (optional)
+
+`mobile/` is a [Capacitor](https://capacitorjs.com) shell that runs your Sate instance as a native
+iOS app, so you get a home-screen icon, the camera for barcode scanning, and room for native
+integrations like Apple Health later.
+
+The shell loads your instance in a webview rather than bundling the SPA. Sate authenticates by
+trusting an email header from your auth proxy and serves its API same-origin — bundling the
+frontend would make every API call cross-origin, which the proxy answers with a login redirect
+instead of data. Pointing the webview at the instance keeps the proxy's normal login flow working
+with no server-side changes.
+
+```sh
+cd mobile
+npm install
+SATE_URL=https://sate.example.com npm run sync   # bake in your instance URL
+npm run open                                     # opens Xcode
+```
+
+`SATE_URL` is read from the environment and written into the generated
+`ios/App/App/capacitor.config.json`, which is gitignored — your instance URL never lands in the
+repo. Build it in Xcode against your own Apple team and bundle identifier.
+
 ## Configuration
 
 All config is via environment variables:

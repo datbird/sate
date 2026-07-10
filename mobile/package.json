@@ -1,0 +1,18 @@
+{
+  "name": "sate-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "iOS shell for Sate — loads a Sate instance in a native webview.",
+  "scripts": {
+    "sync": "cap sync ios",
+    "open": "cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/ios": "^8.4.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.1",
+    "typescript": "^5.9.3"
+  }
+}
