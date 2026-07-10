@@ -62,6 +62,33 @@ and start logging.
 > reachable *through* the proxy. Always publish on `127.0.0.1` (as above) and point your tunnel
 > at it — never expose port 8080 directly.
 
+## Upgrading a running instance
+
+If you build the image yourself, `scripts/redeploy.sh` rebuilds it and recreates the container
+on the Docker host, reading the ports, volumes, env, labels and restart policy back off the
+container that's already running:
+
+```sh
+./scripts/redeploy.sh
+```
+
+This matters because Sate keeps its database in the `pb_data` volume and encrypts your provider
+API keys with `APP_ENCRYPTION_KEY`. Recreating the container without the same volume loses the
+database; without the same key, the stored keys can't be decrypted. The script carries both
+across rather than asking you to retype them, refuses to start a container that is missing
+either, and rolls back to the previous container if the new one doesn't pass its healthcheck.
+
+For the very first deploy there's nothing to copy from, so pass the settings explicitly:
+
+```sh
+APP_ENCRYPTION_KEY=$(openssl rand -hex 16) \
+SATE_DATA=/srv/sate SATE_PORT=127.0.0.1:8090 ADMIN_EMAILS=you@example.com \
+  ./scripts/redeploy.sh
+```
+
+Running the published image instead? Just `docker pull ghcr.io/datbird/sate:latest` and
+recreate the container with the same `-v` and `APP_ENCRYPTION_KEY` as before.
+
 ## Configuration
 
 All config is via environment variables:
