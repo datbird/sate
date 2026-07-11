@@ -2036,7 +2036,8 @@ function adminPutActivity(e) {
   let rec;
   if (b.id) { try { rec = app.findRecordById("activities", String(b.id)); } catch (_) { return e.json(404, { error: "not found" }); } }
   else { rec = new Record(app.findCollectionByNameOrId("activities")); rec.set("source", "user"); rec.set("usage_count", 0); }
-  const aliases = Array.isArray(b.aliases) ? b.aliases : String(b.aliases || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const aliases = (Array.isArray(b.aliases) ? b.aliases : String(b.aliases || "").split(","))
+    .map((s) => String(s).trim()).filter(Boolean);
   rec.set("name", name);
   rec.set("category", String(b.category || ""));
   rec.set("met", num(b.met));
@@ -2620,9 +2621,8 @@ function adminPutFood(e) {
   } else {
     rec = new Record(app.findCollectionByNameOrId("foods"));
   }
-  const aliases = Array.isArray(b.aliases)
-    ? b.aliases
-    : String(b.aliases || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const aliases = (Array.isArray(b.aliases) ? b.aliases : String(b.aliases || "").split(","))
+    .map((s) => String(s).trim()).filter(Boolean);
   rec.set("name", name);
   rec.set("brand", brand);
   if (b.barcode !== undefined) rec.set("barcode", String(b.barcode).replace(/[^0-9]/g, ""));

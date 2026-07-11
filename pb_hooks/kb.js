@@ -16,13 +16,31 @@ function num(v) {
 
 // Read a record's `aliases` json field as a string array. PocketBase json fields come back from
 // .get() as an opaque JsonRaw (a Go []byte that goja exposes as a byte-array — .map over it yields
-// garbage), so read the JSON *text* via getString() and parse it, matching the fn_overrides
-// convention in api.js. Anything that isn't a JSON array → [].
+// garbage AND re-saving the record then persists those bytes), so read the JSON *text* via
+// getString() and parse it, matching the fn_overrides convention in api.js. Anything that isn't a
+// JSON array → []. Also transparently decodes rows corrupted by the old .get()-then-save bug, where
+// aliases were persisted as the byte array of the original JSON text (see migration 1720000020).
 function readAliases(rec) {
   let s = "";
   try { s = rec.getString("aliases"); } catch (_) { return []; }
   if (!s) return [];
-  try { const v = JSON.parse(s); return Array.isArray(v) ? v : []; } catch (_) { return []; }
+  let v;
+  try { v = JSON.parse(s); } catch (_) { return []; }
+  if (!Array.isArray(v)) return [];
+  if (v.length === 0 || typeof v[0] === "string") return v;
+  if (typeof v[0] === "number") return decodeByteAliases(v);
+  return [];
+}
+
+// Legacy repair: `bytes` is the byte array of the original JSON text (["egg",…]). Turn it back into
+// the string array. Returns [] if it doesn't decode cleanly.
+function decodeByteAliases(bytes) {
+  try {
+    let t = "";
+    for (let i = 0; i < bytes.length; i++) t += String.fromCharCode(bytes[i]);
+    const a = JSON.parse(t);
+    return Array.isArray(a) ? a.filter((x) => typeof x === "string") : [];
+  } catch (_) { return []; }
 }
 
 // Whole-phrase name/alias search within `coll`: find rows whose name or an alias appears as a phrase
@@ -73,4 +91,4 @@ function bumpUsage(app, records) {
   }
 }
 
-module.exports = { norm, num, readAliases, searchByText, bumpUsage };
+module.exports = { norm, num, readAliases, decodeByteAliases, searchByText, bumpUsage };
