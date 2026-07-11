@@ -316,7 +316,10 @@ input[type=date], select, .prov input, .fn input {
 .fooded input[type="text"], .fooded input[type="number"] { padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; width: 100%; }
 
 /* dialog */
-dialog { border: 0; border-radius: var(--radius); padding: 20px; background: var(--card); color: var(--ink); box-shadow: 0 10px 40px rgba(0,0,0,.3); width: min(92vw, 360px); }
+dialog { border: 0; border-radius: var(--radius); padding: 20px; background: var(--card); color: var(--ink); box-shadow: 0 10px 40px rgba(0,0,0,.3); width: min(92vw, 360px);
+  /* Never exceed the screen: cap to the (dynamic) viewport minus safe areas and scroll inside. */
+  max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 28px);
+  overflow-y: auto; overscroll-behavior: contain; }
 dialog::backdrop { background: rgba(0,0,0,.4); }
 dialog h3 { margin: 0 0 14px; }
 dialog label { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
@@ -371,11 +374,14 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .coachbar input { flex: 1; min-width: 0; }
 
 /* Onboarding walkthrough */
-.onboard { position: fixed; inset: 0; z-index: 70; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 20px; overflow-y: auto; }
+.onboard { position: fixed; inset: 0; z-index: 70; background: var(--bg); display: flex; overflow-y: auto;
+  padding: calc(env(safe-area-inset-top) + 16px) 20px calc(env(safe-area-inset-bottom) + 16px); }
 /* An explicit display beats the `hidden` attribute — guard it, or the (empty) overlay stays on
    top after Finish (freeze) and covers the app on reopen (blank screen). */
 .onboard[hidden] { display: none; }
-.onboard-card { width: min(460px, 100%); }
+/* margin:auto centers the card yet still lets tall content scroll (align-items:center would clip
+   the top under the notch when the content is taller than the screen). */
+.onboard-card { width: min(460px, 100%); margin: auto; }
 .onboard-body h2 { margin: 4px 0 6px; font-size: 22px; }
 .ob-sub { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
 .ob-hero { font-size: 48px; text-align: center; }

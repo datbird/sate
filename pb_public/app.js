@@ -114,7 +114,7 @@ function escapeHtml(s) {
 
 // ---------------------------------------------------------------------- log
 // -------------------------------------------------------------- Home dashboard
-const HOME = { scope: "both", range: "day", chart: "ring" };
+const HOME = { scope: "all", range: "day", chart: "ring" };
 const RC = { nutrition: "var(--brand)", activity: "var(--activity)" };
 // The two type icons (kept identical to the compose tabs and the mockup).
 const TICON = {
@@ -511,7 +511,7 @@ function renderStats(s) {
       `<div class="avgrow"><span>Avg intake <b>${fmt(s.avg_in_kcal)} kcal</b></span><span>Goal <b>${fmt(goals.kcal)}</b></span></div>`;
   } else {
     const both = applyNet ? netCaption()
-      : HOME.scope === "both"
+      : HOME.scope === "all"
       ? `<div class="subline"><span style="color:var(--brand)">${SPARK}<path d="M8 3v7a2 2 0 0 0 4 0V3"/><path d="M10 12v9"/><ellipse cx="16" cy="6.4" rx="2.2" ry="3.4" fill="none"/><path d="M16 9.8V21"/></svg></span> in ${fmt(inKcal)} kcal · <span style="color:var(--activity)">${SPARK}<circle cx="13" cy="4" r="1"/><path d="M4 17l5 1 .75-1.5"/><path d="M15 21v-4l-4-3 1-6"/><path d="M7 12V9l5-1 3 3 3 1"/></svg></span> out ${fmt(out.kcal)} cal · net ${fmt(inKcal - out.kcal)}</div>`
       : `<div class="subline">${s.range === "day" ? "Today" : "This " + s.range} · ring tracks ${METRIC[modeOf().primary].label} vs goal</div>`;
     body.innerHTML = ringHTML(s.in, goals, ringOpts) + (HOME.chart === "hybrid" && nutSeries.length > 1 ? sparkBars(nutSeries) : "") + both;
@@ -538,7 +538,7 @@ $$("#addScope button").forEach((b) => b.addEventListener("click", () => setAddTa
 function renderFeed(entries) {
   $("#feedlbl").textContent = "Today";
   const scope = HOME.scope;
-  const rows = entries.filter((en) => scope === "both" || (scope === "nutrition" && en.kind !== "activity") || (scope === "activity" && en.kind === "activity"));
+  const rows = entries.filter((en) => scope === "all" || (scope === "nutrition" && en.kind !== "activity") || (scope === "activity" && en.kind === "activity"));
   const ul = $("#feed");
   ul.innerHTML = "";
   if (!rows.length) {
