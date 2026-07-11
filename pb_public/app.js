@@ -266,7 +266,7 @@ const OB_METHODS = [["calories", "Calories (simple)"], ["carb", "Carb-focused (l
 function maybeOnboard() {
   if (!ME || ME.onboarded || OB) return;
   OB = {
-    i: 0, weight_lb: "", height_ft: "", height_in: "", age: ME.body_age || "", sex: ME.body_sex || "male",
+    i: 0, name: ME.name || "", weight_lb: "", height_ft: "", height_in: "", age: ME.body_age || "", sex: ME.body_sex || "male",
     activity: ME.activity_level || "moderate", source: isNativeApp() ? "" : "manual",
     goals: [{ target_lb: "", target_date: "" }], method: ME.track_mode || "calories",
     targets: null, bmr: 0, tdee: 0, warnings: [],
@@ -291,7 +291,8 @@ const OB_STEP = {
   welcome: () => '<div class="ob-hero">👋</div><h2>Welcome to Sate</h2>' +
     '<p class="ob-sub">Let\'s get your stats and goals set up, then build a plan to reach them. Takes a minute.</p>' +
     '<div class="ob-nav"><button type="button" class="link" id="obDismiss">Skip setup</button><button type="button" class="primary" id="obNext">Get started</button></div>',
-  stats: () => '<h2>About you</h2><p class="ob-sub">Used to calculate your calorie needs.</p>' +
+  stats: () => '<h2>About you</h2><p class="ob-sub">Used to personalize your coach and calculate your calorie needs.</p>' +
+    `<label class="ob-full" style="margin-bottom:10px">Your name<input type="text" id="obName" placeholder="first name" value="${escapeHtml(OB.name)}"></label>` +
     '<div class="ob-grid">' +
     `<label>Weight (lb)<input type="number" id="obW" inputmode="decimal" value="${OB.weight_lb}"></label>` +
     `<label>Height<div class="ob-ht"><input type="number" id="obHf" placeholder="ft" value="${OB.height_ft}"><input type="number" id="obHi" placeholder="in" value="${OB.height_in}"></div></label>` +
@@ -327,6 +328,7 @@ function obRender() {
   obWire(OB.steps[OB.i]);
 }
 function obCaptureStats() {
+  if ($("#obName")) OB.name = $("#obName").value;
   if ($("#obW")) OB.weight_lb = $("#obW").value;
   if ($("#obHf")) OB.height_ft = $("#obHf").value;
   if ($("#obHi")) OB.height_in = $("#obHi").value;
@@ -374,6 +376,7 @@ async function obComputeThenReview() {
 async function obSaveAll() {
   const cm = obHeightCm();
   const payload = {
+    name: (OB.name || "").trim(),
     body_age: +OB.age || 0, body_sex: OB.sex, height_cm: cm, activity_level: OB.activity,
     track_mode: OB.method, weight_source: OB.source || "manual", onboarded: true,
   };

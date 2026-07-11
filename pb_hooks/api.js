@@ -1488,6 +1488,7 @@ function buildPlanInput(app, email, profile, ov) {
   } catch (_) {}
   if (Array.isArray(ov.goals)) goals = ov.goals;
   return {
+    name: (profile.getString("name") || "").split(/\s+/)[0] || "",
     curKg: ov.curKg || currentWeightKg(app, email, profile),
     cm: ov.cm || (profile.getFloat("height_cm") || 0),
     age: ov.age || (Math.round(profile.getFloat("body_age")) || 0),
@@ -1758,6 +1759,9 @@ function setGoals(e) {
   }
   if (body.onboarded !== undefined) {
     profile.set("onboarded", body.onboarded ? "yes" : "");
+  }
+  if (body.name !== undefined) {
+    profile.set("name", String(body.name).slice(0, 60).trim());
   }
   app.save(profile);
   return e.json(200, {

@@ -113,6 +113,7 @@ function cmToFtIn(cm) {
 function contextText(inp, plan, recent) {
   const L = [];
   L.push("USER PROFILE:");
+  if (inp.name) L.push(`- Name: ${inp.name}`);
   L.push(`- Sex: ${inp.sex || "unspecified"}, Age: ${inp.age || "unknown"}, Height: ${cmToFtIn(inp.cm)}, ` +
     `Current weight: ${round1((inp.curKg || 0) * LB)} lb`);
   L.push(`- Activity level: ${inp.activity || "unspecified"}`);
