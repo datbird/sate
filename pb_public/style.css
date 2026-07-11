@@ -223,7 +223,10 @@ input[type=date], select, .prov input, .fn input {
 }
 .prov h4, .fn h4 { margin: 0 0 10px; text-transform: capitalize; }
 .prov .grid, .fn .grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
-.prov input, .fn input, .fn select { width: 100%; }
+/* Let the 1fr column actually shrink: a <select>'s default min-width:auto (its longest option,
+   which iOS enforces hard) otherwise overflows the track and shoves the "on"/Save column off-screen. */
+.prov .grid > *, .fn .grid > * { min-width: 0; }
+.prov input, .fn input, .fn select, .prov select, .model-cell select { width: 100%; min-width: 0; }
 .switch { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .keyhint { font-size: 12px; color: var(--muted); }
 
