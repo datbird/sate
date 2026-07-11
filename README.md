@@ -194,13 +194,18 @@ header. Full RS256 verification of the `Cf-Access-Jwt-Assertion` JWT isn't possi
 PocketBase's JS runtime (no RSA primitive), so Sate implements the equivalent guarantee with a
 proxy-injected shared secret:
 
-1. Set `SATE_PROXY_SECRET` on the container to a long random value (`openssl rand -hex 32`).
-2. Add the same value as a request header **at your edge**, on your hostname only — e.g. a
-   Cloudflare **Transform Rule → Modify Request Header → Set static** `X-Sate-Proxy-Secret`.
+1. Add the header **at your edge first**, on your hostname only — e.g. a Cloudflare
+   **Transform Rule → Modify Request Header → Set static** `X-Sate-Proxy-Secret` = `<a long random
+   value>` (`openssl rand -hex 32`). Harmless on its own; the app ignores it until step 3.
+2. Set `SATE_PROXY_SECRET` to that same value **and** `SATE_PROXY_GUARD=report` on the container.
+   Report mode logs whether each request carries the header (`proxy-guard[report] header-OK/…`) but
+   blocks nothing — reload the app and confirm your real traffic shows `header-OK` before enforcing.
+3. Set `SATE_PROXY_GUARD=enforce` (or unset it — enforce is the default).
 
 Now every request that came through Cloudflare carries the secret; anything hitting the origin
 directly does not, and Sate returns `403`. The container health check (`/api/health`, loopback) is
-exempt. Leave `SATE_PROXY_SECRET` unset to disable the guard (default).
+exempt. Do the edge step (1) **before** enforcing, or every request 403s at once. Leave
+`SATE_PROXY_SECRET` unset to disable the guard (default).
 
 ## Local development
 

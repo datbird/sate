@@ -21,20 +21,27 @@
 // browsers/webviews heuristically cache index.html and can pin an OLD app.js?vN even after a hard
 // refresh. no-cache forces a cheap conditional request (304 when unchanged) so a new deploy is picked
 // up immediately.
-function constEq(a, b) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
 routerUse((e) => {
   const p = (e.request && e.request.url && e.request.url.path) || "";
-  let secret = "";
+  let secret = "", mode = "enforce";
   try { secret = ($os && $os.getenv && $os.getenv("SATE_PROXY_SECRET")) || ""; } catch (_) {}
+  // SATE_PROXY_GUARD=report logs whether the edge is injecting the header (a rollout aid) but blocks
+  // nothing; anything else (default) enforces. Lets you confirm real traffic carries the header before
+  // turning enforcement on, so you can't accidentally 403 every user at once.
+  try { mode = (($os && $os.getenv && $os.getenv("SATE_PROXY_GUARD")) || "enforce").toLowerCase(); } catch (_) {}
   if (secret && p !== "/api/health") {
     let got = "";
     try { got = e.request.header.get("X-Sate-Proxy-Secret") || ""; } catch (_) {}
-    if (!constEq(got, secret)) throw new ApiError(403, "forbidden", null);
+    // Constant-time compare, inlined: this middleware runs in an isolated JSVM that can't see this
+    // file's top-level functions, so it must not call out to one.
+    let diff = got.length ^ secret.length;
+    for (let i = 0; i < got.length && i < secret.length; i++) diff |= got.charCodeAt(i) ^ secret.charCodeAt(i);
+    const ok = diff === 0;
+    if (mode === "report") {
+      if (p.indexOf("/api/sate/") === 0) console.log("proxy-guard[report] " + (ok ? "header-OK" : "header-MISSING") + " " + p);
+    } else if (!ok) {
+      throw new ApiError(403, "forbidden", null);
+    }
   }
   try {
     if (p.indexOf("/api/") !== 0) e.response.header().set("Cache-Control", "no-cache, must-revalidate");
