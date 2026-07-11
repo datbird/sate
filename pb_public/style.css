@@ -372,6 +372,9 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 
 /* Onboarding walkthrough */
 .onboard { position: fixed; inset: 0; z-index: 70; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 20px; overflow-y: auto; }
+/* An explicit display beats the `hidden` attribute — guard it, or the (empty) overlay stays on
+   top after Finish (freeze) and covers the app on reopen (blank screen). */
+.onboard[hidden] { display: none; }
 .onboard-card { width: min(460px, 100%); }
 .onboard-body h2 { margin: 4px 0 6px; font-size: 22px; }
 .ob-sub { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
