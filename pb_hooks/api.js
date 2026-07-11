@@ -10,6 +10,7 @@ const FOODS = require(`${__hooks}/foods.js`);
 const ACTS = require(`${__hooks}/activities.js`);
 const AL = require(`${__hooks}/ailimits.js`);
 const N = require(`${__hooks}/nutrition.js`);
+const BK = require(`${__hooks}/backup.js`);
 
 function num(v) {
   const n = Number(v);
@@ -40,7 +41,14 @@ const ADMINS = env("ADMIN_EMAILS")
   .map((s) => s.trim())
   .filter((s) => s.length > 0);
 const VALID_PROVIDERS = ["anthropic", "openai", "google", "openrouter"];
-const SETTING_KEYS = ["app_name", "default_goal_kcal", "default_goal_protein", "default_goal_carbs", "default_goal_fat"];
+const SETTING_KEYS = ["app_name", "default_goal_kcal", "default_goal_protein", "default_goal_carbs", "default_goal_fat",
+  // AI global defaults — per category (ai=normal / vision=image) × role (primary / second opinion)
+  "default_ai_provider", "default_ai_model", "default_vision_provider", "default_vision_model",
+  "second_ai_provider", "second_ai_model", "second_vision_provider", "second_vision_model",
+  // Global feature toggles ("on" default when unset): the second-opinion layer, and proactive check-ins.
+  "second_opinion_enabled", "checkins_enabled",
+  // Set to "yes" when the first-run admin setup wizard is completed (or auto-true once a key exists).
+  "setup_complete"];
 
 // ------------------------------------------------------------------ helpers
 
@@ -102,6 +110,21 @@ function settingsMap(app) {
     });
   } catch (_) {}
   return out;
+}
+
+// Global feature toggles default ON when the setting is unset or blank; only an explicit "off" disables.
+function featureEnabled(app, key) {
+  return settingsMap(app)[key] !== "off";
+}
+function secondOpinionEnabled(app) { return featureEnabled(app, "second_opinion_enabled"); }
+function checkinsEnabled(app) { return featureEnabled(app, "checkins_enabled"); }
+
+// The instance is "set up" once an admin finishes the wizard, or as soon as any provider has a key
+// (so existing instances never see the wizard).
+function setupDone(app) {
+  if (settingsMap(app).setup_complete === "yes") return true;
+  try { return app.findAllRecords("providers").some((r) => (r.getString("api_key_enc") || "").length > 0); }
+  catch (_) { return false; }
 }
 
 // Effective system prompt for a function: an admin override in `settings` (key prompt_<fn>)
@@ -292,22 +315,59 @@ function addEntry(app, email, data) {
 // "vision_estimate" is image interpretation; everything else is "normal AI".
 function fnCategory(fn) { return fn === "vision_estimate" ? "vision" : "ai"; }
 
-// A user's per-category model override, or null to use the global default.
-function userModelOverride(app, email, fn) {
+function profileOf(app, email) {
   if (!email) return null;
-  let p;
-  try { p = app.findFirstRecordByFilter("profiles", "email = {:e}", { e: email }); } catch (_) { return null; }
-  if (!p) return null;
-  const vision = fnCategory(fn) === "vision";
-  const provider = p.getString(vision ? "ov_vision_provider" : "ov_ai_provider");
-  const model = p.getString(vision ? "ov_vision_model" : "ov_ai_model");
-  if (!provider || !model) return null;
-  return { provider: provider, model: model };
+  try { return app.findFirstRecordByFilter("profiles", "email = {:e}", { e: email }); } catch (_) { return null; }
 }
 
-// Resolve a function for a specific user (applies their override, else the global default).
-function resolveFor(app, fn, email) {
-  return F.resolveFunction(app, fn, userModelOverride(app, email, fn));
+// A user's per-function overrides object { "<fn>": {p,m,sp,sm} } (fn_overrides json), or {}.
+function fnOverridesOf(profile) {
+  if (!profile) return {};
+  // A PB json field comes back as a JsonRaw byte type from .get(); getString() yields its JSON text.
+  try { const s = profile.getString("fn_overrides"); return s ? (JSON.parse(s) || {}) : {}; }
+  catch (_) { return {}; }
+}
+
+// Walk the routing hierarchy for (fn, role) and return {provider, model} or null. Empty at a level
+// means "defer to the next level" ((global default)). Levels, most specific first:
+//   1. user per-function override   2. user global override (by category)
+//   3. function config              4. global default (settings, by category)
+function pickModel(app, fn, email, role) {
+  const cat = fnCategory(fn), second = role === "second";
+  const pick = (prov, mod) => (prov && mod ? { provider: prov, model: mod } : null);
+  const p = profileOf(app, email);
+
+  if (p) {
+    const f = fnOverridesOf(p)[fn] || {};
+    const r1 = second ? pick(f.sp, f.sm) : pick(f.p, f.m);
+    if (r1) return r1;
+    const pre = (cat === "vision" ? "ov_vision" : "ov_ai") + (second ? "_second" : "");
+    const r2 = pick(p.getString(pre + "_provider"), p.getString(pre + "_model"));
+    if (r2) return r2;
+  }
+  try {
+    const cfg = app.findFirstRecordByFilter("function_config", "fn = {:fn}", { fn: fn });
+    if (cfg) {
+      const r3 = second ? pick(cfg.getString("second_provider"), cfg.getString("second_model")) : pick(cfg.getString("provider"), cfg.getString("model"));
+      if (r3) return r3;
+    }
+  } catch (_) {}
+  const S = settingsMap(app);
+  const g = (second ? "second_" : "default_") + (cat === "vision" ? "vision" : "ai");
+  return pick(S[g + "_provider"], S[g + "_model"]);
+}
+
+// Resolve a function for a user + role ("primary" | "second"). Throws a clear error if the
+// function is disabled or nothing resolves.
+function resolveFor(app, fn, email, role) {
+  role = role === "second" ? "second" : "primary";
+  try {
+    const cfg = app.findFirstRecordByFilter("function_config", "fn = {:fn}", { fn: fn });
+    if (cfg && !cfg.getBool("enabled")) throw new Error("function is disabled: " + fn);
+  } catch (err) { if (String(err.message || err).indexOf("disabled") !== -1) throw err; }
+  const pm = pickModel(app, fn, email, role);
+  if (!pm) throw new Error(role === "second" ? "no second-opinion model configured for " + fn : "no model configured for " + fn);
+  return F.resolveProviderKey(app, pm.provider, pm.model);
 }
 
 // Central AI dispatch: enforce this provider's monthly limits, run the call, then record token
@@ -320,8 +380,8 @@ function callAI(app, req) {
   return r.text;
 }
 
-function estimate(app, fn, userText, image, email) {
-  const cfg = resolveFor(app, fn, email);
+function estimate(app, fn, userText, image, email, role) {
+  const cfg = resolveFor(app, fn, email, role);
   const p = F.PROMPTS[fn];
 
   // Retrieval: for text logging, ground the model with known foods from the DB.
@@ -362,14 +422,20 @@ function estimate(app, fn, userText, image, email) {
 
 // The activity counterpart to estimate(): grounds on the activities table, calls the model, and
 // returns a normalized {items, total:{kcal_burned, duration_min}, note}.
-function estimateActivity(app, text, email) {
-  const cfg = resolveFor(app, "activity_estimate", email);
+function estimateActivity(app, text, email, role) {
+  const cfg = resolveFor(app, "activity_estimate", email, role);
   let userMsg = text;
   let matched = [];
   try {
     matched = ACTS.searchByText(app, text);
     const ref = ACTS.referenceBlock(matched);
     if (ref) userMsg = ref + "\n\nActivity to log:\n" + text;
+  } catch (_) {}
+  // Personalize the burn: calorie expenditure scales with body weight, and we know the user's.
+  try {
+    const prof = profileOf(app, email);
+    const kg = prof ? currentWeightKg(app, email, prof) : 0;
+    if (kg > 0) userMsg = "Person's body weight: " + Math.round(kg) + " kg (" + Math.round(kg * 2.2046226) + " lb).\n" + userMsg;
   } catch (_) {}
 
   const reply = callAI(app, {
@@ -411,8 +477,8 @@ function sourcesHint(app) {
 }
 
 // Web-grounded estimate for a food/meal not found in the local database.
-function webEstimate(app, text, email) {
-  const cfg = resolveFor(app, "web_lookup", email);
+function webEstimate(app, text, email, role) {
+  const cfg = resolveFor(app, "web_lookup", email, role);
   const hint = sourcesHint(app);
   const userMsg = (hint ? hint + "\n\n" : "") + "Food/meal to research and estimate:\n" + text;
   const reply = callAI(app, {
@@ -535,6 +601,12 @@ function me(e) {
     weight_synced_at: profile.getString("weight_synced_at"),
     activity_level: profile.getString("activity_level") || "",
     onboarded: profile.getString("onboarded") === "yes",
+    checkin_enabled: profile.getBool("checkin_enabled"),
+    checkin_time: profile.getString("checkin_time") || "",
+    checkin_freq: profile.getString("checkin_freq") || "daily",
+    checkins_enabled: checkinsEnabled(app),        // global admin toggle
+    second_opinion_enabled: secondOpinionEnabled(app), // global admin toggle
+    setup_done: setupDone(app),                    // first-run admin wizard gate
     today: today,
     totals: sumTotals(dayEntries(app, email, today)),
   });
@@ -563,6 +635,48 @@ function logText(e) {
       note: r.parsed.note,
       in_db: r.inDb,
       totals: sumTotals(dayEntries(app, email, todayStr())),
+    });
+  } catch (err) {
+    return e.json(502, { error: String(err.message || err) });
+  }
+}
+
+// A user-requested "second opinion": re-run a food/activity estimate with the SECOND-opinion model
+// (role="second") and return the alternate WITHOUT logging anything. Body: {entry_id} to re-estimate
+// an existing entry (fn derived from its source), or {fn, text?, image?} for an ad-hoc estimate.
+function secondOpinion(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  if (!secondOpinionEnabled(app)) return e.json(403, { error: "second opinion is disabled" });
+  const body = e.requestInfo().body || {};
+  let fn = body.fn || "";
+  let text = (body.text || "").toString().trim();
+  let image = body.image || null; // { mimeType, data }
+  if (body.entry_id) {
+    let rec;
+    try { rec = app.findRecordById("entries", body.entry_id); } catch (_) { return e.json(404, { error: "not found" }); }
+    if (rec.getString("user_email") !== email) return e.json(403, { error: "forbidden" });
+    const src = rec.getString("source");
+    text = rec.getString("description");
+    if (src === "activity") fn = "activity_estimate";
+    else if (src === "web") fn = "web_lookup";
+    else fn = fn || "text_parse";
+    if ((!text || text === "(photo)") && !image) return e.json(400, { error: "this entry has no description to re-estimate" });
+  }
+  if (!fn) return e.json(400, { error: "fn is required" });
+  try {
+    let r;
+    if (fn === "activity_estimate") r = estimateActivity(app, text, email, "second");
+    else if (fn === "web_lookup") r = webEstimate(app, text, email, "second");
+    else if (fn === "vision_estimate") r = estimate(app, "vision_estimate", text || "Identify this single food and estimate its nutrition.", image, email, "second");
+    else r = estimate(app, "text_parse", text, null, email, "second");
+    return e.json(200, {
+      items: r.parsed.items,
+      total: r.parsed.total,
+      note: r.parsed.note,
+      provider: r.provider,
+      model: r.model,
     });
   } catch (err) {
     return e.json(502, { error: String(err.message || err) });
@@ -1018,40 +1132,6 @@ function logPhoto(e) {
   }
 }
 
-function chat(e) {
-  const email = identity(e);
-  if (!email) return e.json(401, { error: "not authenticated" });
-  const app = e.app;
-  ensureProfile(app, email);
-  const body = e.requestInfo().body || {};
-  const messages = Array.isArray(body.messages) ? body.messages : [];
-  if (messages.length === 0) return e.json(400, { error: "messages is required" });
-  const clean = messages
-    .filter((m) => m && m.text)
-    .map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", text: String(m.text) }));
-  const totals = sumTotals(dayEntries(app, email, todayStr()));
-  const context =
-    promptFor(app, "chat") +
-    `\n\nUser's totals so far today: ${Math.round(totals.kcal)} kcal, ` +
-    `${Math.round(totals.protein)}g protein, ${Math.round(totals.carbs)}g carbs, ` +
-    `${Math.round(totals.fat)}g fat across ${totals.count} entries.`;
-  try {
-    const cfg = resolveFor(app, "chat", email);
-    const reply = callAI(app, {
-      provider: cfg.provider,
-      apiKey: cfg.apiKey,
-      baseUrl: cfg.baseUrl,
-      model: cfg.model,
-      system: context,
-      messages: clean,
-      jsonMode: false,
-    });
-    return e.json(200, { reply: reply });
-  } catch (err) {
-    return e.json(502, { error: String(err.message || err) });
-  }
-}
-
 function listEntries(e) {
   const email = identity(e);
   if (!email) return e.json(401, { error: "not authenticated" });
@@ -1500,6 +1580,275 @@ function buildPlanInput(app, email, profile, ov) {
   };
 }
 
+// ---------------------------------------------------------------- proactive coach check-ins
+// Per-user cadence → minimum gap between actual check-ins (hours). The AI still gates worthiness, so
+// these are caps, not guarantees. "often" allows a few a day; "sparse" ~ every couple of days.
+const CHECKIN_FREQ_GAP = { often: 3, daily: 20, sparse: 44 };
+function checkinGapHours(profile) {
+  const f = profile.getString("checkin_freq");
+  return CHECKIN_FREQ_GAP[f] || CHECKIN_FREQ_GAP.daily;
+}
+
+// Build the CONTEXT the check-in model reasons over: the same plan/intake grounding the coach uses,
+// plus how recently the user has been logging (a key signal for "should we nudge?").
+function checkinContext(app, email, profile) {
+  const inp = buildPlanInput(app, email, profile, {});
+  const plan = N.computePlan(inp);
+  const base = N.contextText(inp, plan, recentIntake(app, email, 7));
+  let loggedToday = 0, loggedYest = 0, lastLog = "";
+  try {
+    loggedToday = dayEntries(app, email, todayStr()).length;
+    const y = new Date(); y.setUTCDate(y.getUTCDate() - 1);
+    loggedYest = dayEntries(app, email, y.toISOString().slice(0, 10)).length;
+    const recent = app.findRecordsByFilter("entries", "user_email = {:e}", "-logged_at", 1, 0, { e: email });
+    if (recent.length) lastLog = recent[0].getString("logged_at").slice(0, 16);
+  } catch (_) {}
+  return base + "\nLogging activity: " + loggedToday + " entries today, " + loggedYest + " yesterday" +
+    (lastLog ? "; last entry " + lastLog + " UTC" : "; nothing logged recently") + ".";
+}
+
+// Run the check-in model for one profile; if it says a check-in is worthwhile, create the record and
+// stamp the cooldown. Returns the created record or null. `force` bypasses the cooldown (manual run).
+function generateCheckinFor(app, profile, force) {
+  const email = profile.getString("email");
+  if (!email) return null;
+  if (!force) {
+    // Don't stack: skip if there's already a pending check-in the user hasn't seen.
+    try {
+      const pend = app.findRecordsByFilter("checkins", "user_email = {:e} && status = 'pending'", "-created", 1, 0, { e: email });
+      if (pend.length) return null;
+    } catch (_) {}
+    // Min gap between check-ins (per the user's chosen frequency).
+    const last = profile.getString("checkin_last_at");
+    if (last) {
+      const ms = Date.now() - Date.parse(last);
+      if (isFinite(ms) && ms < checkinGapHours(profile) * 3600 * 1000) return null;
+    }
+  }
+  let parsed;
+  try {
+    const cfg = resolveFor(app, "checkin", email, "primary");
+    const reply = callAI(app, {
+      provider: cfg.provider, apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, model: cfg.model,
+      system: promptFor(app, "checkin"),
+      messages: [{ role: "user", text: "CONTEXT:\n" + checkinContext(app, email, profile) }],
+      jsonMode: true,
+    });
+    parsed = F.parseJSON(reply);
+  } catch (_) { return null; }
+  if (!parsed || !parsed.worthwhile) return null;
+  const message = String(parsed.message || "").trim();
+  if (!message) return null;
+  const rec = new Record(app.findCollectionByNameOrId("checkins"));
+  rec.set("user_email", email);
+  rec.set("topic", String(parsed.topic || "Check-in").slice(0, 120));
+  rec.set("message", message.slice(0, 2000));
+  rec.set("status", "pending");
+  rec.set("notified", false);
+  app.save(rec);
+  profile.set("checkin_last_at", new Date().toISOString());
+  try { app.save(profile); } catch (_) {}
+  return rec;
+}
+
+// The daily cron body: evaluate every opted-in user. `opts.force` bypasses cooldown; `opts.email`
+// limits to one user (both used by the admin manual trigger for testing).
+function generateCheckins(app, opts) {
+  opts = opts || {};
+  if (!checkinsEnabled(app)) return { evaluated: 0, created: 0, disabled: true };
+  let profiles = [];
+  try {
+    profiles = opts.email
+      ? app.findRecordsByFilter("profiles", "email = {:e} && checkin_enabled = true", "", 1, 0, { e: opts.email })
+      : app.findRecordsByFilter("profiles", "checkin_enabled = true", "", 500, 0, {});
+  } catch (_) { profiles = []; }
+  let made = 0;
+  for (const p of profiles) {
+    try { if (generateCheckinFor(app, p, !!opts.force)) made++; } catch (_) {}
+  }
+  return { evaluated: profiles.length, created: made };
+}
+
+function checkinJSON(r) {
+  return { id: r.id, topic: r.getString("topic"), message: r.getString("message"), status: r.getString("status"), notified: r.getBool("notified"), created: r.getString("created") };
+}
+
+// GET /api/sate/checkins/pending — the user's latest pending (unseen) check-in, or null.
+function checkinsPending(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  if (!checkinsEnabled(app)) return e.json(200, { checkin: null });
+  let rows = [];
+  try { rows = app.findRecordsByFilter("checkins", "user_email = {:e} && status = 'pending'", "-created", 1, 0, { e: email }); } catch (_) {}
+  return e.json(200, { checkin: rows.length ? checkinJSON(rows[0]) : null });
+}
+
+// POST /api/sate/checkins/{id}/seen — mark a check-in seen (opened in the coach).
+function checkinSeen(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const id = e.request.pathValue("id");
+  let rec;
+  try { rec = app.findRecordById("checkins", id); } catch (_) { return e.json(404, { error: "not found" }); }
+  if (rec.getString("user_email") !== email) return e.json(403, { error: "forbidden" });
+  rec.set("status", "seen");
+  app.save(rec);
+  return e.json(200, { ok: true });
+}
+
+// POST /api/sate/checkins/{id}/notified — mark that a local notification has been scheduled, so the
+// app doesn't schedule it again on the next open.
+function checkinNotified(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const id = e.request.pathValue("id");
+  let rec;
+  try { rec = app.findRecordById("checkins", id); } catch (_) { return e.json(404, { error: "not found" }); }
+  if (rec.getString("user_email") !== email) return e.json(403, { error: "forbidden" });
+  rec.set("notified", true);
+  app.save(rec);
+  return e.json(200, { ok: true });
+}
+
+// POST /api/sate/admin/checkins/run — admin manual trigger (testing). Body { email?, force? }.
+function adminRunCheckins(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const body = e.requestInfo().body || {};
+  const out = generateCheckins(e.app, { email: body.email ? String(body.email).toLowerCase() : undefined, force: !!body.force });
+  return e.json(200, out);
+}
+
+// ---- external backup / restore (to another PocketBase or Firebase) ----
+
+// GET /admin/backup — current config with secrets redacted to booleans.
+function adminGetBackup(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  let queued = 0; try { queued = app.countRecords("sync_queue"); } catch (_) {}
+  return e.json(200, {
+    type: BK.getSetting(app, "backup_type") || "",
+    auto: BK.getSetting(app, "backup_auto") === "on",
+    sync_live: BK.syncLiveEnabled(app),
+    sync_last_at: BK.getSetting(app, "sync_last_at"), sync_queued: queued,
+    pb: { url: BK.getSetting(app, "backup_pb_url"), email: BK.getSetting(app, "backup_pb_email"), password_set: !!BK.getSetting(app, "backup_pb_password_enc") },
+    fb: { project: BK.getSetting(app, "backup_fb_project"), email: BK.getSetting(app, "backup_fb_email"), api_key_set: !!BK.getSetting(app, "backup_fb_apikey_enc"), password_set: !!BK.getSetting(app, "backup_fb_password_enc") },
+    last_at: BK.getSetting(app, "backup_last_at"), last_status: BK.getSetting(app, "backup_last_status"),
+    local: {
+      enabled: BK.getSetting(app, "backup_local_enabled") === "on",
+      dir: BK.getSetting(app, "backup_local_dir") || BK.PB_BACKUP_DIR,
+      keep: parseInt(BK.getSetting(app, "backup_local_keep") || "14", 10) || 14,
+      last_at: BK.getSetting(app, "backup_local_last_at"),
+      files: BK.listLocalBackups(app),
+    },
+    collections: BK.SNAPSHOT_COLLECTIONS,
+  });
+}
+
+// PUT /admin/backup — save config. Secrets are only overwritten when a non-empty value is sent.
+function adminPutBackup(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app;
+  const b = e.requestInfo().body || {};
+  if (b.type !== undefined) BK.setSetting(app, "backup_type", ["pocketbase", "firebase"].indexOf(String(b.type)) !== -1 ? String(b.type) : "");
+  if (b.auto !== undefined) BK.setSetting(app, "backup_auto", b.auto ? "on" : "off");
+  if (b.sync_live !== undefined) {
+    const was = BK.syncLiveEnabled(app);
+    BK.setSetting(app, "sync_live", b.sync_live ? "on" : "off");
+    if (b.sync_live && !was) { try { BK.initialMirror(app); } catch (_) {} } // seed the remote on enable
+  }
+  const pb = b.pb || {}, fb = b.fb || {};
+  if (pb.url !== undefined) BK.setSetting(app, "backup_pb_url", String(pb.url || "").trim());
+  if (pb.email !== undefined) BK.setSetting(app, "backup_pb_email", String(pb.email || "").trim());
+  if (pb.password) BK.setSetting(app, "backup_pb_password_enc", F.encryptKey(String(pb.password)));
+  if (fb.project !== undefined) BK.setSetting(app, "backup_fb_project", String(fb.project || "").trim());
+  if (fb.email !== undefined) BK.setSetting(app, "backup_fb_email", String(fb.email || "").trim());
+  if (fb.api_key) BK.setSetting(app, "backup_fb_apikey_enc", F.encryptKey(String(fb.api_key)));
+  if (fb.password) BK.setSetting(app, "backup_fb_password_enc", F.encryptKey(String(fb.password)));
+  const L = b.local || {};
+  if (L.enabled !== undefined) BK.setSetting(app, "backup_local_enabled", L.enabled ? "on" : "off");
+  if (L.dir !== undefined) BK.setSetting(app, "backup_local_dir", String(L.dir || "").trim());
+  if (L.keep !== undefined) BK.setSetting(app, "backup_local_keep", String(parseInt(L.keep, 10) || 14));
+  return e.json(200, { ok: true });
+}
+
+// POST /admin/backup/local-now — write a full-DB zip to the configured local directory now.
+function adminLocalBackupNow(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  try { return e.json(200, BK.localBackupNow(e.app)); }
+  catch (err) { return e.json(502, { error: String(err.message || err) }); }
+}
+
+function adminTestBackup(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  try { BK.testTarget(e.app, BK.backupConfig(e.app)); return e.json(200, { ok: true }); }
+  catch (err) { return e.json(400, { error: String(err.message || err) }); }
+}
+
+function adminBackupNow(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const body = e.requestInfo().body || {};
+  try {
+    const cfg = BK.backupConfig(e.app);
+    if (!cfg.type) return e.json(400, { error: "no backup target configured" });
+    return e.json(200, BK.pushSnapshot(e.app, cfg, body.label ? String(body.label) : ""));
+  } catch (err) {
+    try { BK.setSetting(e.app, "backup_last_status", "error: " + String(err.message || err)); } catch (_) {}
+    return e.json(502, { error: String(err.message || err) });
+  }
+}
+
+function adminListBackups(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  try {
+    const cfg = BK.backupConfig(e.app);
+    if (!cfg.type) return e.json(200, { snapshots: [] });
+    return e.json(200, { snapshots: BK.listSnapshots(e.app, cfg) });
+  } catch (err) { return e.json(502, { error: String(err.message || err) }); }
+}
+
+// POST /admin/backup/restore { id } — DESTRUCTIVE: replaces local data from the chosen snapshot.
+function adminRestore(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const body = e.requestInfo().body || {};
+  const id = String(body.id || "");
+  if (!id) return e.json(400, { error: "snapshot id required" });
+  try {
+    const cfg = BK.backupConfig(e.app);
+    if (!cfg.type) return e.json(400, { error: "no backup target configured" });
+    return e.json(200, { restored: BK.restoreSnapshot(e.app, cfg, id) });
+  } catch (err) { return e.json(502, { error: String(err.message || err) }); }
+}
+
+// POST /admin/backup/flush — drain the live-sync queue now (manual; the cron also does this).
+function adminFlushSync(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  try { return e.json(200, BK.flushQueue(e.app, BK.backupConfig(e.app))); }
+  catch (err) { return e.json(502, { error: String(err.message || err) }); }
+}
+
+// POST /admin/backup/restore-mirror — DESTRUCTIVE: rebuild local data from the live remote mirror.
+function adminRestoreMirror(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  try {
+    const cfg = BK.backupConfig(e.app);
+    if (!cfg.type) return e.json(400, { error: "no backup target configured" });
+    return e.json(200, { restored: BK.restoreFromMirror(e.app, cfg) });
+  } catch (err) { return e.json(502, { error: String(err.message || err) }); }
+}
+
 // POST /api/sate/plan/compute — deterministic BMR/TDEE/targets/warnings (optional overrides).
 function planCompute(e) {
   const email = identity(e);
@@ -1532,22 +1881,38 @@ function nutritionist(e) {
   const profile = ensureProfile(app, email);
   const body = e.requestInfo().body || {};
   const mode = body.mode === "chat" ? "chat" : "plan";
+  const role = (body.role === "second" && secondOpinionEnabled(app)) ? "second" : "primary";
   const inp = buildPlanInput(app, email, profile, {});
   const plan = N.computePlan(inp);
   const context = N.contextText(inp, plan, recentIntake(app, email, 7));
   const userMsg = mode === "chat"
-    ? (String(body.message || "").trim() || "How am I doing toward my goals?")
+    ? (String(body.message || "").trim() || (body.image ? "What can you tell me about this?" : "How am I doing toward my goals?"))
     : "Give me my starting plan: the weekly rate and specific daily calorie + macro targets to reach my goal(s), flag anything unrealistic with a concrete realistic alternative, and 2-3 first steps.";
-  const cfg = resolveFor(app, "nutritionist", email);
+  const cfg = resolveFor(app, "nutritionist", email, role);
+  // Multi-turn chat: ground the model with the user's stats up front, replay prior turns, then the
+  // current message. An optional image rides the current (last) user turn — used to talk through a
+  // menu/plate photo the user is NOT logging.
+  const image = body.image && body.image.data ? { mimeType: body.image.mimeType, data: body.image.data } : null;
+  const messages = [
+    { role: "user", text: "CONTEXT (my current stats, goals, and recent intake):\n" + context },
+    { role: "assistant", text: "Got it — I have your stats, goals, and recent intake in mind." },
+  ];
+  const history = Array.isArray(body.history) ? body.history.slice(-20) : [];
+  for (const h of history) {
+    if (h && (h.role === "user" || h.role === "assistant") && typeof h.text === "string" && h.text.trim())
+      messages.push({ role: h.role, text: h.text });
+  }
+  messages.push({ role: "user", text: userMsg });
   let reply;
   try {
     reply = callAI(app, {
       provider: cfg.provider, apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, model: cfg.model,
       system: promptFor(app, "nutritionist"),
-      messages: [{ role: "user", text: "CONTEXT:\n" + context + "\n\n" + userMsg }],
+      messages: messages,
+      image: image,
     });
   } catch (err) { return e.json(502, { error: String(err.message || err) }); }
-  return e.json(200, { reply: reply, plan: { bmr: plan.bmr, tdee: plan.tdee, targets: plan.targets, warnings: plan.warnings } });
+  return e.json(200, { reply: reply, role: role, model: cfg.model, provider: cfg.provider, plan: { bmr: plan.bmr, tdee: plan.tdee, targets: plan.targets, warnings: plan.warnings } });
 }
 
 // GET /api/sate/stats?range=day|week|month|year — server-side rollup for the dashboard.
@@ -1634,6 +1999,20 @@ function updateEntry(e) {
         for (const k of ["kcal", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "sat_fat"]) rec.set(k, num(r.parsed.total[k]));
         rec.set("source", "text");
       }
+    } else if (b.set_total && typeof b.set_total === "object") {
+      // Apply an explicit estimate the client already has in hand (e.g. an accepted second opinion).
+      const t = b.set_total;
+      rec.set("items", Array.isArray(b.set_items) ? b.set_items : []);
+      if (activity) {
+        rec.set("duration_min", num(t.duration_min));
+        rec.set("kcal", Math.round(num(t.kcal_burned)));
+        rec.set("source", "activity_ai");
+      } else {
+        for (const k of ["kcal", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "sat_fat"]) rec.set(k, num(t[k]));
+        rec.set("source", "text");
+      }
+      if (b.set_provider !== undefined) rec.set("provider", String(b.set_provider));
+      if (b.set_model !== undefined) rec.set("model", String(b.set_model));
     } else if (num(b.scale) > 0 && num(b.scale) !== 1) {
       const s = num(b.scale);
       const NUTR = ["kcal", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "sat_fat"];
@@ -1763,6 +2142,17 @@ function setGoals(e) {
   if (body.name !== undefined) {
     profile.set("name", String(body.name).slice(0, 60).trim());
   }
+  if (body.checkin_enabled !== undefined) {
+    profile.set("checkin_enabled", !!body.checkin_enabled);
+  }
+  if (body.checkin_time !== undefined) {
+    const t = String(body.checkin_time || "");
+    profile.set("checkin_time", /^\d{1,2}:\d{2}$/.test(t) ? t : "");
+  }
+  if (body.checkin_freq !== undefined) {
+    const f = String(body.checkin_freq || "");
+    profile.set("checkin_freq", ["often", "daily", "sparse"].indexOf(f) !== -1 ? f : "daily");
+  }
   app.save(profile);
   return e.json(200, {
     goals: goalsOf(profile), track_mode: trackModeOf(profile), net_exercise: netExerciseOf(profile),
@@ -1775,6 +2165,9 @@ function setGoals(e) {
     height_cm: profile.getFloat("height_cm") || 0,
     activity_level: profile.getString("activity_level") || "",
     onboarded: profile.getString("onboarded") === "yes",
+    checkin_enabled: profile.getBool("checkin_enabled"),
+    checkin_time: profile.getString("checkin_time") || "",
+    checkin_freq: profile.getString("checkin_freq") || "daily",
   });
 }
 
@@ -1906,6 +2299,8 @@ function adminGetFunctions(e) {
     fn: r.getString("fn"),
     provider: r.getString("provider"),
     model: r.getString("model"),
+    second_provider: r.getString("second_provider"),
+    second_model: r.getString("second_model"),
     enabled: r.getBool("enabled"),
   }));
   return e.json(200, { functions: out });
@@ -1925,12 +2320,20 @@ function adminPutFunction(e) {
     rec = new Record(app.findCollectionByNameOrId("function_config"));
     rec.set("fn", fn);
   }
+  // Empty provider = "(global default)" — inherit the category global default. Only a *non-empty*
+  // provider must be one we know about.
   if (body.provider !== undefined) {
-    if (VALID_PROVIDERS.indexOf(String(body.provider)) === -1)
-      return e.json(400, { error: "invalid provider" });
-    rec.set("provider", String(body.provider));
+    const p = String(body.provider || "").trim();
+    if (p && VALID_PROVIDERS.indexOf(p) === -1) return e.json(400, { error: "invalid provider" });
+    rec.set("provider", p);
   }
-  if (body.model !== undefined) rec.set("model", String(body.model));
+  if (body.model !== undefined) rec.set("model", String(body.model || "").trim());
+  if (body.second_provider !== undefined) {
+    const sp = String(body.second_provider || "").trim();
+    if (sp && VALID_PROVIDERS.indexOf(sp) === -1) return e.json(400, { error: "invalid second provider" });
+    rec.set("second_provider", sp);
+  }
+  if (body.second_model !== undefined) rec.set("second_model", String(body.second_model || "").trim());
   if (body.enabled !== undefined) rec.set("enabled", !!body.enabled);
   app.save(rec);
   return e.json(200, { ok: true });
@@ -2038,12 +2441,19 @@ function adminGetUsers(e) {
       ov_ai_model: r.getString("ov_ai_model"),
       ov_vision_provider: r.getString("ov_vision_provider"),
       ov_vision_model: r.getString("ov_vision_model"),
+      ov_ai_second_provider: r.getString("ov_ai_second_provider"),
+      ov_ai_second_model: r.getString("ov_ai_second_model"),
+      ov_vision_second_provider: r.getString("ov_vision_second_provider"),
+      ov_vision_second_model: r.getString("ov_vision_second_model"),
+      fn_overrides: fnOverridesOf(r),
     };
   });
   // include env admins who haven't logged in yet
   for (const email of ADMINS) {
     if (!seen[email]) out.push({ email: email, name: email.split("@")[0], role: "admin", env_admin: true,
-      ov_ai_provider: "", ov_ai_model: "", ov_vision_provider: "", ov_vision_model: "" });
+      ov_ai_provider: "", ov_ai_model: "", ov_vision_provider: "", ov_vision_model: "",
+      ov_ai_second_provider: "", ov_ai_second_model: "", ov_vision_second_provider: "", ov_vision_second_model: "",
+      fn_overrides: {} });
   }
   return e.json(200, { users: out });
 }
@@ -2066,8 +2476,33 @@ function adminSetUserModels(e) {
     rec.set("role", isEnvAdmin(email) ? "admin" : "user");
     applyDefaultGoals(app, rec);
   }
-  for (const k of ["ov_ai_provider", "ov_ai_model", "ov_vision_provider", "ov_vision_model"]) {
-    if (body[k] !== undefined) rec.set(k, String(body[k] || "").trim());
+  const scalarKeys = [
+    "ov_ai_provider", "ov_ai_model", "ov_vision_provider", "ov_vision_model",
+    "ov_ai_second_provider", "ov_ai_second_model", "ov_vision_second_provider", "ov_vision_second_model",
+  ];
+  for (const k of scalarKeys) {
+    if (body[k] === undefined) continue;
+    const v = String(body[k] || "").trim();
+    if (k.indexOf("_provider") !== -1 && v && VALID_PROVIDERS.indexOf(v) === -1)
+      return e.json(400, { error: "invalid provider for " + k });
+    rec.set(k, v);
+  }
+  // Per-function overrides: { "<fn>": { p, m, sp, sm } }. Validate shape + any non-empty provider.
+  if (body.fn_overrides !== undefined) {
+    let ov = body.fn_overrides;
+    if (typeof ov === "string") { try { ov = JSON.parse(ov || "{}"); } catch (_) { return e.json(400, { error: "fn_overrides is not valid JSON" }); } }
+    if (!ov || typeof ov !== "object") return e.json(400, { error: "fn_overrides must be an object" });
+    const clean = {};
+    for (const fn in ov) {
+      if (F.FUNCTIONS.indexOf(fn) === -1) continue;
+      const o = ov[fn] || {};
+      const p = String(o.p || "").trim(), sp = String(o.sp || "").trim();
+      if (p && VALID_PROVIDERS.indexOf(p) === -1) return e.json(400, { error: "invalid provider for " + fn });
+      if (sp && VALID_PROVIDERS.indexOf(sp) === -1) return e.json(400, { error: "invalid second provider for " + fn });
+      const row = { p: p, m: String(o.m || "").trim(), sp: sp, sm: String(o.sm || "").trim() };
+      if (row.p || row.m || row.sp || row.sm) clean[fn] = row; // drop fully-empty rows
+    }
+    rec.set("fn_overrides", clean);
   }
   app.save(rec);
   return e.json(200, { ok: true, email: email });
@@ -2416,7 +2851,6 @@ module.exports = {
   logText,
   logPhoto,
   logBarcode,
-  chat,
   listEntries,
   deleteEntry,
   updateEntry,
@@ -2431,6 +2865,21 @@ module.exports = {
   weightGoalDelete,
   planCompute,
   nutritionist,
+  secondOpinion,
+  checkinsPending,
+  checkinSeen,
+  checkinNotified,
+  adminRunCheckins,
+  generateCheckins,
+  adminGetBackup,
+  adminPutBackup,
+  adminTestBackup,
+  adminBackupNow,
+  adminListBackups,
+  adminRestore,
+  adminFlushSync,
+  adminRestoreMirror,
+  adminLocalBackupNow,
   activitiesSearch,
   statsRange,
   adminGetActivities,

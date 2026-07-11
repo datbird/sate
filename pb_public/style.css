@@ -242,6 +242,44 @@ input[type=date], select, .prov input, .fn input {
 .uov-row input:disabled { opacity: .5; }
 .primary.small { min-height: 34px; padding: 0 14px; font-size: 13px; align-self: flex-end; }
 
+/* Shared provider+model picker: a 2-col grid that shrinks (see the min-width:0 note above). */
+.mp { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 8px; align-items: center; }
+.mp > * { min-width: 0; }
+.mp select { width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; }
+.mp .muted { font-size: 12px; }
+
+/* AI global defaults panel */
+#aiGlobals { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.gdef-row { display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 10px; align-items: center; }
+.gdef-label { font-size: 12px; color: var(--muted); }
+
+/* Collapsible AI function cards */
+.fncard { padding: 0; overflow: hidden; }
+.fnhead { width: 100%; display: flex; align-items: center; gap: 8px; padding: 12px 14px; background: none; border: 0; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.fnchevron { flex: 0 0 auto; color: var(--muted); font-size: 12px; width: 12px; }
+.fntitle { flex: 1 1 auto; min-width: 0; font-weight: 600; }
+.fnsummary { flex: 0 0 auto; font-size: 12px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fnenabled { flex: 0 0 auto; }
+.fnbody { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 6px; }
+.mp-lbl { font-size: 12px; color: var(--muted); margin-top: 4px; }
+/* [hidden] must beat the display:flex above/below on these collapsibles (author rule vs UA rule). */
+.fnbody[hidden], .uoverrides[hidden], .ufns-body[hidden], .ufn-body[hidden] { display: none; }
+.row.between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.badge.warn { color: var(--warn, #c47f00); border-color: color-mix(in srgb, var(--warn, #c47f00) 40%, var(--line)); }
+
+/* User per-function override tree (nested, collapsed) */
+.ufns { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.ufns-head, .ufn-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 9px 11px; background: var(--bg); border: 0; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.ufns-body { padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+.ufn { border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.ufn-head { background: var(--card); }
+.ufn-title { flex: 1 1 auto; min-width: 0; }
+.ufn-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+/* One override line: label on top, full-width provider+model picker below. */
+.uov-line { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.uov-line:last-child { margin-bottom: 0; }
+.uov-line > .mp { width: 100%; }
+
 /* instance card */
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 14px; margin-bottom: 10px; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); margin-bottom: 10px; min-width: 0; }
@@ -369,9 +407,63 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .cmsg { max-width: 88%; padding: 9px 12px; border-radius: 14px; font-size: 14px; line-height: 1.45; white-space: pre-wrap; }
 .cmsg.me { align-self: flex-end; background: var(--brand); color: var(--brand-ink); border-bottom-right-radius: 4px; }
 .cmsg.coach { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.cmsg.second { align-self: flex-start; background: color-mix(in srgb, var(--brand) 8%, var(--bg)); border: 1px dashed color-mix(in srgb, var(--brand) 45%, var(--line)); border-bottom-left-radius: 4px; }
+.cmsg-actions { align-self: flex-start; padding: 2px 2px 4px; }
+.second-tag { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--brand); font-weight: 700; margin-bottom: 4px; }
+/* Second-opinion card in the entry edit sheet */
+.second-card { margin-top: 8px; padding: 10px 12px; border: 1px dashed color-mix(in srgb, var(--brand) 45%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--brand) 6%, var(--bg)); display: flex; flex-direction: column; gap: 6px; }
+.second-cmp { font-size: 15px; }
+.second-macros { font-size: 12px; color: var(--muted); margin-left: 6px; }
+.second-note { font-size: 12px; }
+.second-card .primary.small { align-self: flex-start; }
 .coachplan { align-self: flex-start; }
-.coachbar { display: flex; gap: 8px; padding-top: 8px; }
+.coachbar { display: flex; gap: 8px; padding-top: 8px; align-items: center; }
 .coachbar input { flex: 1; min-width: 0; }
+.cmsg-img { display: block; margin-top: 8px; max-width: 220px; width: 100%; border-radius: 10px; }
+
+/* Coach tab — a viewport-locked chat: the view is pinned between the header (--coach-top) and the
+   bottom tab bar (--coach-bottom, set in JS), the log fills the middle and scrolls, and messages sit
+   at the BOTTOM (rising up as they arrive), with the composer fixed just below. */
+#view-coach:not([hidden]) {
+  position: fixed; left: 0; right: 0;
+  top: var(--coach-top, 56px); bottom: var(--coach-bottom, 0px);
+  max-width: 620px; margin: 0 auto; padding: 6px 14px 0;
+  box-sizing: border-box; display: flex; flex-direction: column;
+}
+.coachtab { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: 8px; }
+.tablog { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; gap: 8px; padding: 4px 2px 6px; }
+/* Pin content to the bottom; when it overflows, the auto-margin collapses so scrolling still works. */
+.tablog > :first-child { margin-top: auto; }
+.coachcompose { flex: 0 0 auto; background: var(--bg); padding: 6px 0 calc(6px + env(safe-area-inset-bottom)); }
+.coachpreview { position: relative; width: max-content; margin: 4px 2px 8px; }
+.coachpreview img { display: block; max-height: 120px; max-width: 60%; border-radius: 10px; border: 1px solid var(--line); }
+.coachpreview .cpx { position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink); font-size: 15px; line-height: 1; cursor: pointer; }
+/* Check-in waiting → a dot on the Coach tab (header tabs + bottom bar). */
+.tabs button.has-badge, .tabbar button.has-badge { position: relative; }
+.tabs button.has-badge::after, .tabbar button.has-badge::after {
+  content: ""; position: absolute; top: 3px; right: 6px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--brand); border: 1px solid var(--card);
+}
+/* Admin feature toggles: checkbox with wrapping description. */
+.featline { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; color: var(--ink); font-size: 13px; line-height: 1.4; }
+.featline input { margin-top: 2px; flex: 0 0 auto; }
+/* Collapsible admin sections — each h3.section toggles its content (collapsed by default). */
+.sect-h { cursor: pointer; user-select: none; -webkit-user-select: none; display: flex; align-items: center; gap: 7px; }
+.sect-chev { flex: 0 0 auto; color: var(--muted); font-size: .72em; }
+.sect-body[hidden] { display: none; }
+.sect-body { margin: 0 0 6px; }
+
+/* Backup & sync snapshot list */
+.snaprow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.snapmeta { min-width: 0; font-size: 13px; }
+.link.danger { color: #dc2626; }
+
+.iconbtn { flex: 0 0 auto; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--muted); cursor: pointer; }
+.iconbtn svg { width: 20px; height: 20px; }
+.iconbtn:active { background: var(--card); }
 
 /* Onboarding walkthrough */
 .onboard { position: fixed; inset: 0; z-index: 70; background: var(--bg); display: flex; overflow-y: auto;

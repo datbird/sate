@@ -15,3 +15,6 @@ ios/App/Pods/
 ios/App/.swiftpm/
 *.xcuserdatad
 xcuserdata/
+
+# Build-time launcher prefill (embeds SATE_URL) — never commit to this public repo.
+www/instance-default.js

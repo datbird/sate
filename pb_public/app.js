@@ -1,5 +1,9 @@
 "use strict";
 
+// Bumped with each deploy; shown in Admin → Instance so you can confirm the loaded build at a glance
+// (if it lags the latest, the client is serving a cached bundle).
+const APP_VERSION = "v56";
+
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -67,6 +71,7 @@ function showView(name) {
   $$(".view").forEach((v) => (v.hidden = v.id !== "view-" + name));
   $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   if (name === "home") renderHome();
+  if (name === "coach") { sizeCoach(); coachTabInit(); coachShowPending(); const l = $("#coachTabLog"); if (l) l.scrollTop = l.scrollHeight; }
   if (name === "history") loadHistory();
   if (name === "admin") loadAdmin();
 }
@@ -170,13 +175,11 @@ async function renderWeight() {
     chart +
     `<div class="wgoals">${goalsHtml}</div>` +
     srcPrompt +
-    '<div class="wlog"><input type="number" id="wIn" placeholder="Log weight (lb)" inputmode="decimal" step="0.1"><button class="primary small" id="wLogBtn">Log</button></div>' +
-    '<button class="link coachlink" id="coachOpen">💬 Ask your nutrition coach</button>';
+    '<div class="wlog"><input type="number" id="wIn" placeholder="Log weight (lb)" inputmode="decimal" step="0.1"><button class="primary small" id="wLogBtn">Log</button></div>';
   $("#wLogBtn").addEventListener("click", logWeightManual);
   $("#wIn").addEventListener("keydown", (e) => { if (e.key === "Enter") logWeightManual(); });
   const h = $("#wsrcHealth"); if (h) h.addEventListener("click", () => setWeightSource("health"));
   const m = $("#wsrcManual"); if (m) m.addEventListener("click", () => setWeightSource("manual"));
-  $("#coachOpen").addEventListener("click", openCoach);
   feed.innerHTML = (d.series || []).slice().reverse().slice(0, 40).map((s) => {
     const dt = new Date(s.t).toLocaleDateString([], { month: "short", day: "numeric" });
     return `<li class="entry"><div class="body"><b>${s.weight_lb} lb</b> <span class="s">${dt}</span></div></li>`;
@@ -220,48 +223,232 @@ function weightSyncDue() {
   return Date.now() - last >= 6 * 3600 * 1000;
 }
 
-// ---------------------------------------------------------- nutrition coach chat
-function openCoach() {
-  const bg = $("#coachBg"), sheet = $("#coachSheet"), log = $("#coachLog");
-  bg.hidden = false; sheet.hidden = false; bg.onclick = closeCoach;
-  if (!log.dataset.init) {
-    log.dataset.init = "1";
-    coachAppend("coach", "Hi! I'm your nutrition coach. Ask me anything about reaching your goals, or generate your plan.");
-    const q = document.createElement("button");
-    q.className = "link coachplan"; q.textContent = "📋 Generate my plan";
-    q.onclick = () => coachSend("__plan__");
-    log.appendChild(q);
-  }
-  $("#coachSend").onclick = () => coachSend();
-  $("#coachInput").onkeydown = (e) => { if (e.key === "Enter") coachSend(); };
-  setTimeout(() => $("#coachInput").focus(), 60);
+// ---------------------------------------------------------- nutrition coach chat (Coach tab)
+// A persistent, stat-aware chat. Keeps a running transcript so the coach remembers the thread, and
+// lets the user attach a photo (menu / plate) to talk through — nothing here is logged.
+let COACH = { history: [], pending: null }; // pending = { mimeType, data } image on the next turn
+let CHECKIN_PENDING = null; // the latest server-generated check-in awaiting the user, or null
+
+// Entry point used by the nav, the home chatline link, and the account menu.
+function openCoach() { showView("coach"); }
+
+// Put a dot on the Coach tab (header + bottom bar) when a check-in is waiting.
+function setCheckinBadge(on) {
+  $$('[data-view="coach"]').forEach((b) => b.classList.toggle("has-badge", !!on));
 }
-function closeCoach() { $("#coachBg").hidden = true; $("#coachSheet").hidden = true; }
+
+// On app open (and after a notification), pull the latest pending check-in and flag it. The native
+// layer (if present) also schedules a local notification for it.
+async function loadPendingCheckin() {
+  if (!ME || ME.checkins_enabled === false) { setCheckinBadge(false); return; }
+  try { const r = await api("/checkins/pending"); CHECKIN_PENDING = r.checkin || null; }
+  catch (_) { CHECKIN_PENDING = null; }
+  setCheckinBadge(!!CHECKIN_PENDING);
+  if (CHECKIN_PENDING && typeof scheduleCheckinNotification === "function") {
+    try { scheduleCheckinNotification(CHECKIN_PENDING); } catch (_) {}
+  }
+}
+
+// ---- native local notifications for check-ins (delivered via the Capacitor bridge) ----
+function localNotifPlugin() {
+  if (!window.Capacitor || !window.Capacitor.registerPlugin) return null;
+  return window.Capacitor.registerPlugin("LocalNotifications");
+}
+// LocalNotifications ids must be 32-bit ints; hash the check-in's string id into one deterministically.
+function checkinNotifId(s) {
+  let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return (Math.abs(h) % 2000000000) + 1;
+}
+// Deliver the nudge later (not while they're in the app): ~3h out, nudged into 9:00–21:00 local.
+function nextCheckinFireTime() {
+  const d = new Date(Date.now() + 3 * 3600 * 1000);
+  const h = d.getHours();
+  if (h < 8) d.setHours(9, 0, 0, 0);
+  else if (h >= 21) { d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); }
+  return d;
+}
+let CHECKIN_NOTIF_WIRED = false;
+function wireCheckinNotifTap(ln) {
+  if (CHECKIN_NOTIF_WIRED) return;
+  CHECKIN_NOTIF_WIRED = true;
+  try {
+    ln.addListener("localNotificationActionPerformed", (ev) => {
+      const extra = ev && ev.notification && ev.notification.extra;
+      if (extra && extra.view === "coach") loadPendingCheckin().then(() => showView("coach"));
+    });
+  } catch (_) {}
+}
+async function scheduleCheckinNotification(c) {
+  const ln = isNativeApp() ? localNotifPlugin() : null;
+  if (!ln || !c) return;
+  wireCheckinNotifTap(ln);
+  if (c.notified) return; // already scheduled server-side-tracked
+  try {
+    const perm = await ln.requestPermissions();
+    if (perm && perm.display && perm.display !== "granted") return;
+  } catch (_) {}
+  try {
+    await ln.schedule({ notifications: [{
+      id: checkinNotifId(c.id),
+      title: (ME && ME.app_name ? ME.app_name : "Sate") + " coach",
+      body: c.message,
+      schedule: { at: nextCheckinFireTime() },
+      extra: { checkinId: c.id, view: "coach" },
+    }] });
+    api("/checkins/" + c.id + "/notified", { method: "POST" }).catch(() => {});
+  } catch (_) {}
+}
+
+// When the Coach tab opens, drop any pending check-in into the chat as a coach message and mark it
+// seen so it isn't re-shown. It seeds the conversation history so the user's reply is in context.
+function coachShowPending() {
+  if (!CHECKIN_PENDING) return;
+  const c = CHECKIN_PENDING;
+  CHECKIN_PENDING = null;
+  setCheckinBadge(false);
+  const bubble = coachAppend("coach", c.message);
+  const tag = document.createElement("div");
+  tag.className = "second-tag";
+  tag.textContent = "Check-in" + (c.topic ? " · " + c.topic : "");
+  bubble.insertBefore(tag, bubble.firstChild);
+  COACH.history.push({ role: "assistant", text: c.message });
+  const log = $("#coachTabLog"); if (log) log.scrollTop = log.scrollHeight;
+  api("/checkins/" + c.id + "/seen", { method: "POST" }).catch(() => {});
+}
+
+function coachTabInit() {
+  const log = $("#coachTabLog");
+  if (!log || log.dataset.init) return;
+  log.dataset.init = "1";
+  coachAppend("coach", "Hi! I'm your nutrition coach — I know your stats, goals, and recent intake. Ask me anything, or attach a photo of a menu or plate to talk it through. Nothing here gets logged.");
+  const q = document.createElement("button");
+  q.className = "link coachplan"; q.textContent = "📋 Generate my plan";
+  q.onclick = () => coachSend("__plan__");
+  log.appendChild(q);
+}
+
 function coachAppend(who, text) {
   const el = document.createElement("div");
   el.className = "cmsg " + who; el.textContent = text;
-  const log = $("#coachLog"); log.appendChild(el); log.scrollTop = log.scrollHeight;
+  const log = $("#coachTabLog"); log.appendChild(el); log.scrollTop = log.scrollHeight;
   return el;
 }
-async function coachSend(preset) {
-  const inp = $("#coachInput");
-  const isPlan = preset === "__plan__";
-  const msg = isPlan ? "" : (typeof preset === "string" ? preset : inp.value || "").trim();
-  if (!isPlan && !msg) return;
-  if (!isPlan) coachAppend("me", msg);
-  inp.value = "";
-  const thinking = coachAppend("coach", "…");
-  try {
-    const r = await api("/nutritionist", { method: "POST", body: JSON.stringify(isPlan ? { mode: "plan" } : { mode: "chat", message: msg }) });
-    thinking.textContent = r.reply || "(no reply)";
-  } catch (e) { thinking.textContent = (e && e.message) || "Coach unavailable"; }
-  $("#coachLog").scrollTop = $("#coachLog").scrollHeight;
+
+// ---- image attach ----
+function coachAttachFile(file) {
+  if (!file) return;
+  const fr = new FileReader();
+  fr.onload = () => {
+    const res = String(fr.result);
+    const m = res.match(/^data:([^;]+);base64,(.*)$/);
+    if (!m) { toast("Could not read that image"); return; }
+    COACH.pending = { mimeType: m[1], data: m[2], url: res };
+    const p = $("#coachPreview");
+    p.hidden = false;
+    p.innerHTML = `<img src="${res}" alt="attached"><button class="cpx" id="coachPrevX" aria-label="Remove photo">×</button>`;
+    $("#coachPrevX").onclick = coachClearAttach;
+  };
+  fr.readAsDataURL(file);
 }
+function coachClearAttach() {
+  COACH.pending = null;
+  const p = $("#coachPreview");
+  if (p) { p.hidden = true; p.innerHTML = ""; }
+  const inp = $("#coachImgInput"); if (inp) inp.value = "";
+}
+
+async function coachSend(preset) {
+  const inp = $("#coachTabInput");
+  const isPlan = preset === "__plan__";
+  const msg = isPlan ? "" : (typeof preset === "string" ? preset : (inp ? inp.value : "") || "").trim();
+  const image = isPlan ? null : COACH.pending;
+  if (!isPlan && !msg && !image) return;
+  if (!isPlan) {
+    const bubble = coachAppend("me", msg || (image ? "" : ""));
+    if (image) {
+      const im = document.createElement("img");
+      im.className = "cmsg-img"; im.src = image.url;
+      bubble.appendChild(im);
+    }
+  }
+  if (inp) inp.value = "";
+  coachClearAttach();
+  const thinking = coachAppend("coach", "…");
+  const reqBody = isPlan
+    ? { mode: "plan" }
+    : { mode: "chat", message: msg, history: COACH.history.slice(-20) };
+  if (image) reqBody.image = { mimeType: image.mimeType, data: image.data };
+  try {
+    const r = await api("/nutritionist", { method: "POST", body: JSON.stringify(reqBody) });
+    thinking.textContent = r.reply || "(no reply)";
+    if (!isPlan) {
+      COACH.history.push({ role: "user", text: msg || "(shared a photo to discuss)" });
+      COACH.history.push({ role: "assistant", text: r.reply || "" });
+    }
+    coachSecondOpinionBtn(reqBody);
+  } catch (e) { thinking.textContent = (e && e.message) || "Coach unavailable"; }
+  $("#coachTabLog").scrollTop = $("#coachTabLog").scrollHeight;
+}
+
+// Offer a "Second opinion" on the last coach reply: re-runs the coach with the second-opinion model
+// and appends a labeled bubble alongside the original.
+function coachSecondOpinionBtn(reqBody) {
+  if (ME && ME.second_opinion_enabled === false) return; // admin disabled the feature globally
+  const log = $("#coachTabLog");
+  const bar = document.createElement("div");
+  bar.className = "cmsg-actions";
+  const btn = document.createElement("button");
+  btn.className = "link";
+  btn.textContent = "🔀 Second opinion";
+  btn.onclick = async () => {
+    btn.disabled = true;
+    const thinking = coachAppend("coach second", "…");
+    try {
+      const r = await api("/nutritionist", { method: "POST", body: JSON.stringify(Object.assign({}, reqBody, { role: "second" })) });
+      thinking.textContent = r.reply || "(no reply)";
+      thinking.dataset.model = r.model || "";
+      const tag = document.createElement("div");
+      tag.className = "second-tag";
+      tag.textContent = "Second opinion" + (r.model ? " · " + r.model : "");
+      thinking.insertBefore(tag, thinking.firstChild);
+      bar.remove();
+    } catch (e) { thinking.textContent = (e && e.message) || "Second opinion unavailable"; btn.disabled = false; }
+    log.scrollTop = log.scrollHeight;
+  };
+  bar.appendChild(btn);
+  log.appendChild(bar);
+}
+
+// The coach view is position:fixed between the header and the bottom tab bar; measure both so it
+// locks to exactly the free space (heights include safe-area insets and vary by device/orientation).
+function sizeCoach() {
+  const v = document.getElementById("view-coach");
+  if (!v) return;
+  const top = document.querySelector(".topbar");
+  const tab = document.getElementById("tabbar");
+  const topH = top ? Math.round(top.getBoundingClientRect().height) : 0;
+  const tabShown = tab && getComputedStyle(tab).display !== "none";
+  const tabH = tabShown ? Math.round(tab.getBoundingClientRect().height) : 0;
+  v.style.setProperty("--coach-top", topH + "px");
+  v.style.setProperty("--coach-bottom", tabH + "px");
+}
+window.addEventListener("resize", () => { if (!$("#view-coach").hidden) sizeCoach(); });
+window.addEventListener("orientationchange", () => setTimeout(sizeCoach, 100));
+
+// Coach tab wiring (static elements → one-time).
+(function initCoachTab() {
+  const send = $("#coachTabSend"), inp = $("#coachTabInput"), attach = $("#coachAttach"), file = $("#coachImgInput");
+  if (send) send.onclick = () => coachSend();
+  if (inp) inp.onkeydown = (e) => { if (e.key === "Enter") coachSend(); };
+  if (attach && file) attach.onclick = () => file.click();
+  if (file) file.addEventListener("change", (e) => { if (e.target.files[0]) coachAttachFile(e.target.files[0]); });
+})();
 
 // ------------------------------------------------------------- onboarding wizard
 let OB = null;
 const OB_ACT = [["sedentary", "Sedentary"], ["light", "Light (1-3 d/wk)"], ["moderate", "Moderate (3-5 d/wk)"], ["active", "Active (6-7 d/wk)"], ["athlete", "Athlete"]];
 const OB_METHODS = [["calories", "Calories (simple)"], ["carb", "Carb-focused (low-carb/keto)"], ["protein", "High-protein"], ["fat", "Low-fat"], ["balanced", "Balanced macros"], ["heart", "Heart-healthy"]];
+const OB_CHECKIN_FREQ = [["often", "A few times a day"], ["daily", "Once a day"], ["sparse", "Every couple of days"]];
 
 function maybeOnboard() {
   if (!ME || ME.onboarded || OB) return;
@@ -269,9 +456,12 @@ function maybeOnboard() {
     i: 0, name: ME.name || "", weight_lb: "", height_ft: "", height_in: "", age: ME.body_age || "", sex: ME.body_sex || "male",
     activity: ME.activity_level || "moderate", source: isNativeApp() ? "" : "manual",
     goals: [{ target_lb: "", target_date: "" }], method: ME.track_mode || "calories",
+    checkin_enabled: ME.checkin_enabled || false, checkin_freq: ME.checkin_freq || "daily",
     targets: null, bmr: 0, tdee: 0, warnings: [],
   };
-  OB.steps = ["welcome", "stats", isNativeApp() ? "source" : null, "goals", "method", "review", "plan"].filter(Boolean);
+  // The check-in step only appears when the admin has the feature enabled instance-wide.
+  const checkinStep = ME.checkins_enabled !== false ? "checkin" : null;
+  OB.steps = ["welcome", "stats", isNativeApp() ? "source" : null, "goals", "method", "review", checkinStep, "plan"].filter(Boolean);
   $("#onboard").hidden = false;
   obRender();
 }
@@ -322,6 +512,15 @@ const OB_STEP = {
       `<p class="ob-sub">BMR ${OB.bmr} · maintenance ${OB.tdee} kcal/day.</p>` : '<p class="ob-sub">Calculating…</p>') +
     (OB.warnings.length ? `<div class="ob-warn">⚠ ${OB.warnings.map(escapeHtml).join("<br>")}</div>` : "") +
     obNavBar(true, "See my plan"),
+  checkin: () => '<h2>Coach check-ins</h2>' +
+    '<p class="ob-sub">Want Sate to review your logs and reach out with a helpful, personal nudge when it spots something useful? You can change this anytime in settings.</p>' +
+    '<div class="ob-choices">' +
+    `<button type="button" class="ob-choice${OB.checkin_enabled ? " on" : ""}" data-ci="1">🔔 Yes, check in with me<small>Proactive coaching nudges</small></button>` +
+    `<button type="button" class="ob-choice${!OB.checkin_enabled ? " on" : ""}" data-ci="0">🔕 No thanks<small>I'll open the coach myself</small></button>` +
+    "</div>" +
+    (OB.checkin_enabled ? '<label class="ob-full" style="margin-top:12px">How often, at most?' +
+      `<select id="obCiFreq">${OB_CHECKIN_FREQ.map(([v, l]) => `<option value="${v}"${OB.checkin_freq === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>` : "") +
+    obNavBar(true, "Next"),
   plan: () => '<h2>Your plan</h2><div class="ob-plan" id="obPlan">Generating your plan…</div>' +
     '<div class="ob-nav"><button type="button" class="link" id="obBack">Back</button><button type="button" class="primary" id="obNext">Finish</button></div>',
 };
@@ -350,6 +549,10 @@ function obWire(s) {
   const dis = $("#obDismiss"); if (dis) dis.onclick = obDismiss;
   if (s === "source") $$(".ob-choice").forEach((b) => (b.onclick = () => { OB.source = b.dataset.src; obRender(); }));
   if (s === "method") $$(".ob-method").forEach((b) => (b.onclick = () => { OB.method = b.dataset.m; obRender(); }));
+  if (s === "checkin") {
+    $$(".ob-choice[data-ci]").forEach((b) => (b.onclick = () => { OB.checkin_enabled = b.dataset.ci === "1"; obRender(); }));
+    const f = $("#obCiFreq"); if (f) f.onchange = () => { OB.checkin_freq = f.value; };
+  }
   if (s === "goals") {
     const add = $("#obAddGoal"); if (add) add.onclick = () => { obCaptureGoals(); OB.goals.push({ target_lb: "", target_date: "" }); obRender(); };
     $$("#obGoals [data-gk]").forEach((el) => (el.onchange = () => { const i = +el.dataset.gi; if (OB.goals[i]) OB.goals[i][el.dataset.gk] = el.value; }));
@@ -362,6 +565,14 @@ async function obNext(s) {
   if (s === "goals") { obCaptureGoals(); return obGo(); }
   if (s === "method") return obComputeThenReview();
   if (s === "review") return obSaveThenPlan();
+  if (s === "checkin") {
+    const f = $("#obCiFreq"); if (f) OB.checkin_freq = f.value;
+    try {
+      await api("/goals", { method: "PATCH", body: JSON.stringify({ checkin_enabled: !!OB.checkin_enabled, checkin_freq: OB.checkin_freq }) });
+      if (ME) { ME.checkin_enabled = !!OB.checkin_enabled; ME.checkin_freq = OB.checkin_freq; }
+    } catch (_) {}
+    return obGo();
+  }
   if (s === "plan") return obFinish();
   obGo();
 }
@@ -416,6 +627,97 @@ function obFinish() {
   if (ME && ME.app_name) $("#brandName").textContent = ME.app_name;
   if (ME && ME.isAdmin) $$("[data-admin-only]").forEach((el) => (el.hidden = false));
   showView("home");
+}
+
+// ------------------------------------------------------- first-run admin setup wizard
+// Shown to an admin on an unconfigured instance (no AI key yet). Walks through app name → first AI
+// key → default model → feature toggles, using the existing admin endpoints, then marks setup done.
+let AS = null;
+const AS_PROVIDERS = [["google", "Google Gemini"], ["anthropic", "Anthropic Claude"], ["openai", "OpenAI"], ["openrouter", "OpenRouter"]];
+
+function maybeAdminSetup() {
+  if (!ME || !ME.isAdmin || ME.setup_done || AS) return false;
+  AS = { i: 0, app_name: ME.app_name || "Sate", provider: "google", api_key: "", model: "", models: [], checkins: true, second: true, admins: "" };
+  AS.steps = ["welcome", "provider", "model", "features"];
+  $("#adminSetup").hidden = false;
+  asRender();
+  return true;
+}
+function asClose() { $("#adminSetup").hidden = true; AS = null; }
+function asNavBar(back, nextLabel, canNext) {
+  return '<div class="ob-nav">' +
+    (back ? '<button type="button" class="link" id="asBack">Back</button>' : "<span></span>") +
+    `<button type="button" class="primary" id="asNext"${canNext === false ? " disabled" : ""}>${nextLabel || "Next"}</button></div>`;
+}
+const AS_STEP = {
+  welcome: () => `<img class="ob-logo" src="/icons/icon-192.png?v2" alt="Sate">` +
+    '<h2 style="text-align:center">Set up your instance</h2>' +
+    '<p class="ob-sub" style="text-align:center">A few quick steps to get Sate running: name it, add an AI key, pick a default model.</p>' +
+    `<label class="ob-full">Instance name<input type="text" id="asName" value="${escapeHtml(AS.app_name)}" placeholder="Sate"></label>` +
+    asNavBar(false, "Get started"),
+  provider: () => '<h2>Add an AI provider</h2><p class="ob-sub">Bring your own key. You can add more later in Admin.</p>' +
+    `<label class="ob-full">Provider<select id="asProv">${AS_PROVIDERS.map(([v, l]) => `<option value="${v}"${AS.provider === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>` +
+    `<label class="ob-full" style="margin-top:10px">API key<input type="password" id="asKey" value="${escapeHtml(AS.api_key)}" placeholder="paste your key" autocomplete="off"></label>` +
+    asNavBar(true, "Add key"),
+  model: () => '<h2>Default model</h2><p class="ob-sub">Every AI task uses this unless you override it per-task later. Pick one that supports 👁 images so photo logging works.</p>' +
+    (AS.models.length
+      ? `<label class="ob-full">Model<select id="asModel">${AS.models.map((m) => `<option value="${escapeHtml(m.id)}"${AS.model === m.id ? " selected" : ""}>${m.vision ? "👁 " : ""}${escapeHtml(m.label || m.id)}</option>`).join("")}</select></label>`
+      : '<p class="ob-warn">No models loaded — check the key. You can set this later in Admin.</p>') +
+    asNavBar(true, "Next"),
+  features: () => '<h2>Optional features</h2><p class="ob-sub">Turn these on or off for everyone (adjustable anytime in Admin).</p>' +
+    `<label class="checkrow"><input type="checkbox" id="asCheckins"${AS.checkins ? " checked" : ""}> <span>Proactive check-ins<small>Sate reviews logs and nudges users when useful.</small></span></label>` +
+    `<label class="checkrow"><input type="checkbox" id="asSecond"${AS.second ? " checked" : ""}> <span>Second opinion<small>Let users request an alternate model.</small></span></label>` +
+    `<label class="ob-full" style="margin-top:10px">Extra admin emails <small class="muted">(comma-separated, optional)</small><input type="text" id="asAdmins" value="${escapeHtml(AS.admins)}" placeholder="alex@example.com, sam@example.com"></label>` +
+    asNavBar(true, "Finish setup"),
+};
+function asRender() {
+  $("#adminSetupBody").innerHTML = AS_STEP[AS.steps[AS.i]]();
+  const s = AS.steps[AS.i];
+  const back = $("#asBack"); if (back) back.onclick = () => { AS.i = Math.max(0, AS.i - 1); asRender(); };
+  const next = $("#asNext"); if (next) next.onclick = () => asNext(s);
+}
+function asGo() { AS.i = Math.min(AS.steps.length - 1, AS.i + 1); asRender(); }
+async function asNext(s) {
+  const n = $("#asNext");
+  if (s === "welcome") { AS.app_name = ($("#asName").value || "Sate").trim(); return asGo(); }
+  if (s === "provider") {
+    AS.provider = $("#asProv").value; AS.api_key = $("#asKey").value.trim();
+    if (!AS.api_key) return toast("Paste an API key");
+    if (n) { n.disabled = true; n.textContent = "Checking…"; }
+    try {
+      await api("/admin/providers", { method: "PUT", body: JSON.stringify({ name: AS.provider, api_key: AS.api_key, enabled: true }) });
+      const r = await api("/admin/models?provider=" + AS.provider);
+      AS.models = r.models || [];
+      const vis = AS.models.find((m) => m.vision) || AS.models[0];
+      AS.model = vis ? vis.id : "";
+    } catch (e) { toast(e.message); if (n) { n.disabled = false; n.textContent = "Add key"; } return; }
+    return asGo();
+  }
+  if (s === "model") { if ($("#asModel")) AS.model = $("#asModel").value; return asGo(); }
+  if (s === "features") {
+    AS.checkins = $("#asCheckins").checked; AS.second = $("#asSecond").checked; AS.admins = $("#asAdmins").value.trim();
+    if (n) { n.disabled = true; n.textContent = "Saving…"; }
+    try {
+      await api("/admin/settings", { method: "PUT", body: JSON.stringify({
+        app_name: AS.app_name,
+        default_ai_provider: AS.provider, default_ai_model: AS.model,
+        default_vision_provider: AS.provider, default_vision_model: AS.model,
+        checkins_enabled: AS.checkins ? "on" : "off",
+        second_opinion_enabled: AS.second ? "on" : "off",
+        setup_complete: "yes",
+      }) });
+      for (const em of AS.admins.split(",").map((x) => x.trim().toLowerCase()).filter((x) => x.indexOf("@") !== -1)) {
+        try { await api("/admin/users/role", { method: "PUT", body: JSON.stringify({ email: em, role: "admin" }) }); } catch (_) {}
+      }
+      ME = await api("/me");
+    } catch (e) { toast(e.message); if (n) { n.disabled = false; n.textContent = "Finish setup"; } return; }
+    asClose();
+    if (ME.app_name) { $("#brandName").textContent = ME.app_name; document.title = ME.app_name + " — calorie chat"; }
+    toast("Instance ready 🎉");
+    showView("admin");
+    return;
+  }
+  asGo();
 }
 
 // Explicit refresh (pull-to-refresh on Home). Unlike the launch auto-sync this ignores the
@@ -715,10 +1017,13 @@ function openEdit(en) {
     `<div class="quickscale">${scales.map(([l, v]) => `<button data-scale="${v}">${l}</button>`).join("")}</div>` +
     `<div class="menu-label" style="padding-left:0">${activity ? "Or re-describe the workout" : "Or re-describe the meal"}</div>` +
     `<div class="editrow"><input id="editText" placeholder="${activity ? "e.g. a 5 mile run" : "e.g. half a cup of rice"}" value="${escapeHtml(en.description || "")}"></div>` +
-    `<div class="sheet-actions"><button class="primary" id="editApply" style="flex:1">Re-estimate</button><button class="danger-btn" id="editDelete">Delete</button></div>`;
+    `<div class="sheet-actions"><button class="primary" id="editApply" style="flex:1">Re-estimate</button><button class="danger-btn" id="editDelete">Delete</button></div>` +
+    (en.description && en.description !== "(photo)" && !(ME && ME.second_opinion_enabled === false) ? `<div class="row" style="margin-top:8px"><button class="link" id="editSecond">🔀 Get a second opinion</button></div><div id="secondPanel"></div>` : "");
   $$("#editBody [data-scale]").forEach((b) => b.addEventListener("click", () => applyEdit({ scale: +b.dataset.scale })));
   $("#editApply").addEventListener("click", () => applyEdit({ re_estimate: true, text: $("#editText").value }));
   $("#editDelete").addEventListener("click", async () => { await deleteEntry(en.id); closeEdit(); });
+  const secondBtn = $("#editSecond");
+  if (secondBtn) secondBtn.addEventListener("click", () => requestSecondOpinion(en, secondBtn));
   $("#editBg").hidden = false; $("#editSheet").hidden = false;
 }
 function closeEdit() { $("#editBg").hidden = true; $("#editSheet").hidden = true; editEntry = null; }
@@ -731,6 +1036,37 @@ async function applyEdit(payload) {
     toast(`Updated to ${fmt(r.entry.kcal)} ${r.entry.kind === "activity" ? "cal" : "kcal"}.`);
     renderHome();
   } catch (e) { toast(e.message); }
+}
+
+// Ask the second-opinion model to independently re-estimate this entry; show it alongside the
+// current numbers with a one-tap "Use this" to adopt it.
+async function requestSecondOpinion(en, btn) {
+  const panel = $("#secondPanel");
+  if (!panel) return;
+  btn.disabled = true;
+  panel.innerHTML = '<div class="second-card"><span class="muted">Getting a second opinion…</span></div>';
+  try {
+    const r = await api("/second-opinion", { method: "POST", body: JSON.stringify({ entry_id: en.id }) });
+    const activity = en.kind === "activity";
+    const t = r.total || {};
+    const alt = activity ? Math.round(t.kcal_burned || 0) : Math.round(t.kcal || 0);
+    const cur = Math.round(en.kcal || 0);
+    const unit = activity ? "cal" : "kcal";
+    const macros = activity ? "" :
+      `<span class="second-macros">${Math.round(t.protein || 0)}P · ${Math.round(t.carbs || 0)}C · ${Math.round(t.fat || 0)}F</span>`;
+    panel.innerHTML =
+      `<div class="second-card">` +
+      `<div class="second-tag">Second opinion${r.model ? " · " + escapeHtml(r.model) : ""}</div>` +
+      `<div class="second-cmp"><b>${alt} ${unit}</b> ${macros} <span class="muted">(was ${cur} ${unit})</span></div>` +
+      (r.note ? `<div class="second-note muted">${escapeHtml(r.note)}</div>` : "") +
+      `<button class="primary small" id="secondUse">Use this estimate</button>` +
+      `</div>`;
+    $("#secondUse").addEventListener("click", () =>
+      applyEdit({ set_total: r.total, set_items: r.items || [], set_provider: r.provider, set_model: r.model }));
+  } catch (e) {
+    panel.innerHTML = `<div class="second-card"><span class="muted">${escapeHtml((e && e.message) || "Second opinion unavailable")}</span></div>`;
+    btn.disabled = false;
+  }
 }
 
 // -------------------------------------------------------- barcode scanning
@@ -833,6 +1169,16 @@ function openGoals() {
   if (act) {
     act.innerHTML = '<option value="">— set —</option>' + OB_ACT.map(([v, l]) => `<option value="${v}"${ME.activity_level === v ? " selected" : ""}>${l}</option>`).join("");
   }
+  // Check-in preferences — hidden entirely when the admin has the feature off instance-wide.
+  const ciSec = $("#checkinSection");
+  if (ciSec) {
+    ciSec.hidden = ME.checkins_enabled === false;
+    const on = !!ME.checkin_enabled;
+    $("#goalCheckin").checked = on;
+    $("#goalCheckinFreq").value = ME.checkin_freq || "daily";
+    $("#checkinFreqRow").hidden = !on;
+    $("#goalCheckin").onchange = () => { $("#checkinFreqRow").hidden = !$("#goalCheckin").checked; };
+  }
   loadGoalWeightGoals();
   goalModeHint();
   goalsDialog.showModal();
@@ -873,6 +1219,27 @@ async function recomputeTargets() {
 $("#goalsBtn").addEventListener("click", openGoals);
 $("#menuGoals").addEventListener("click", () => { $("#userMenu").hidden = true; openGoals(); });
 $("#menuCoach").addEventListener("click", () => { $("#userMenu").hidden = true; openCoach(); });
+// Native-only: forget the saved instance host and return to the launcher to pick/enter a new one.
+async function switchInstance() {
+  $("#userMenu").hidden = true;
+  try {
+    const P = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences;
+    if (P) await P.remove({ key: "sate_host" });
+  } catch (_) {}
+  window.location.href = "capacitor://localhost/";
+}
+(function initSwitchInstance() {
+  const btn = $("#menuSwitch");
+  if (!btn) return;
+  if (isNativeApp()) { btn.hidden = false; btn.addEventListener("click", switchInstance); }
+})();
+// Persistent coach entry point under the Home stats — visible on every scope (all/nutrition/activity/weight).
+(function initChatline() {
+  const cl = $("#chatline");
+  if (!cl) return;
+  cl.innerHTML = '<button class="link coachlink" id="coachOpen">💬 Ask your nutrition coach</button>';
+  cl.querySelector("#coachOpen").addEventListener("click", openCoach);
+})();
 $("#goalMode").addEventListener("change", goalModeHint);
 $("#goalsForm").addEventListener("submit", async (e) => {
   if (e.submitter && e.submitter.value === "cancel") return;
@@ -885,12 +1252,18 @@ $("#goalsForm").addEventListener("submit", async (e) => {
   };
   if (isNativeApp() && $("#hrMethod")) payload.hr_estimate_method = $("#hrMethod").value;
   if ($("#goalActivity") && $("#goalActivity").value) payload.activity_level = $("#goalActivity").value;
+  if (ME.checkins_enabled !== false && $("#goalCheckin")) {
+    payload.checkin_enabled = $("#goalCheckin").checked;
+    payload.checkin_freq = $("#goalCheckinFreq").value;
+  }
   const r = await api("/goals", { method: "PATCH", body: JSON.stringify(payload) });
   ME.goals = r.goals;
   if (r.track_mode) ME.track_mode = r.track_mode;
   if (typeof r.net_exercise === "boolean") ME.net_exercise = r.net_exercise;
   if (r.hr_estimate_method) ME.hr_estimate_method = r.hr_estimate_method;
   if (r.activity_level !== undefined) ME.activity_level = r.activity_level;
+  if (typeof r.checkin_enabled === "boolean") ME.checkin_enabled = r.checkin_enabled;
+  if (r.checkin_freq) ME.checkin_freq = r.checkin_freq;
   renderHome();
   toast("Goals saved");
 });
@@ -922,7 +1295,49 @@ $("#summaryBtn").addEventListener("click", async () => {
 let MODELS = {}; // provider -> [{id,label,vision}]
 let PROVIDERS = []; // provider rows from the last admin load (for per-user override dropdowns)
 
+// Turn every "<h3 class='section'>" in the admin view into a collapsible header (collapsed by
+// default) that wraps everything up to the next section. Runs once; wrapping moves the inner
+// containers but keeps their ids, so the render functions still target them.
+function initAdminCollapse() {
+  const root = $("#view-admin");
+  if (!root || root.dataset.collapsed) return;
+  root.dataset.collapsed = "1";
+  $$(".admin-sect").forEach((sect) => {
+    const kids = Array.prototype.slice.call(sect.children);
+    for (let i = 0; i < kids.length; i++) {
+      const h = kids[i];
+      if (!(h.tagName === "H3" && h.classList.contains("section"))) continue;
+      const body = document.createElement("div");
+      body.className = "sect-body"; body.hidden = true;
+      let j = i + 1;
+      while (j < kids.length && !(kids[j].tagName === "H3" && kids[j].classList.contains("section"))) { body.appendChild(kids[j]); j++; }
+      h.classList.add("sect-h");
+      h.insertAdjacentHTML("afterbegin", '<span class="sect-chev">▸</span> ');
+      h.addEventListener("click", () => { body.hidden = !body.hidden; h.querySelector(".sect-chev").textContent = body.hidden ? "▸" : "▾"; });
+      h.after(body);
+    }
+  });
+}
+
+// Make a single card collapsible: `head` becomes the clickable toggle (gets a chevron) for a body
+// wrapping `bodyNodes`, collapsed by default. Clicks on controls inside the head don't toggle.
+// Returns the body element (caller inserts it after head).
+function collapsify(head, bodyNodes) {
+  const body = document.createElement("div");
+  body.className = "sect-body"; body.hidden = true;
+  bodyNodes.forEach((n) => n && body.appendChild(n));
+  head.classList.add("sect-h");
+  head.insertAdjacentHTML("afterbegin", '<span class="sect-chev">▸</span> ');
+  head.addEventListener("click", (e) => {
+    if (e.target.closest("input,button,select,textarea,label,a")) return;
+    body.hidden = !body.hidden;
+    head.querySelector(".sect-chev").textContent = body.hidden ? "▸" : "▾";
+  });
+  return body;
+}
+
 async function loadAdmin() {
+  initAdminCollapse();
   const [{ providers }, { functions }, usersResp, settingsResp] = await Promise.all([
     api("/admin/providers"), api("/admin/functions"), api("/admin/users"), api("/admin/settings"),
   ]);
@@ -937,6 +1352,8 @@ async function loadAdmin() {
       catch (_) { MODELS[p.name] = []; }
     })
   );
+  renderGlobals(settingsResp.settings);
+  renderFeatures(settingsResp.settings);
   renderFunctions(functions, providers);
   renderUsers(usersResp.users);
   loadFoods("");
@@ -946,7 +1363,109 @@ async function loadAdmin() {
   loadAiLimits();
   loadAiUsage();
   loadAiPrices();
+  loadBackup();
 }
+
+// ---- external backup / sync ----
+function bkTypeToggle() {
+  const t = $("#bkType").value;
+  $("#bkPb").hidden = t !== "pocketbase";
+  $("#bkFb").hidden = t !== "firebase";
+}
+async function loadBackup() {
+  const card = $("#backupCard"); if (!card) return;
+  let c;
+  try { c = await api("/admin/backup"); } catch (e) { $("#bkStatus").textContent = e.message; return; }
+  $("#bkType").value = c.type || "";
+  $("#bkPbUrl").value = c.pb.url || ""; $("#bkPbEmail").value = c.pb.email || "";
+  $("#bkPbPass").placeholder = c.pb.password_set ? "•••••• (saved)" : "password";
+  $("#bkFbProject").value = c.fb.project || ""; $("#bkFbEmail").value = c.fb.email || "";
+  $("#bkFbKey").placeholder = c.fb.api_key_set ? "•••••• (saved)" : "web API key";
+  $("#bkFbPass").placeholder = c.fb.password_set ? "•••••• (saved)" : "password";
+  $("#bkAuto").checked = !!c.auto;
+  $("#bkLive").checked = !!c.sync_live;
+  bkTypeToggle();
+  const bits = [];
+  if (c.last_at) bits.push(`<span class="badge">last backup ${escapeHtml(c.last_at.slice(0, 16).replace("T", " "))} — ${escapeHtml(c.last_status || "")}</span>`);
+  if (c.sync_live) bits.push(`<span class="badge">live sync ${c.sync_queued ? "· " + c.sync_queued + " queued" : "· up to date"}${c.sync_last_at ? " · " + escapeHtml(c.sync_last_at.slice(11, 16)) : ""}</span>`);
+  $("#bkStatus").innerHTML = bits.length ? bits.join(" ") : '<span class="muted">No backup yet.</span>';
+  $("#bkMirror").hidden = !(c.type && c.sync_live);
+  if (c.type) renderBackupList();
+  else $("#bkList").innerHTML = "";
+  // Local file backups
+  const L = c.local || {};
+  if ($("#lbEnabled")) {
+    $("#lbEnabled").checked = !!L.enabled;
+    $("#lbDir").value = L.dir || "";
+    $("#lbKeep").value = L.keep || 14;
+    $("#lbStatus").innerHTML = L.last_at
+      ? `<span class="badge">last file backup ${escapeHtml(L.last_at.slice(0, 16).replace("T", " "))}</span>`
+      : '<span class="muted">No file backup yet.</span>';
+    const files = L.files || [];
+    $("#lbList").innerHTML = files.length
+      ? files.map((f) => `<div class="snaprow"><span class="snapmeta">${escapeHtml(f.name)} <span class="muted">${fmtBytes(f.size)}</span></span></div>`).join("")
+      : '<p class="muted" style="margin:8px 0">No backup files in that directory.</p>';
+  }
+}
+function fmtBytes(n) { n = +n || 0; return n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB"; }
+function backupPayload() {
+  return {
+    type: $("#bkType").value,
+    auto: $("#bkAuto").checked,
+    sync_live: $("#bkLive").checked,
+    pb: { url: $("#bkPbUrl").value.trim(), email: $("#bkPbEmail").value.trim(), password: $("#bkPbPass").value },
+    fb: { project: $("#bkFbProject").value.trim(), email: $("#bkFbEmail").value.trim(), api_key: $("#bkFbKey").value, password: $("#bkFbPass").value },
+    local: { enabled: $("#lbEnabled").checked, dir: $("#lbDir").value.trim(), keep: +$("#lbKeep").value || 14 },
+  };
+}
+async function renderBackupList() {
+  const wrap = $("#bkList"); wrap.innerHTML = '<p class="muted" style="margin:8px 0">Loading snapshots…</p>';
+  let snaps = [];
+  try { snaps = (await api("/admin/backup/list")).snapshots || []; }
+  catch (e) { wrap.innerHTML = `<p class="hint">${escapeHtml(e.message)}</p>`; return; }
+  if (!snaps.length) { wrap.innerHTML = '<p class="muted" style="margin:8px 0">No snapshots on the destination yet.</p>'; return; }
+  wrap.innerHTML = "";
+  snaps.forEach((s) => {
+    const row = document.createElement("div");
+    row.className = "snaprow";
+    row.innerHTML = `<span class="snapmeta"><b>${escapeHtml((s.created || "").slice(0, 16).replace("T", " "))}</b> <span class="muted">${escapeHtml(s.label || s.id)}</span></span>`;
+    const btn = document.createElement("button");
+    btn.className = "link danger"; btn.textContent = "Restore";
+    btn.onclick = () => restoreSnapshot(s);
+    row.appendChild(btn);
+    wrap.appendChild(row);
+  });
+}
+async function restoreSnapshot(s) {
+  if (!confirm("Restore from " + (s.created || s.id) + "?\n\nThis REPLACES this instance's data (entries, profiles, foods, settings…) with the snapshot. It cannot be undone.")) return;
+  toast("Restoring…");
+  try {
+    const r = await api("/admin/backup/restore", { method: "POST", body: JSON.stringify({ id: s.id }) });
+    const total = Object.values(r.restored || {}).reduce((a, n) => a + n, 0);
+    toast("Restored " + total + " records. Reloading…");
+    setTimeout(() => location.reload(), 1200);
+  } catch (e) { toast(e.message); }
+}
+(function wireBackup() {
+  const t = $("#bkType"); if (!t) return;
+  t.addEventListener("change", bkTypeToggle);
+  $("#bkSave").onclick = async () => { try { await api("/admin/backup", { method: "PUT", body: JSON.stringify(backupPayload()) }); toast("Saved"); loadBackup(); } catch (e) { toast(e.message); } };
+  $("#bkTest").onclick = async () => { toast("Testing…"); try { await api("/admin/backup", { method: "PUT", body: JSON.stringify(backupPayload()) }); await api("/admin/backup/test", { method: "POST" }); toast("Connection OK ✓"); } catch (e) { toast(e.message); } };
+  $("#bkNow").onclick = async () => { toast("Backing up…"); try { const r = await api("/admin/backup/run", { method: "POST" }); toast("Backed up " + r.records + " records ✓"); loadBackup(); } catch (e) { toast(e.message); } };
+  $("#bkRefresh").onclick = renderBackupList;
+  if ($("#lbSave")) $("#lbSave").onclick = async () => { try { await api("/admin/backup", { method: "PUT", body: JSON.stringify(backupPayload()) }); toast("Saved"); loadBackup(); } catch (e) { toast(e.message); } };
+  if ($("#lbNow")) $("#lbNow").onclick = async () => { toast("Writing backup file…"); try { const r = await api("/admin/backup/local-now", { method: "POST" }); toast("Wrote " + r.name); loadBackup(); } catch (e) { toast(e.message); } };
+  $("#bkRestoreMirror").onclick = async () => {
+    if (!confirm("Rebuild this instance's data from the live remote mirror?\n\nThis REPLACES local data with the remote's current state. It cannot be undone.")) return;
+    toast("Restoring from mirror…");
+    try {
+      const r = await api("/admin/backup/restore-mirror", { method: "POST" });
+      const total = Object.values(r.restored || {}).reduce((a, n) => a + n, 0);
+      toast("Restored " + total + " records. Reloading…");
+      setTimeout(() => location.reload(), 1200);
+    } catch (e) { toast(e.message); }
+  };
+})();
 
 // ---- Admin section tabs (AI / Instance / Users / Data) ----
 function setAdminSect(group) {
@@ -1120,7 +1639,8 @@ function promptCard(p) {
   save.textContent = "Save";
   save.onclick = () => savePrompt(p.fn, ta.value.trim() === p.default.trim() ? "" : ta.value, el);
   actions.appendChild(reset); actions.appendChild(save);
-  el.appendChild(head); el.appendChild(ta); el.appendChild(actions);
+  el.appendChild(head);
+  el.appendChild(collapsify(head, [ta, actions])); // each prompt collapsed by default
   return el;
 }
 
@@ -1140,6 +1660,7 @@ function renderInstance(s) {
   $("#dg_carbs").value = set.default_goal_carbs || "";
   $("#dg_fat").value = set.default_goal_fat || "";
   $("#instanceMeta").innerHTML =
+    `<span class="badge">build ${APP_VERSION}</span> ` +
     `<span class="badge">host ${escapeHtml(location.host)}</span> ` +
     `<span class="badge">auth header ${escapeHtml(s.auth_header || "")}</span> ` +
     `<span class="badge">env admins: ${(s.env_admins || []).map(escapeHtml).join(", ") || "none"}</span>`;
@@ -1202,33 +1723,103 @@ async function fetchModelsIfNeeded(prov) {
   catch (_) { MODELS[prov] = []; }
 }
 
-function provOptions(selected) {
-  return '<option value="">(global default)</option>' +
+function provOptions(selected, emptyLabel) {
+  return `<option value="">${escapeHtml(emptyLabel || "(global default)")}</option>` +
     PROVIDERS.map((p) => `<option value="${p.name}" ${selected === p.name ? "selected" : ""}>${p.name}</option>`).join("");
 }
 
-// One override category row (provider select + model input) for a user.
-function overrideRow(u, cat, label) {
-  const prov = cat === "ai" ? u.ov_ai_provider : u.ov_vision_provider;
-  const model = cat === "ai" ? u.ov_ai_model : u.ov_vision_model;
-  const row = document.createElement("div");
-  row.className = "uov-row";
-  row.innerHTML =
-    `<span class="uov-label">${label}</span>` +
-    `<select data-cat="${cat}" data-k="provider">${provOptions(prov)}</select>` +
-    `<span class="model-cell" data-cat="${cat}"></span>`;
-  const sel = row.querySelector('[data-k="provider"]');
-  const cell = row.querySelector(".model-cell");
+// A linked provider+model picker rendered into `host`. Blank provider = defer (emptyLabel explains
+// to what). Returns { get: () => ({provider, model}) }. Used by globals, function cards, user rows.
+function buildModelPicker(host, provider, model, emptyLabel) {
+  host.innerHTML =
+    `<select class="mp-prov">${provOptions(provider, emptyLabel)}</select>` +
+    `<span class="mp-model model-cell"></span>`;
+  const sel = host.querySelector(".mp-prov");
+  const cell = host.querySelector(".mp-model");
   const renderCell = async (cur) => {
-    if (!sel.value) { cell.innerHTML = '<span class="muted">uses global default</span>'; return; }
+    if (!sel.value) { cell.innerHTML = `<span class="muted">${escapeHtml(emptyLabel || "(global default)")}</span>`; return; }
     await fetchModelsIfNeeded(sel.value);
-    cell.innerHTML = modelSelectHTML(sel.value, cur || "", `data-cat="${cat}" data-k="model"`);
+    cell.innerHTML = modelSelectHTML(sel.value, cur || "");
     wireModelSelect(cell.querySelector("select"), cur || "");
   };
   sel.addEventListener("change", () => renderCell(""));
   renderCell(model);
-  return row;
+  return {
+    get: () => {
+      const p = sel.value.trim();
+      const ms = cell.querySelector("select");
+      const m = ms && ms.value !== "__custom__" ? ms.value : "";
+      return { provider: p, model: p ? m : "" };
+    },
+  };
 }
+
+// Global feature toggles (default ON unless explicitly "off").
+function renderFeatures(settings) {
+  const s = settings || {};
+  const sec = $("#feat_second"), chk = $("#feat_checkins");
+  if (sec) sec.checked = s.second_opinion_enabled !== "off";
+  if (chk) chk.checked = s.checkins_enabled !== "off";
+}
+(function wireFeatures() {
+  const btn = $("#saveFeatures");
+  if (!btn) return;
+  btn.onclick = async () => {
+    const payload = {
+      second_opinion_enabled: $("#feat_second").checked ? "on" : "off",
+      checkins_enabled: $("#feat_checkins").checked ? "on" : "off",
+    };
+    try { await api("/admin/settings", { method: "PUT", body: JSON.stringify(payload) }); toast("Features saved"); }
+    catch (e) { toast(e.message); }
+  };
+})();
+
+// The four instance-wide AI defaults: Normal/Image × Primary/Second opinion.
+function renderGlobals(settings) {
+  const wrap = $("#aiGlobals");
+  if (!wrap) return;
+  const s = settings || {};
+  wrap.innerHTML = "";
+  const rows = [
+    { label: "Normal · Primary", pk: "default_ai_provider", mk: "default_ai_model" },
+    { label: "Normal · Second opinion", pk: "second_ai_provider", mk: "second_ai_model" },
+    { label: "Image · Primary", pk: "default_vision_provider", mk: "default_vision_model" },
+    { label: "Image · Second opinion", pk: "second_vision_provider", mk: "second_vision_model" },
+  ];
+  const pickers = [];
+  rows.forEach((r) => {
+    const row = document.createElement("div");
+    row.className = "gdef-row";
+    row.innerHTML = `<span class="gdef-label">${r.label}</span><span class="gdef-picker mp"></span>`;
+    const p = buildModelPicker(row.querySelector(".gdef-picker"), s[r.pk] || "", s[r.mk] || "", "(none set)");
+    pickers.push({ r, p });
+    wrap.appendChild(row);
+  });
+  const save = document.createElement("button");
+  save.className = "primary";
+  save.style.marginTop = "8px";
+  save.textContent = "Save global defaults";
+  save.onclick = async () => {
+    const payload = {};
+    pickers.forEach(({ r, p }) => { const v = p.get(); payload[r.pk] = v.provider; payload[r.mk] = v.model; });
+    try { await api("/admin/settings", { method: "PUT", body: JSON.stringify(payload) }); toast("Global defaults saved"); }
+    catch (e) { toast(e.message); }
+  };
+  wrap.appendChild(save);
+}
+
+// A labeled provider+model picker line inside a user's override area. `key` is stashed on the
+// element so saveUserModels can gather it. Returns { get } from buildModelPicker.
+function userPickerRow(host, label, provider, model) {
+  const row = document.createElement("div");
+  row.className = "uov-line";
+  row.innerHTML = `<label class="mp-lbl">${escapeHtml(label)}</label><span class="mp uov-picker"></span>`;
+  host.appendChild(row);
+  return buildModelPicker(row.querySelector(".uov-picker"), provider || "", model || "", "(global default)");
+}
+
+// The order functions appear in a user's per-function override tree.
+const USER_FN_ORDER = ["text_parse", "vision_estimate", "web_lookup", "activity_estimate", "daily_summary", "nutritionist", "checkin"];
 
 function renderUsers(users) {
   const ul = $("#users");
@@ -1239,7 +1830,9 @@ function renderUsers(users) {
     const badge = u.env_admin
       ? '<span class="badge lock">env-admin</span>'
       : `<span class="badge ${u.role === "admin" ? "adminb" : ""}">${u.role}</span>`;
-    const hasOv = u.ov_ai_provider || u.ov_vision_provider;
+    const fnOv = u.fn_overrides || {};
+    const hasOv = u.ov_ai_provider || u.ov_vision_provider || u.ov_ai_second_provider ||
+      u.ov_vision_second_provider || Object.keys(fnOv).length;
     li.innerHTML = `<span class="uemail">${escapeHtml(u.email)}${hasOv ? ' <span class="badge">custom AI</span>' : ""}</span>`;
     const right = document.createElement("span");
     right.className = "urow-right";
@@ -1251,16 +1844,69 @@ function renderUsers(users) {
       btn.onclick = () => setRole(u.email, u.role === "admin" ? "user" : "admin");
       right.appendChild(btn);
     }
-    // AI model overrides (collapsed by default)
+    // AI model overrides (collapsed by default). Collects pickers into a registry the save reads.
     const ov = document.createElement("div");
     ov.className = "uoverrides";
     ov.hidden = true;
-    ov.appendChild(overrideRow(u, "ai", "Normal AI"));
-    ov.appendChild(overrideRow(u, "vision", "Image"));
+    const reg = { globals: {}, fns: {}, original: fnOv };
+
+    const gWrap = document.createElement("div");
+    reg.globals.ai = userPickerRow(gWrap, "Normal · Primary", u.ov_ai_provider, u.ov_ai_model);
+    reg.globals.ai_second = userPickerRow(gWrap, "Normal · Second opinion", u.ov_ai_second_provider, u.ov_ai_second_model);
+    reg.globals.vision = userPickerRow(gWrap, "Image · Primary", u.ov_vision_provider, u.ov_vision_model);
+    reg.globals.vision_second = userPickerRow(gWrap, "Image · Second opinion", u.ov_vision_second_provider, u.ov_vision_second_model);
+    ov.appendChild(gWrap);
+
+    // Nested, collapsed "AI Functions" tree — one collapsed row per function (primary + second).
+    const fnsWrap = document.createElement("div");
+    fnsWrap.className = "ufns";
+    const fnsHead = document.createElement("button");
+    fnsHead.type = "button";
+    fnsHead.className = "ufns-head";
+    fnsHead.innerHTML = `<span class="fnchevron">▸</span> AI Functions — per-function override`;
+    const fnsBody = document.createElement("div");
+    fnsBody.className = "ufns-body";
+    fnsBody.hidden = true;
+    fnsHead.onclick = () => {
+      fnsBody.hidden = !fnsBody.hidden;
+      fnsHead.querySelector(".fnchevron").textContent = fnsBody.hidden ? "▸" : "▾";
+    };
+    USER_FN_ORDER.forEach((fnKey) => {
+      const cur = fnOv[fnKey] || {};
+      const card = document.createElement("div");
+      card.className = "ufn";
+      const cHead = document.createElement("button");
+      cHead.type = "button";
+      cHead.className = "ufn-head";
+      const set = cur.p || cur.sp;
+      cHead.innerHTML = `<span class="fnchevron">▸</span> <span class="ufn-title">${escapeHtml(FN_LABELS[fnKey] || fnKey)}</span>${set ? ' <span class="badge">set</span>' : ""}`;
+      const cBody = document.createElement("div");
+      cBody.className = "ufn-body";
+      cBody.hidden = true;
+      let built = false, prim, sec;
+      cHead.onclick = () => {
+        cBody.hidden = !cBody.hidden;
+        cHead.querySelector(".fnchevron").textContent = cBody.hidden ? "▸" : "▾";
+        if (!cBody.hidden && !built) {
+          built = true;
+          prim = userPickerRow(cBody, "Primary", cur.p, cur.m);
+          sec = userPickerRow(cBody, "Second opinion", cur.sp, cur.sm);
+          reg.fns[fnKey] = { get: () => ({ prim: prim.get(), sec: sec.get() }) };
+        }
+      };
+      card.appendChild(cHead);
+      card.appendChild(cBody);
+      fnsBody.appendChild(card);
+    });
+    fnsWrap.appendChild(fnsHead);
+    fnsWrap.appendChild(fnsBody);
+    ov.appendChild(fnsWrap);
+
     const save = document.createElement("button");
     save.className = "primary small";
+    save.style.marginTop = "10px";
     save.textContent = "Save overrides";
-    save.onclick = () => saveUserModels(u.email, ov);
+    save.onclick = () => saveUserModels(u.email, reg);
     ov.appendChild(save);
 
     const toggle = document.createElement("button");
@@ -1275,18 +1921,27 @@ function renderUsers(users) {
   });
 }
 
-async function saveUserModels(email, ov) {
-  const val = (cat, k) => {
-    const el = ov.querySelector(`[data-cat="${cat}"][data-k="${k}"]`);
-    return el ? el.value.trim() : "";
-  };
+async function saveUserModels(email, reg) {
+  const g = reg.globals;
+  const ai = g.ai.get(), aiS = g.ai_second.get(), vi = g.vision.get(), viS = g.vision_second.get();
   const payload = {
     email: email,
-    ov_ai_provider: val("ai", "provider"), ov_ai_model: val("ai", "model"),
-    ov_vision_provider: val("vision", "provider"), ov_vision_model: val("vision", "model"),
+    ov_ai_provider: ai.provider, ov_ai_model: ai.model,
+    ov_ai_second_provider: aiS.provider, ov_ai_second_model: aiS.model,
+    ov_vision_provider: vi.provider, ov_vision_model: vi.model,
+    ov_vision_second_provider: viS.provider, ov_vision_second_model: viS.model,
   };
-  if (!payload.ov_ai_provider) payload.ov_ai_model = "";
-  if (!payload.ov_vision_provider) payload.ov_vision_model = "";
+  // The server replaces fn_overrides wholesale, so start from the untouched originals and apply only
+  // the function cards the admin actually expanded (the only ones with live pickers). An expanded
+  // card that was cleared removes that function's override.
+  const merged = Object.assign({}, reg.original || {});
+  Object.keys(reg.fns).forEach((fnKey) => {
+    const v = reg.fns[fnKey].get();
+    const row = { p: v.prim.provider, m: v.prim.model, sp: v.sec.provider, sm: v.sec.model };
+    if (row.p || row.m || row.sp || row.sm) merged[fnKey] = row;
+    else delete merged[fnKey];
+  });
+  payload.fn_overrides = merged;
   try {
     await api("/admin/users/models", { method: "PUT", body: JSON.stringify(payload) });
     toast("AI overrides saved for " + email);
@@ -1564,6 +2219,10 @@ function renderProviders(providers) {
       try { await api("/admin/providers", { method: "PUT", body: JSON.stringify(payload) }); toast(p.name + " saved"); loadAdmin(); }
       catch (e) { toast(e.message); }
     };
+    // Collapse each provider under its name (a "key set" badge stays visible in the header).
+    const head = el.querySelector("h4");
+    if (p.key_set) head.insertAdjacentHTML("beforeend", ' <span class="fbadge web">key set</span>');
+    el.appendChild(collapsify(head, Array.prototype.slice.call(el.querySelectorAll(".grid"))));
     wrap.appendChild(el);
   });
 }
@@ -1571,10 +2230,11 @@ function renderProviders(providers) {
 const FN_LABELS = {
   vision_estimate: "Image interpretation — photo → nutrition",
   text_parse: "Normal AI — meal text → nutrition",
-  chat: "Normal AI — chat / coaching",
   daily_summary: "Normal AI — daily recap",
   web_lookup: "Normal AI — web-search lookup",
+  activity_estimate: "Normal AI — activity → calories burned",
   nutritionist: "Normal AI — nutrition coach",
+  checkin: "Normal AI — proactive check-ins",
 };
 
 function renderFunctions(functions, providers) {
@@ -1582,35 +2242,51 @@ function renderFunctions(functions, providers) {
   wrap.innerHTML = "";
   functions.forEach((fn) => {
     const el = document.createElement("div");
-    el.className = "fn";
-    const opts = providers.map((p) => `<option value="${p.name}" ${fn.provider === p.name ? "selected" : ""}>${p.name}</option>`).join("");
+    el.className = "fn fncard";
     const needsVision = fn.fn === "vision_estimate";
+    // Header summary: how the primary currently resolves (its own model, or the global default).
+    const summary = fn.provider ? `${fn.provider} · ${fn.model || "?"}` : "(global default)";
     el.innerHTML =
-      `<h4>${FN_LABELS[fn.fn] || fn.fn}${needsVision ? ' <span class="badge">needs 👁</span>' : ""}</h4>` +
-      `<div class="grid">` +
-      `<select data-k="provider">${opts}</select>` +
-      `<label class="switch"><input type="checkbox" data-k="enabled" ${fn.enabled ? "checked" : ""}/> on</label>` +
+      `<button type="button" class="fnhead" data-toggle>` +
+      `<span class="fnchevron">▸</span>` +
+      `<span class="fntitle">${FN_LABELS[fn.fn] || fn.fn}${needsVision ? ' <span class="badge">👁</span>' : ""}</span>` +
+      `<span class="fnsummary muted">${escapeHtml(summary)}</span>` +
+      `<span class="fnenabled">${fn.enabled ? "" : '<span class="badge warn">off</span>'}</span>` +
+      `</button>` +
+      `<div class="fnbody" hidden>` +
+      `<label class="mp-lbl">Primary <span class="muted">— blank = global default</span></label>` +
+      `<span class="mp fn-primary"></span>` +
+      `<label class="mp-lbl">Second opinion <span class="muted">— optional; users request it on demand</span></label>` +
+      `<span class="mp fn-second"></span>` +
+      `<div class="row between" style="margin-top:10px">` +
+      `<label class="switch"><input type="checkbox" data-k="enabled" ${fn.enabled ? "checked" : ""}/> enabled</label>` +
+      `<button class="primary small" data-save>Save</button>` +
       `</div>` +
-      `<div class="grid" style="margin-top:8px">` +
-      `<span class="model-cell">${modelSelectHTML(fn.provider, fn.model)}</span>` +
-      `<button class="primary" data-save>Save</button>` +
       `</div>`;
-    const provSel = el.querySelector('[data-k="provider"]');
-    const cell = el.querySelector(".model-cell");
-    wireModelSelect(cell.querySelector("select"), fn.model);
-    provSel.addEventListener("change", async () => {
-      await fetchModelsIfNeeded(provSel.value);
-      cell.innerHTML = modelSelectHTML(provSel.value, "");
-      wireModelSelect(cell.querySelector("select"), "");
-    });
+    const body = el.querySelector(".fnbody");
+    const head = el.querySelector("[data-toggle]");
+    const chevron = el.querySelector(".fnchevron");
+    let built = false;
+    let primary, second;
+    head.onclick = () => {
+      body.hidden = !body.hidden;
+      chevron.textContent = body.hidden ? "▸" : "▾";
+      if (!body.hidden && !built) {
+        built = true;
+        primary = buildModelPicker(el.querySelector(".fn-primary"), fn.provider || "", fn.model || "", "(global default)");
+        second = buildModelPicker(el.querySelector(".fn-second"), fn.second_provider || "", fn.second_model || "", "(global default)");
+      }
+    };
     el.querySelector("[data-save]").onclick = async () => {
+      const p = primary ? primary.get() : { provider: fn.provider, model: fn.model };
+      const s = second ? second.get() : { provider: fn.second_provider, model: fn.second_model };
       const payload = {
         fn: fn.fn,
-        provider: provSel.value,
-        model: (cell.querySelector('[data-k="model"]') || {}).value || "",
+        provider: p.provider, model: p.model,
+        second_provider: s.provider, second_model: s.model,
         enabled: el.querySelector('[data-k="enabled"]').checked,
       };
-      try { await api("/admin/functions", { method: "PUT", body: JSON.stringify(payload) }); toast(fn.fn + " saved"); }
+      try { await api("/admin/functions", { method: "PUT", body: JSON.stringify(payload) }); toast((FN_LABELS[fn.fn] || fn.fn) + " saved"); loadAdmin(); }
       catch (e) { toast(e.message); }
     };
     wrap.appendChild(el);
@@ -2044,7 +2720,10 @@ async function start() {
   // Throttled at launch only; nothing syncs in the background.
   if (isNativeApp() && healthSyncDue()) healthSyncNow(true);
   if (isNativeApp() && weightSyncDue()) weightSyncNow(true);
-  maybeOnboard();
+  loadPendingCheckin();
+  if ((location.hash || "").replace("#", "") === "coach") showView("coach");
+  // A fresh instance: the admin configures it first; user goal-onboarding waits until it's set up.
+  if (!maybeAdminSetup()) maybeOnboard();
 }
 
 async function boot() {
@@ -2104,7 +2783,7 @@ async function boot() {
     const home = document.getElementById("view-home");
     if (!home || home.hidden) return true;
     if (document.querySelector("dialog[open]")) return true;               // goals dialog
-    for (const id of ["addSheet", "editSheet", "hrSheet", "coachSheet", "onboard"]) {
+    for (const id of ["addSheet", "editSheet", "hrSheet", "onboard"]) {
       const el = document.getElementById(id);
       if (el && !el.hidden) return true;   // a sheet/overlay is open
     }

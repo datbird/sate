@@ -56,7 +56,38 @@ docker run -d --name sate \
 Or with Compose: copy `.env.example` → `.env`, fill it in, then `docker compose up -d`.
 
 Then put it behind your auth proxy (see below), open the app, go to **Admin**, add a key,
-and start logging.
+and start logging. The first time an admin opens a fresh instance, a short **setup wizard**
+walks through the app name, first AI key, default model, and feature toggles.
+
+### First-install checklist
+
+1. `APP_ENCRYPTION_KEY` — 32 hex chars; encrypts provider keys at rest (keep it safe; losing it
+   makes stored keys undecryptable).
+2. `ADMIN_EMAILS` — comma-separated emails that get the Admin tab (matched against the auth-proxy
+   header). Everyone else is a normal user.
+3. Put it behind your auth proxy on loopback (see [Cloudflare Access](#putting-it-behind-cloudflare-access)).
+4. Open the app as an admin → the setup wizard prompts for the first AI provider key + default model.
+5. *(optional)* Provision the PocketBase superuser for the raw database dashboard — see below.
+
+### PocketBase dashboard (superuser)
+
+Sate is built on PocketBase, which includes a full admin dashboard at **`/_/`** — raw collections,
+records, logs, backups, and server settings. It's **separate from Sate's own Admin tab** (which is a
+curated, safe subset) and uses its **own superuser login**, so keep it for the instance owner only.
+
+The dashboard is served by the same binary, so it sits behind your auth proxy automatically. To be
+able to log in, create a superuser one of two ways:
+
+```sh
+# a) at container start, from env (idempotent upsert on every boot):
+-e SUPERUSER_EMAIL=you@example.com -e SUPERUSER_PASSWORD='a-strong-password'
+
+# b) once, against a running container (persists in the pb_data volume):
+docker exec -it sate /pb/pocketbase superuser upsert you@example.com 'a-strong-password'
+```
+
+With no superuser yet, visiting `/_/` shows PocketBase's built-in first-run screen to create one.
+Admins also get an **Open PocketBase dashboard** link under **Admin → Instance → Database**.
 
 > **Bind to loopback.** Sate trusts the auth-proxy email header, so the container must only be
 > reachable *through* the proxy. Always publish on `127.0.0.1` (as above) and point your tunnel

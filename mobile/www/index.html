@@ -3,33 +3,140 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Sate</title>
+    <title>Connect to Sate</title>
+    <!-- Optional, gitignored: sets window.SATE_DEFAULT_HOST to prefill the field for a known build.
+         Never committed (this repo is public); the build step writes it from SATE_URL. -->
+    <script src="instance-default.js" onerror="void 0"></script>
     <style>
-      :root { color-scheme: light dark; }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        padding: 2rem;
-        font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        text-align: center;
-        background: #ffffff;
-        color: #111827;
-      }
-      @media (prefers-color-scheme: dark) {
-        body { background: #0b0f14; color: #e5e7eb; }
-      }
-      h1 { color: #16a34a; margin: 0 0 0.5rem; font-size: 1.5rem; }
-      p { margin: 0.25rem 0; max-width: 30ch; }
-      code { font-size: 0.85em; opacity: 0.7; }
+      :root { color-scheme: light dark; --bg:#fff; --ink:#111827; --muted:#6b7280; --brand:#16a34a; --line:#e5e7eb; --card:#f9fafb; }
+      @media (prefers-color-scheme: dark) { :root { --bg:#0b0f14; --ink:#e5e7eb; --muted:#9aa4b2; --line:#1f2937; --card:#111826; } }
+      * { box-sizing: border-box; }
+      body { margin:0; min-height:100vh; display:grid; place-items:center; padding:calc(env(safe-area-inset-top) + 2rem) 1.5rem calc(env(safe-area-inset-bottom) + 2rem);
+        font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); }
+      main { width:100%; max-width:360px; text-align:center; }
+      .logo { width:72px; height:72px; border-radius:18px; margin:0 auto 14px; display:block; }
+      h1 { color:var(--brand); margin:0 0 4px; font-size:1.5rem; }
+      p.sub { margin:0 0 18px; color:var(--muted); }
+      label { display:block; text-align:left; font-size:13px; color:var(--muted); margin:0 0 6px; }
+      input { width:100%; padding:12px 14px; font-size:16px; border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--ink); }
+      button { width:100%; margin-top:12px; padding:13px 16px; font-size:16px; font-weight:600; border:0; border-radius:12px; background:var(--brand); color:#fff; cursor:pointer; }
+      button.ghost { background:transparent; color:var(--brand); border:1px solid var(--line); }
+      button:disabled { opacity:.6; }
+      .err { color:#dc2626; font-size:14px; margin-top:12px; min-height:1.2em; }
+      .spin { display:inline-block; width:22px; height:22px; border:3px solid var(--line); border-top-color:var(--brand); border-radius:50%; animation:spin .8s linear infinite; }
+      @keyframes spin { to { transform:rotate(360deg); } }
+      .hidden { display:none; }
+      code { font-size:.85em; word-break:break-all; }
     </style>
   </head>
   <body>
     <main>
+      <img class="logo" src="icon-192.png" alt="Sate" onerror="this.style.display='none'" />
       <h1>Sate</h1>
-      <p>This app connects to your own Sate instance.</p>
-      <p><code>SATE_URL</code> wasn't set when this build was made.</p>
+
+      <!-- CONNECTING -->
+      <div id="loading">
+        <div class="spin"></div>
+        <p class="sub" id="loadingMsg" style="margin-top:14px">Loading…</p>
+      </div>
+
+      <!-- CONNECT FORM -->
+      <div id="connect" class="hidden">
+        <p class="sub">Enter the address of your Sate instance to connect.</p>
+        <label for="host">Instance address</label>
+        <input id="host" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sate.example.com" />
+        <button id="connectBtn">Connect</button>
+        <div class="err" id="connectErr"></div>
+      </div>
+
+      <!-- UNREACHABLE -->
+      <div id="down" class="hidden">
+        <p class="sub">Can't reach <code id="downHost"></code>. It may be offline, or the address may have changed.</p>
+        <button id="retryBtn">Retry</button>
+        <button id="changeBtn" class="ghost">Change address</button>
+        <div class="err" id="downErr"></div>
+      </div>
     </main>
+
+    <script>
+      var Cap = window.Capacitor;
+      function prefs() { try { return Cap && Cap.Plugins && Cap.Plugins.Preferences; } catch (e) { return null; } }
+      function show(id) { ["loading","connect","down"].forEach(function (x) { document.getElementById(x).classList.toggle("hidden", x !== id); }); }
+
+      async function getHost() {
+        var P = prefs();
+        if (P) { try { var r = await P.get({ key: "sate_host" }); if (r && r.value) return r.value; } catch (e) {} }
+        try { return localStorage.getItem("sate_host") || ""; } catch (e) { return ""; }
+      }
+      async function saveHost(h) {
+        var P = prefs();
+        if (P) { try { await P.set({ key: "sate_host", value: h }); } catch (e) {} }
+        try { localStorage.setItem("sate_host", h); } catch (e) {}
+      }
+      function normalize(u) {
+        u = (u || "").trim();
+        if (!u) return "";
+        if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+        return u.replace(/\/+$/, "");
+      }
+      // Reachable = the server responded at all (even a Cloudflare Access login page). A network/DNS
+      // failure or timeout rejects. no-cors keeps this a pure "did it answer" probe.
+      async function probe(host) {
+        var ctrl = new AbortController();
+        var t = setTimeout(function () { ctrl.abort(); }, 8000);
+        try { await fetch(host + "/api/health", { mode: "no-cors", cache: "no-store", signal: ctrl.signal }); return true; }
+        catch (e) { return false; }
+        finally { clearTimeout(t); }
+      }
+      // Append a unique cache-buster so the webview always fetches a FRESH index.html (and thus the
+      // current app.js), instead of reusing a heuristically-cached page from a previous launch.
+      function go(host) { window.location.href = host + "/?_cb=" + Date.now(); }
+
+      async function tryConnect(host) {
+        host = normalize(host);
+        if (!host) return { ok: false, msg: "Enter an address." };
+        show("loading");
+        document.getElementById("loadingMsg").textContent = "Connecting to " + host + "…";
+        if (await probe(host)) { await saveHost(host); go(host); return { ok: true }; }
+        return { ok: false, msg: "Couldn't reach that address." };
+      }
+
+      function showConnect(prefill, err) {
+        show("connect");
+        var el = document.getElementById("host");
+        if (prefill && !el.value) el.value = prefill.replace(/^https?:\/\//, "");
+        document.getElementById("connectErr").textContent = err || "";
+      }
+      function showDown(host) {
+        show("down");
+        document.getElementById("downHost").textContent = host.replace(/^https?:\/\//, "");
+        document.getElementById("downErr").textContent = "";
+      }
+
+      document.getElementById("connectBtn").addEventListener("click", async function () {
+        var btn = this; btn.disabled = true;
+        var r = await tryConnect(document.getElementById("host").value);
+        if (!r.ok) { showConnect(document.getElementById("host").value, r.msg); }
+        btn.disabled = false;
+      });
+      document.getElementById("host").addEventListener("keydown", function (e) { if (e.key === "Enter") document.getElementById("connectBtn").click(); });
+      document.getElementById("retryBtn").addEventListener("click", async function () {
+        var host = await getHost();
+        if (!host) return showConnect(window.SATE_DEFAULT_HOST || "");
+        show("loading"); document.getElementById("loadingMsg").textContent = "Retrying " + host + "…";
+        if (await probe(host)) go(host); else showDown(host);
+      });
+      document.getElementById("changeBtn").addEventListener("click", function () { showConnect(""); });
+
+      (async function boot() {
+        var host = await getHost();
+        if (host) {
+          document.getElementById("loadingMsg").textContent = "Connecting to " + host + "…";
+          if (await probe(host)) return go(host);
+          return showDown(host);
+        }
+        showConnect(window.SATE_DEFAULT_HOST || "");
+      })();
+    </script>
   </body>
 </html>

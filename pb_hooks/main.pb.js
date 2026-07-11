@@ -5,6 +5,19 @@
 // (require caches, so this is cheap after the first call.) The static frontend is served
 // automatically from ./pb_public.
 
+// Always revalidate the SPA entry point + assets. PocketBase's static server sends only
+// Last-Modified (no Cache-Control), so browsers/webviews heuristically cache index.html and can pin
+// an OLD app.js?vN even after a hard refresh. no-cache forces a cheap conditional request (304 when
+// unchanged), so a new deploy is picked up immediately. Versioned ?vN assets could cache forever, but
+// no-cache on them is harmless (still 304s) and keeps this simple.
+routerUse((e) => {
+  try {
+    const p = (e.request && e.request.url && e.request.url.path) || "";
+    if (p.indexOf("/api/") !== 0) e.response.header().set("Cache-Control", "no-cache, must-revalidate");
+  } catch (_) {}
+  return e.next();
+});
+
 // Unauthenticated on purpose: the SPA needs to know which auth mode is active before it can log in.
 routerAdd("GET", "/api/sate/auth-config", (e) => require(`${__hooks}/api.js`).authConfig(e));
 
@@ -12,7 +25,6 @@ routerAdd("GET", "/api/sate/me", (e) => require(`${__hooks}/api.js`).me(e));
 routerAdd("POST", "/api/sate/log/text", (e) => require(`${__hooks}/api.js`).logText(e));
 routerAdd("POST", "/api/sate/log/photo", (e) => require(`${__hooks}/api.js`).logPhoto(e));
 routerAdd("POST", "/api/sate/log/barcode", (e) => require(`${__hooks}/api.js`).logBarcode(e));
-routerAdd("POST", "/api/sate/chat", (e) => require(`${__hooks}/api.js`).chat(e));
 routerAdd("POST", "/api/sate/log/activity", (e) => require(`${__hooks}/api.js`).logActivity(e));
 routerAdd("POST", "/api/sate/log/heart-rate", (e) => require(`${__hooks}/api.js`).logHeartRate(e));
 routerAdd("GET", "/api/sate/activities/search", (e) => require(`${__hooks}/api.js`).activitiesSearch(e));
@@ -26,6 +38,20 @@ routerAdd("POST", "/api/sate/weight/goals", (e) => require(`${__hooks}/api.js`).
 routerAdd("DELETE", "/api/sate/weight/goals/{id}", (e) => require(`${__hooks}/api.js`).weightGoalDelete(e));
 routerAdd("POST", "/api/sate/plan/compute", (e) => require(`${__hooks}/api.js`).planCompute(e));
 routerAdd("POST", "/api/sate/nutritionist", (e) => require(`${__hooks}/api.js`).nutritionist(e));
+routerAdd("POST", "/api/sate/second-opinion", (e) => require(`${__hooks}/api.js`).secondOpinion(e));
+routerAdd("GET", "/api/sate/checkins/pending", (e) => require(`${__hooks}/api.js`).checkinsPending(e));
+routerAdd("POST", "/api/sate/checkins/{id}/seen", (e) => require(`${__hooks}/api.js`).checkinSeen(e));
+routerAdd("POST", "/api/sate/checkins/{id}/notified", (e) => require(`${__hooks}/api.js`).checkinNotified(e));
+routerAdd("POST", "/api/sate/admin/checkins/run", (e) => require(`${__hooks}/api.js`).adminRunCheckins(e));
+routerAdd("GET", "/api/sate/admin/backup", (e) => require(`${__hooks}/api.js`).adminGetBackup(e));
+routerAdd("PUT", "/api/sate/admin/backup", (e) => require(`${__hooks}/api.js`).adminPutBackup(e));
+routerAdd("POST", "/api/sate/admin/backup/test", (e) => require(`${__hooks}/api.js`).adminTestBackup(e));
+routerAdd("POST", "/api/sate/admin/backup/run", (e) => require(`${__hooks}/api.js`).adminBackupNow(e));
+routerAdd("GET", "/api/sate/admin/backup/list", (e) => require(`${__hooks}/api.js`).adminListBackups(e));
+routerAdd("POST", "/api/sate/admin/backup/restore", (e) => require(`${__hooks}/api.js`).adminRestore(e));
+routerAdd("POST", "/api/sate/admin/backup/flush", (e) => require(`${__hooks}/api.js`).adminFlushSync(e));
+routerAdd("POST", "/api/sate/admin/backup/restore-mirror", (e) => require(`${__hooks}/api.js`).adminRestoreMirror(e));
+routerAdd("POST", "/api/sate/admin/backup/local-now", (e) => require(`${__hooks}/api.js`).adminLocalBackupNow(e));
 routerAdd("GET", "/api/sate/entries", (e) => require(`${__hooks}/api.js`).listEntries(e));
 routerAdd("DELETE", "/api/sate/entries/{id}", (e) => require(`${__hooks}/api.js`).deleteEntry(e));
 routerAdd("PATCH", "/api/sate/entries/{id}", (e) => require(`${__hooks}/api.js`).updateEntry(e));
@@ -63,3 +89,57 @@ routerAdd("GET", "/api/sate/admin/prompts", (e) => require(`${__hooks}/api.js`).
 routerAdd("PUT", "/api/sate/admin/prompts", (e) => require(`${__hooks}/api.js`).adminPutPrompt(e));
 routerAdd("GET", "/api/sate/admin/lookup", (e) => require(`${__hooks}/api.js`).adminGetLookup(e));
 routerAdd("PUT", "/api/sate/admin/lookup", (e) => require(`${__hooks}/api.js`).adminPutLookup(e));
+
+// Proactive coach check-ins: analyze each opted-in user's recent logs and, when worthwhile, generate
+// a check-in the app surfaces (in-app + a local notification). Runs every 3 hours so the per-user
+// frequency (a few a day / daily / every couple of days) can be honored; each user is gated by their
+// own min-gap and an "already-pending" short-circuit, and the whole job is a no-op when the admin's
+// global check-ins toggle is off. Messages are picked up on the user's next app open.
+cronAdd("sate_checkins", "0 */3 * * *", () => {
+  try { require(`${__hooks}/api.js`).generateCheckins($app); } catch (err) { console.log("sate_checkins cron error:", err); }
+});
+
+// ---- live sync + scheduled backup ----
+// Capture every create/update/delete and enqueue it for the remote mirror. Each hook callback runs
+// in its OWN isolated JSVM (it can't see this file's top-level scope), so it must require the module
+// and use injected globals ($app/require) directly — never a helper defined here. onLocalChange
+// filters to the synced set and is a fast no-op unless live sync is on.
+onRecordAfterCreateSuccess((e) => {
+  try { require(`${__hooks}/backup.js`).onLocalChange(e.app, e.record, "upsert"); } catch (_) {}
+  e.next();
+});
+onRecordAfterUpdateSuccess((e) => {
+  try { require(`${__hooks}/backup.js`).onLocalChange(e.app, e.record, "upsert"); } catch (_) {}
+  e.next();
+});
+onRecordAfterDeleteSuccess((e) => {
+  try { require(`${__hooks}/backup.js`).onLocalChange(e.app, e.record, "delete"); } catch (_) {}
+  e.next();
+});
+
+// Live-sync flush: drain the change queue to the remote every minute (no-op unless live sync is on
+// and a destination is configured). A down remote just backlogs the queue until it recovers.
+cronAdd("sate_sync_flush", "* * * * *", () => {
+  try {
+    const BK = require(`${__hooks}/backup.js`);
+    if (!BK.syncLiveEnabled($app)) return;
+    const cfg = BK.backupConfig($app);
+    if (cfg.type) BK.flushQueue($app, cfg);
+  } catch (err) { console.log("sate_sync_flush error:", err); }
+});
+
+// Nightly backups (03:30 UTC): a remote snapshot (if auto-backup is on) and/or a local full-DB zip
+// (if local backups are on). Each is independent and guarded so one being off/failing doesn't stop
+// the other.
+cronAdd("sate_backup", "30 3 * * *", () => {
+  const BK = require(`${__hooks}/backup.js`);
+  try {
+    if (BK.getSetting($app, "backup_auto") === "on") {
+      const cfg = BK.backupConfig($app);
+      if (cfg.type) BK.pushSnapshot($app, cfg, "scheduled");
+    }
+  } catch (err) { console.log("sate_backup remote error:", err); }
+  try {
+    if (BK.getSetting($app, "backup_local_enabled") === "on") BK.localBackupNow($app);
+  } catch (err) { console.log("sate_backup local error:", err); }
+});

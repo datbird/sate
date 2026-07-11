@@ -11,7 +11,7 @@
     <link rel="icon" href="/icons/icon-192.png?v2" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png?v2" />
     <script>try{var t=localStorage.getItem('sate-theme');if(t&&t!=='system')document.documentElement.dataset.theme=t;}catch(e){}</script>
-    <link rel="stylesheet" href="/style.css?v39" />
+    <link rel="stylesheet" href="/style.css?v56" />
   </head>
   <body>
     <header class="topbar">
@@ -21,6 +21,7 @@
       </div>
       <nav class="tabs">
         <button data-view="home" class="active">Home</button>
+        <button data-view="coach">Coach</button>
         <button data-view="history">History</button>
         <button data-view="admin" data-admin-only hidden>Admin</button>
       </nav>
@@ -39,6 +40,7 @@
           </div>
           <button type="button" class="menu-item" id="menuCoach">Nutrition coach</button>
           <button type="button" class="menu-item" id="menuGoals">Goals &amp; tracking</button>
+          <button type="button" class="menu-item" id="menuSwitch" hidden>Switch instance</button>
           <a class="menu-item" href="/cdn-cgi/access/logout">Sign out</a>
         </div>
       </div>
@@ -97,6 +99,25 @@
         <ul class="entries" id="histEntries"></ul>
       </section>
 
+      <!-- COACH VIEW — a persistent, stat-aware chat. Supports photos (menu/plate) for discussion
+           only; nothing here is logged. -->
+      <section id="view-coach" class="view" hidden>
+        <div class="coachtab">
+          <div class="coachlog tablog" id="coachTabLog"></div>
+          <div class="coachcompose">
+            <div class="coachpreview" id="coachPreview" hidden></div>
+            <div class="coachbar">
+              <button class="iconbtn" id="coachAttach" type="button" title="Attach a photo" aria-label="Attach a photo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15V6a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h9"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M4 16l4-4 3 3 4-4 3 3"/></svg>
+              </button>
+              <input id="coachTabInput" placeholder="Ask anything, or attach a photo…" autocomplete="off">
+              <button class="primary small" id="coachTabSend">Send</button>
+            </div>
+          </div>
+        </div>
+        <input id="coachImgInput" type="file" accept="image/*" hidden>
+      </section>
+
       <!-- ADMIN VIEW -->
       <section id="view-admin" class="view" hidden>
         <div class="seg admin-tabs" id="adminTabs">
@@ -122,6 +143,62 @@
           <div class="row end"><button class="primary" id="saveInstance">Save instance settings</button></div>
           <div class="meta" id="instanceMeta"></div>
         </div>
+        <h3 class="section">Database</h3>
+        <p class="hint">The raw PocketBase dashboard — collections, records, logs, backups, and server settings. Full database access; separate superuser login (kept out of this app). Behind Cloudflare Access.</p>
+        <div class="card">
+          <a class="menu-item dblink" href="/_/" target="_blank" rel="noopener">Open PocketBase dashboard ↗</a>
+        </div>
+
+        <h3 class="section">Backup &amp; Sync</h3>
+        <p class="hint">Push point-in-time snapshots of this instance's data to an <b>external</b> PocketBase or Firebase, and restore from one. This is off-box backup, not a live mirror. Credentials are encrypted at rest.</p>
+        <div class="card" id="backupCard">
+          <label class="field">Destination
+            <select id="bkType">
+              <option value="">— none —</option>
+              <option value="pocketbase">External PocketBase</option>
+              <option value="firebase">Firebase (Firestore)</option>
+            </select>
+          </label>
+          <div id="bkPb" hidden>
+            <label class="field">PocketBase URL <input type="text" id="bkPbUrl" placeholder="https://pb.example.com" /></label>
+            <label class="field">Superuser email <input type="email" id="bkPbEmail" autocomplete="off" /></label>
+            <label class="field">Superuser password <input type="password" id="bkPbPass" autocomplete="new-password" placeholder="leave blank to keep" /></label>
+          </div>
+          <div id="bkFb" hidden>
+            <label class="field">Firebase project id <input type="text" id="bkFbProject" /></label>
+            <label class="field">Web API key <input type="password" id="bkFbKey" autocomplete="off" placeholder="leave blank to keep" /></label>
+            <label class="field">Auth email <input type="email" id="bkFbEmail" autocomplete="off" /></label>
+            <label class="field">Auth password <input type="password" id="bkFbPass" autocomplete="new-password" placeholder="leave blank to keep" /></label>
+            <p class="hint">Uses a Firebase Auth user + Firestore. Snapshots write to a <code>sate_snapshots</code> collection; that user's rules must allow it. Each snapshot is capped at 1&nbsp;MB by Firestore.</p>
+          </div>
+          <label class="checkrow"><input type="checkbox" id="bkAuto"> <span>Nightly scheduled backup<small>A full snapshot is pushed once a day (03:30 UTC).</small></span></label>
+          <label class="checkrow"><input type="checkbox" id="bkLive"> <span>Live sync<small>Mirror every change to the destination continuously — the remote stays a near-live replica. Survives outages (changes queue and catch up).</small></span></label>
+          <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:6px">
+            <button class="primary small" id="bkSave">Save</button>
+            <button class="link" id="bkTest">Test connection</button>
+            <button class="link" id="bkNow">Back up now</button>
+            <button class="link" id="bkRefresh">Refresh list</button>
+          </div>
+          <div class="meta" id="bkStatus"></div>
+          <div id="bkList"></div>
+          <div id="bkMirror" hidden style="margin-top:8px">
+            <button class="link danger" id="bkRestoreMirror">Restore from live mirror (latest state)</button>
+          </div>
+        </div>
+
+        <h3 class="section">Local file backups</h3>
+        <p class="hint">Write a full-database <b>.zip</b> to a path inside the container — nightly and/or on demand. Default is <code>/pb/pb_data/backups</code>, which is on your mounted appdata, so the zips appear on the host automatically.</p>
+        <div class="card" id="localBackupCard">
+          <label class="checkrow"><input type="checkbox" id="lbEnabled"> <span>Nightly local backup<small>A full-DB zip is written at 03:30 UTC.</small></span></label>
+          <label class="field">Backup directory (in container) <input type="text" id="lbDir" placeholder="/pb/pb_data/backups" /></label>
+          <label class="field">Keep last N <input type="number" id="lbKeep" min="1" max="365" placeholder="14" /></label>
+          <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:6px">
+            <button class="primary small" id="lbSave">Save</button>
+            <button class="link" id="lbNow">Back up to file now</button>
+          </div>
+          <div class="meta" id="lbStatus"></div>
+          <div id="lbList"></div>
+        </div>
         </div>
 
         <div class="admin-sect" data-group="ai">
@@ -129,8 +206,20 @@
         <p class="hint">Keys are encrypted at rest and shown only by their last 4 characters.</p>
         <div id="providers"></div>
 
-        <h3 class="section">AI Functions — global defaults per task</h3>
-        <p class="hint">These are the instance-wide defaults everyone uses. <b>Image interpretation</b> is the photo→nutrition model; the <b>Normal AI</b> rows cover text, chat, recap, and web lookup. Individual users can override these in <b>Users &amp; Admins</b> below. Model lists load live once a provider key is set. 👁 = supports photos.</p>
+        <h3 class="section">AI Features</h3>
+        <p class="hint">Turn optional AI behaviors on or off for the whole instance.</p>
+        <div class="card" id="aiFeatures">
+          <label class="switch featline"><input type="checkbox" id="feat_second"> <span><b>Second opinion</b> — let users request an alternate model for coach replies &amp; food estimates</span></label>
+          <label class="switch featline"><input type="checkbox" id="feat_checkins"> <span><b>Proactive check-ins</b> — Sate reviews each opted-in user's logs and messages them when it's useful (users still choose in/out &amp; frequency)</span></label>
+          <div class="row end"><button class="primary small" id="saveFeatures">Save features</button></div>
+        </div>
+
+        <h3 class="section">AI Global defaults — the model every task falls back to</h3>
+        <p class="hint">Set once here; every AI function inherits these unless it (or a user) overrides them. <b>Normal</b> covers text, chat, recap, activity, web lookup; <b>Image</b> is the photo→nutrition model (👁 needed). <b>Second opinion</b> is an optional alternate model users can request on demand for coach replies and food estimates.</p>
+        <div id="aiGlobals"></div>
+
+        <h3 class="section">AI Functions — per-task overrides</h3>
+        <p class="hint">Each task is collapsed and set to <b>(global default)</b> by default — expand one only to pin it to a specific model, or to give it its own second-opinion model. Individual users can override these in <b>Users &amp; Admins</b> below. 👁 = supports photos.</p>
         <div id="functions"></div>
 
         <h3 class="section">AI Prompts — customize what each function tells the AI</h3>
@@ -295,6 +384,17 @@
             <button type="button" class="link" id="wgRecompute">Recompute targets</button>
           </div>
         </div>
+        <div class="wgsection" id="checkinSection" hidden>
+          <div class="wglabel">Coach check-ins</div>
+          <label class="checkrow"><input type="checkbox" id="goalCheckin" /> <span>Let Sate check in with me<small>Sate reviews your logs and reaches out with a personal nudge when it's useful.</small></span></label>
+          <label class="healthintlbl" id="checkinFreqRow" hidden>How often, at most?
+            <select id="goalCheckinFreq">
+              <option value="often">A few times a day</option>
+              <option value="daily">Once a day</option>
+              <option value="sparse">Every couple of days</option>
+            </select>
+          </label>
+        </div>
         <div class="row end">
           <button value="cancel" class="link">Cancel</button>
           <button value="save" class="primary">Save</button>
@@ -317,6 +417,10 @@
       <button data-view="home" class="active" aria-label="Home">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>
         <span>Home</span>
+      </button>
+      <button data-view="coach" aria-label="Coach">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-12.3 7.6L3 21l1.9-5.7A8.5 8.5 0 1 1 21 11.5z"/></svg>
+        <span>Coach</span>
       </button>
       <button data-view="history" aria-label="History">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
@@ -369,13 +473,11 @@
       <div id="hrBody"></div>
     </div>
 
-    <!-- NUTRITIONIST COACH SHEET -->
-    <div class="sheet-bg" id="coachBg" hidden></div>
-    <div class="sheet" id="coachSheet" hidden>
-      <div class="grab"></div>
-      <h3>Nutrition coach</h3>
-      <div class="coachlog" id="coachLog"></div>
-      <div class="coachbar"><input id="coachInput" placeholder="Ask about your goals…" autocomplete="off"><button class="primary small" id="coachSend">Send</button></div>
+    <!-- FIRST-RUN ADMIN SETUP (admins, unconfigured instance) -->
+    <div class="onboard" id="adminSetup" hidden>
+      <div class="onboard-card">
+        <div class="onboard-body" id="adminSetupBody"></div>
+      </div>
     </div>
 
     <!-- ONBOARDING WALKTHROUGH (first run) -->
@@ -388,6 +490,6 @@
     <div class="toast" id="toast" hidden></div>
     <script src="/vendor/pocketbase.umd.js?v1"></script>
     <script src="/vendor/html5-qrcode.min.js"></script>
-    <script src="/app.js?v39"></script>
+    <script src="/app.js?v56"></script>
   </body>
 </html>
