@@ -283,9 +283,10 @@ function obNavBar(back, nextLabel, canNext, skip) {
     `<button type="button" class="primary" id="obNext"${canNext === false ? " disabled" : ""}>${nextLabel || "Next"}</button></span></div>`;
 }
 function obGoalRow(g, i) {
-  return `<div class="ob-goalrow"><input type="number" placeholder="target lb" inputmode="decimal" data-gi="${i}" data-gk="target_lb" value="${g.target_lb}">` +
-    `<input type="date" data-gi="${i}" data-gk="target_date" value="${g.target_date}">` +
-    (OB.goals.length > 1 ? `<button type="button" class="link" data-grm="${i}">×</button>` : "") + "</div>";
+  return `<div class="ob-goalrow">` +
+    `<label class="ob-gf"><span>Target weight (lb)</span><input type="number" placeholder="e.g. 185" inputmode="decimal" data-gi="${i}" data-gk="target_lb" value="${g.target_lb}"></label>` +
+    `<label class="ob-gf"><span>📅 By date</span><input type="date" data-gi="${i}" data-gk="target_date" value="${g.target_date}"></label>` +
+    (OB.goals.length > 1 ? `<button type="button" class="link ob-grm" data-grm="${i}">×</button>` : "") + "</div>";
 }
 const OB_STEP = {
   welcome: () => '<div class="ob-hero">👋</div><h2>Welcome to Sate</h2>' +

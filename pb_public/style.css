@@ -396,9 +396,12 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .ob-choice { display: flex; flex-direction: column; gap: 2px; }
 .ob-choice small, .ob-method small { font-weight: 400; color: var(--muted); }
 .ob-choice.on, .ob-method.on { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand) inset; }
-.ob-goalrow { display: flex; gap: 8px; margin-bottom: 8px; }
-.ob-goalrow input { min-width: 0; }
-.ob-goalrow input[type=number] { flex: 1; }
+.ob-goalrow { display: flex; gap: 8px; margin-bottom: 10px; align-items: flex-end; }
+.ob-gf { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); min-width: 0; }
+.ob-gf input { width: 100%; min-width: 0; color: var(--ink); }
+.ob-gf input[type=date] { min-height: 44px; color: var(--ink); }
+.ob-gf input[type=date]::-webkit-datetime-edit { color: var(--muted); }
+.ob-grm { align-self: flex-end; padding-bottom: 10px; }
 .ob-targets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; text-align: center; margin: 8px 0; }
 .ob-targets div { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 4px; }
 .ob-targets b { display: block; font-size: 18px; }
