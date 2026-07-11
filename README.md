@@ -122,35 +122,18 @@ recreate the container with the same `-v` and `APP_ENCRYPTION_KEY` as before.
 
 ## iOS app (optional)
 
-`mobile/` is a [Capacitor](https://capacitorjs.com) shell that runs your Sate instance as a native
-iOS app, so you get a home-screen icon, the camera for barcode scanning, and room for native
-integrations like Apple Health later.
+Sate works great as a home-screen web app (PWA) on iOS. If you want a real native shell — camera for
+barcode scanning, Apple Health import, local notifications — there's a separate
+[Capacitor](https://capacitorjs.com) project that wraps a Sate instance as an iOS app. It's kept in
+its own repo because it's tied to a specific Apple developer account and app identity, which the
+self-hosted server doesn't need:
 
-The shell loads your instance in a webview rather than bundling the SPA. Sate authenticates by
-trusting an email header from your auth proxy and serves its API same-origin — bundling the
-frontend would make every API call cross-origin, which the proxy answers with a login redirect
-instead of data. Pointing the webview at the instance keeps the proxy's normal login flow working
-with no server-side changes.
+> **[github.com/datbird/sate-ios](https://github.com/datbird/sate-ios)** — the native iOS shell.
 
-```sh
-cd mobile
-npm install
-SATE_URL=https://sate.example.com \
-SATE_AUTH_HOSTS=myteam.cloudflareaccess.com \
-  npm run sync                                   # bake in your instance + auth-proxy hosts
-npm run open                                     # opens Xcode
-```
-
-`SATE_URL` is read from the environment and written into the generated
-`ios/App/App/capacitor.config.json`, which is gitignored — your instance URL never lands in the
-repo. Build it in Xcode against your own Apple team and bundle identifier.
-
-**`SATE_AUTH_HOSTS` is required if you use an auth proxy.** Capacitor's webview only navigates
-within `SATE_URL`'s host and hands every other host to the system browser. Your proxy logs you in
-on *its* domain (Cloudflare Access redirects to `<team>.cloudflareaccess.com`), so unless that host
-is listed the login opens in Safari, the session cookie is stored in Safari, and the app itself
-stays logged out. List every host the login flow touches, comma-separated; wildcards work
-(`*.cloudflareaccess.com`).
+The shell is a *generic client*: it asks for your instance address on first launch, stores it, and
+loads it in the webview (the native bridge follows, so plugins keep working). It doesn't bundle the
+SPA — the server serves it same-origin so your auth proxy's login flow works unchanged. Build it in
+Xcode against your own Apple team and bundle identifier.
 
 ## Configuration
 
