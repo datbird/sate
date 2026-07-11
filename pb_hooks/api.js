@@ -9,6 +9,7 @@ const F = require(`${__hooks}/functions.js`);
 const FOODS = require(`${__hooks}/foods.js`);
 const ACTS = require(`${__hooks}/activities.js`);
 const AL = require(`${__hooks}/ailimits.js`);
+const N = require(`${__hooks}/nutrition.js`);
 
 function num(v) {
   const n = Number(v);
@@ -529,6 +530,11 @@ function me(e) {
     body_weight_kg: profile.getFloat("body_weight_kg") || 0,
     body_age: Math.round(profile.getFloat("body_age")) || 0,
     body_sex: profile.getString("body_sex") || "",
+    weight_source: profile.getString("weight_source") || "",
+    height_cm: profile.getFloat("height_cm") || 0,
+    weight_synced_at: profile.getString("weight_synced_at"),
+    activity_level: profile.getString("activity_level") || "",
+    onboarded: profile.getString("onboarded") === "yes",
     today: today,
     totals: sumTotals(dayEntries(app, email, today)),
   });
@@ -1270,6 +1276,279 @@ function healthSync(e) {
   return e.json(200, { added: added, skipped: skipped, synced_at: syncedAt, totals: sumTotals(dayEntries(app, email, todayStr())) });
 }
 
+// ---------------------------------------------------------- weight tracking + goals
+const LB_PER_KG = 2.2046226;
+function kgToLb(kg) { return +(kg * LB_PER_KG).toFixed(1); }
+function lbToKg(lb) { return lb / LB_PER_KG; }
+
+// The newest weight measurement for a user, or null.
+function latestMeasurement(app, email) {
+  try {
+    const r = app.findRecordsByFilter("measurements", "user_email = {:e} && weight_kg > 0", "-measured_at", 1, 0, { e: email });
+    return r && r.length ? r[0] : null;
+  } catch (_) { return null; }
+}
+function currentWeightKg(app, email, profile) {
+  const l = latestMeasurement(app, email);
+  if (l) return l.getFloat("weight_kg");
+  return (profile || ensureProfile(app, email)).getFloat("body_weight_kg") || 0;
+}
+
+function addMeasurement(app, email, data) {
+  const rec = new Record(app.findCollectionByNameOrId("measurements"));
+  rec.set("user_email", email);
+  rec.set("measured_at", data.measured_at ? new Date(data.measured_at).toISOString() : new Date().toISOString());
+  rec.set("weight_kg", num(data.weight_kg));
+  rec.set("height_cm", num(data.height_cm));
+  rec.set("source", data.source || "manual");
+  if (data.ext_id) rec.set("ext_id", String(data.ext_id));
+  app.save(rec);
+  return rec;
+}
+
+// Active weight goals with pace vs the linear start→target path. to_go_lb > 0 = still to lose;
+// pace.behind_lb > 0 = behind the schedule needed to hit the target on time.
+function goalsWithPace(app, email, curKg) {
+  let rows = [];
+  try { rows = app.findRecordsByFilter("weight_goals", "user_email = {:e}", "created", 10, 0, { e: email }); } catch (_) { rows = []; }
+  const today = todayStr();
+  return rows.map((r) => {
+    const targetKg = r.getFloat("target_kg");
+    const startKg = r.getFloat("start_kg") || curKg;
+    const startDate = r.getString("start_date") || today;
+    const targetDate = r.getString("target_date");
+    let pace = null;
+    const t0 = Date.parse(startDate + "T00:00:00Z"), t1 = Date.parse(targetDate + "T00:00:00Z"), tn = Date.parse(today + "T00:00:00Z");
+    if (t1 > t0 && curKg > 0) {
+      const frac = Math.min(1, Math.max(0, (tn - t0) / (t1 - t0)));
+      const expectedKg = startKg + (targetKg - startKg) * frac;
+      // "behind" = on the wrong side of where you should be by now, in the goal's direction.
+      const behindKg = targetKg < startKg ? curKg - expectedKg : expectedKg - curKg;
+      pace = { behind_lb: +(behindKg * LB_PER_KG).toFixed(1), on_track: behindKg <= 0.25 };
+    }
+    return {
+      id: r.id,
+      target_lb: kgToLb(targetKg),
+      target_date: targetDate,
+      start_lb: startKg > 0 ? kgToLb(startKg) : 0,
+      start_date: startDate,
+      to_go_lb: curKg > 0 && targetKg > 0 ? +((curKg - targetKg) * LB_PER_KG).toFixed(1) : 0,
+      pace: pace,
+    };
+  });
+}
+
+// POST /api/sate/weight/log — manual measurement. Body { weight_kg, height_cm?, measured_at? }.
+function weightLog(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const profile = ensureProfile(app, email);
+  const body = e.requestInfo().body || {};
+  const kg = num(body.weight_kg), heightCm = num(body.height_cm);
+  if (!(kg > 0) && !(heightCm > 0)) return e.json(400, { error: "weight_kg or height_cm required" });
+  const rec = addMeasurement(app, email, { weight_kg: kg, height_cm: heightCm, source: "manual", measured_at: body.measured_at });
+  // A manual log is "now" → refresh the current-weight scalars used elsewhere (Keytel HR).
+  if (kg > 0) profile.set("body_weight_kg", kg);
+  if (heightCm > 0) profile.set("height_cm", heightCm);
+  app.save(profile);
+  return e.json(200, { ok: true, id: rec.id });
+}
+
+// POST /api/sate/weight/sync — Apple Health body-mass import (native). Body { weights:[{id,date,kg}] }.
+function weightSync(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const profile = ensureProfile(app, email);
+  const body = e.requestInfo().body || {};
+  const weights = Array.isArray(body.weights) ? body.weights.slice(0, 2000) : [];
+  let added = 0, skipped = 0;
+  for (const w of weights) {
+    const ext = (w && (w.id || w.uuid) || "").toString().trim();
+    const kg = num(w.kg);
+    if (!ext || !(kg > 0)) { skipped++; continue; }
+    try {
+      const existing = app.findFirstRecordByFilter("measurements", "user_email = {:e} && ext_id = {:x}", { e: email, x: ext });
+      if (existing) { skipped++; continue; }
+    } catch (_) { /* not found → import */ }
+    try { addMeasurement(app, email, { weight_kg: kg, source: "health", ext_id: ext, measured_at: w.date }); added++; }
+    catch (_) { skipped++; }
+  }
+  const latest = latestMeasurement(app, email);
+  if (latest) profile.set("body_weight_kg", latest.getFloat("weight_kg"));
+  const syncedAt = new Date().toISOString();
+  profile.set("weight_synced_at", syncedAt);
+  if (profile.getString("weight_source") !== "health") profile.set("weight_source", "health");
+  app.save(profile);
+  return e.json(200, { added: added, skipped: skipped, synced_at: syncedAt });
+}
+
+// GET /api/sate/weight?range=day|week|month|year — series + current + goals-with-pace for the Weight tab.
+function weightGet(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const profile = ensureProfile(app, email);
+  const range = ((e.requestInfo().query || {}).range || "month").toString();
+  const win = periodWindow(range);
+  let rows = [];
+  try {
+    rows = app.findRecordsByFilter("measurements",
+      "user_email = {:e} && weight_kg > 0 && measured_at >= {:s} && measured_at < {:en}",
+      "measured_at", 2000, 0, { e: email, s: win.start, en: win.end });
+  } catch (_) { rows = []; }
+  const series = rows.map((r) => ({ t: r.getString("measured_at"), weight_lb: kgToLb(r.getFloat("weight_kg")) }));
+  const curKg = currentWeightKg(app, email, profile);
+  return e.json(200, {
+    range: range,
+    series: series,
+    current_lb: curKg > 0 ? kgToLb(curKg) : 0,
+    height_cm: profile.getFloat("height_cm") || 0,
+    weight_source: profile.getString("weight_source") || "",
+    goals: goalsWithPace(app, email, curKg),
+  });
+}
+
+function weightGoalsList(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  return e.json(200, { goals: goalsWithPace(app, email, currentWeightKg(app, email)) });
+}
+
+// POST /api/sate/weight/goals — { target_lb, target_date }. Caps at 3 active per user.
+function weightGoalSet(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const body = e.requestInfo().body || {};
+  const targetLb = num(body.target_lb);
+  const targetDate = (body.target_date || "").toString().slice(0, 10);
+  if (!(targetLb > 0)) return e.json(400, { error: "target_lb required" });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return e.json(400, { error: "target_date (YYYY-MM-DD) required" });
+  let count = 0;
+  try { count = app.findRecordsByFilter("weight_goals", "user_email = {:e}", "created", 10, 0, { e: email }).length; } catch (_) {}
+  if (count >= 3) return e.json(400, { error: "You can track up to 3 weight goals — remove one first." });
+  const curKg = currentWeightKg(app, email);
+  const rec = new Record(app.findCollectionByNameOrId("weight_goals"));
+  rec.set("user_email", email);
+  rec.set("target_kg", lbToKg(targetLb));
+  rec.set("target_date", targetDate);
+  rec.set("start_kg", curKg);
+  rec.set("start_date", todayStr());
+  app.save(rec);
+  return e.json(200, { ok: true, id: rec.id });
+}
+
+function weightGoalDelete(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const id = e.request.pathValue("id");
+  let rec;
+  try { rec = app.findRecordById("weight_goals", id); } catch (_) { return e.json(404, { error: "not found" }); }
+  if (rec.getString("user_email") !== email) return e.json(403, { error: "forbidden" });
+  app.delete(rec);
+  return e.json(200, { deleted: id });
+}
+
+// ---------------------------------------------------- nutrition plan + coach
+// Average intake per logged day over the last `days` (food entries only).
+function recentIntake(app, email, days) {
+  const now = new Date();
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  const start = new Date(end); start.setUTCDate(start.getUTCDate() - days);
+  const iso = (d) => d.toISOString().slice(0, 10) + " 00:00:00.000Z";
+  let rows = [];
+  try { rows = rangeEntries(app, email, iso(start), iso(end)); } catch (_) { rows = []; }
+  const byDay = {};
+  for (const r of rows) {
+    if (isActivity(r)) continue;
+    const day = r.getString("logged_at").slice(0, 10);
+    const b = byDay[day] || (byDay[day] = { kcal: 0, protein: 0, carbs: 0, fat: 0 });
+    b.kcal += num(r.getFloat("kcal")); b.protein += num(r.getFloat("protein"));
+    b.carbs += num(r.getFloat("carbs")); b.fat += num(r.getFloat("fat"));
+  }
+  const ds = Object.keys(byDay);
+  if (!ds.length) return { days: 0 };
+  const s = ds.reduce((a, d) => ({ kcal: a.kcal + byDay[d].kcal, protein: a.protein + byDay[d].protein, carbs: a.carbs + byDay[d].carbs, fat: a.fat + byDay[d].fat }), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
+  const n = ds.length;
+  return { days: n, kcal: Math.round(s.kcal / n), protein: Math.round(s.protein / n), carbs: Math.round(s.carbs / n), fat: Math.round(s.fat / n) };
+}
+
+// Assemble the nutrition-engine input from the profile + saved goals, with optional overrides
+// (used by onboarding to preview targets from not-yet-saved stats/goals).
+function buildPlanInput(app, email, profile, ov) {
+  ov = ov || {};
+  let goals = [];
+  try {
+    goals = app.findRecordsByFilter("weight_goals", "user_email = {:e}", "target_date", 5, 0, { e: email })
+      .map((r) => ({ target_kg: r.getFloat("target_kg"), target_date: r.getString("target_date") }));
+  } catch (_) {}
+  if (Array.isArray(ov.goals)) goals = ov.goals;
+  return {
+    curKg: ov.curKg || currentWeightKg(app, email, profile),
+    cm: ov.cm || (profile.getFloat("height_cm") || 0),
+    age: ov.age || (Math.round(profile.getFloat("body_age")) || 0),
+    sex: ov.sex || (profile.getString("body_sex") || ""),
+    activity: ov.activity || (profile.getString("activity_level") || ""),
+    method: ov.method || trackModeOf(profile),
+    goals: goals,
+    today: todayStr(),
+  };
+}
+
+// POST /api/sate/plan/compute — deterministic BMR/TDEE/targets/warnings (optional overrides).
+function planCompute(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const profile = ensureProfile(app, email);
+  const body = e.requestInfo().body || {};
+  const ov = {};
+  if (num(body.weight_lb) > 0) ov.curKg = lbToKg(num(body.weight_lb));
+  if (num(body.height_cm) > 0) ov.cm = num(body.height_cm);
+  if (num(body.age) > 0) ov.age = num(body.age);
+  if (body.sex) ov.sex = String(body.sex);
+  if (body.activity) ov.activity = String(body.activity);
+  if (body.method) ov.method = String(body.method);
+  if (Array.isArray(body.goals)) {
+    ov.goals = body.goals
+      .map((g) => ({ target_kg: lbToKg(num(g.target_lb)), target_date: String(g.target_date || "").slice(0, 10) }))
+      .filter((g) => g.target_kg > 0 && /^\d{4}-\d{2}-\d{2}$/.test(g.target_date));
+  }
+  const plan = N.computePlan(buildPlanInput(app, email, profile, ov));
+  return e.json(200, plan);
+}
+
+// POST /api/sate/nutritionist — AI coach. Body { mode:"plan"|"chat", message? }. Grounded on the
+// deterministic plan so advice matches the app's numbers. Routed through callAI (limits+usage).
+function nutritionist(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const profile = ensureProfile(app, email);
+  const body = e.requestInfo().body || {};
+  const mode = body.mode === "chat" ? "chat" : "plan";
+  const inp = buildPlanInput(app, email, profile, {});
+  const plan = N.computePlan(inp);
+  const context = N.contextText(inp, plan, recentIntake(app, email, 7));
+  const userMsg = mode === "chat"
+    ? (String(body.message || "").trim() || "How am I doing toward my goals?")
+    : "Give me my starting plan: the weekly rate and specific daily calorie + macro targets to reach my goal(s), flag anything unrealistic with a concrete realistic alternative, and 2-3 first steps.";
+  const cfg = resolveFor(app, "nutritionist", email);
+  let reply;
+  try {
+    reply = callAI(app, {
+      provider: cfg.provider, apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, model: cfg.model,
+      system: promptFor(app, "nutritionist"),
+      messages: [{ role: "user", text: "CONTEXT:\n" + context + "\n\n" + userMsg }],
+    });
+  } catch (err) { return e.json(502, { error: String(err.message || err) }); }
+  return e.json(200, { reply: reply, plan: { bmr: plan.bmr, tdee: plan.tdee, targets: plan.targets, warnings: plan.warnings } });
+}
+
 // GET /api/sate/stats?range=day|week|month|year — server-side rollup for the dashboard.
 function statsRange(e) {
   const email = identity(e);
@@ -1466,6 +1745,20 @@ function setGoals(e) {
     const s = String(body.body_sex).toLowerCase();
     profile.set("body_sex", (s === "male" || s === "female") ? s : "");
   }
+  if (body.weight_source !== undefined) {
+    const s = String(body.weight_source);
+    profile.set("weight_source", (s === "health" || s === "manual") ? s : "");
+  }
+  if (body.height_cm !== undefined && body.height_cm !== null && body.height_cm !== "") {
+    profile.set("height_cm", Number(body.height_cm) || 0);
+  }
+  if (body.activity_level !== undefined) {
+    const a = String(body.activity_level);
+    profile.set("activity_level", N.ACTIVITY_MULT[a] ? a : "");
+  }
+  if (body.onboarded !== undefined) {
+    profile.set("onboarded", body.onboarded ? "yes" : "");
+  }
   app.save(profile);
   return e.json(200, {
     goals: goalsOf(profile), track_mode: trackModeOf(profile), net_exercise: netExerciseOf(profile),
@@ -1474,6 +1767,10 @@ function setGoals(e) {
     body_weight_kg: profile.getFloat("body_weight_kg") || 0,
     body_age: Math.round(profile.getFloat("body_age")) || 0,
     body_sex: profile.getString("body_sex") || "",
+    weight_source: profile.getString("weight_source") || "",
+    height_cm: profile.getFloat("height_cm") || 0,
+    activity_level: profile.getString("activity_level") || "",
+    onboarded: profile.getString("onboarded") === "yes",
   });
 }
 
@@ -2060,6 +2357,14 @@ module.exports = {
   logActivity,
   logHeartRate,
   healthSync,
+  weightLog,
+  weightSync,
+  weightGet,
+  weightGoalsList,
+  weightGoalSet,
+  weightGoalDelete,
+  planCompute,
+  nutritionist,
   activitiesSearch,
   statsRange,
   adminGetActivities,

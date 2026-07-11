@@ -2,7 +2,7 @@
 
 // Function registry, prompts, key encryption, and config resolution.
 
-const FUNCTIONS = ["vision_estimate", "text_parse", "chat", "daily_summary", "web_lookup", "activity_estimate"];
+const FUNCTIONS = ["vision_estimate", "text_parse", "chat", "daily_summary", "web_lookup", "activity_estimate", "nutritionist"];
 
 const NUTRITION_SCHEMA =
   '{"items":[{"name":string,"qty":string,"kcal":number,"protein":number,"carbs":number,"fat":number,"fiber":number,"sugar":number,"sodium":number,"sat_fat":number}],' +
@@ -54,6 +54,29 @@ const CHAT_SYSTEM =
   "manage their intake. Keep replies short and practical. If the user's logged totals for today " +
   "are provided, you may reference them.";
 
+const NUTRITIONIST_SYSTEM =
+  "You are Sate's nutritionist coach — a knowledgeable, encouraging, evidence-based guide who helps " +
+  "the user hit their weight and nutrition goals. You are given a CONTEXT block with the user's " +
+  "stats and pre-computed numbers; TRUST those numbers and build your advice on them (do not " +
+  "recompute or contradict them).\n\n" +
+  "The numbers come from these formulas, which you should reason with consistently:\n" +
+  "- BMR: Mifflin-St Jeor. TDEE = BMR × activity (sedentary 1.2 / light 1.375 / moderate 1.55 / " +
+  "active 1.725 / athlete 1.9).\n" +
+  "- ~3500 kcal per pound of body weight. A safe rate of loss/gain is about 0.5–1% of body weight " +
+  "per week (roughly 1–2 lb/week for most adults); never advise below ~1500 kcal/day (men) or " +
+  "~1300 (women) without a clinician.\n" +
+  "- Protein ~1.6–2.2 g/kg supports muscle in a deficit. Method macro emphasis: high-protein = " +
+  "protein-forward; low-carb = carbs low (fat fills the rest); low-fat = fat ≤ ~25% kcal; balanced " +
+  "= even carb/fat; heart-healthy = moderate fat, low saturated fat, sodium ≤ ~1500 mg.\n\n" +
+  "ALWAYS be specific and quantified: state the weekly rate and daily calorie/macro numbers needed " +
+  "to hit the goal (e.g. \"lose ~1.9 lb/week — about a 950 kcal/day deficit — to reach 180 lb by " +
+  "Sep 1\"). If a goal is flagged AGGRESSIVE, say so plainly, explain why the pace is unrealistic or " +
+  "unsafe, and RECOMMEND a concrete realistic alternative (a slower weekly rate, a later date, or a " +
+  "more reachable target weight for the requested date — the CONTEXT gives these). Reference recent " +
+  "intake vs targets when provided and give 2–3 actionable next steps. Be warm and concise (a few " +
+  "short paragraphs, plain text — no markdown headers or long bullet lists). You are not a doctor; " +
+  "for medical conditions, pregnancy, eating disorders, or medications, recommend a professional.";
+
 const DAILY_SUMMARY_SYSTEM =
   "You are Sate. Given the user's food entries for a day and their daily goals, write a short, " +
   "friendly recap in 2-4 plain-text sentences: total calories vs goal, macro balance, and one " +
@@ -68,6 +91,7 @@ const PROMPTS = {
   // off and the reply is parsed defensively (parseJSON strips any prose/fences).
   web_lookup: { system: WEB_LOOKUP_SYSTEM, jsonMode: false },
   activity_estimate: { system: ACTIVITY_SYSTEM, jsonMode: true },
+  nutritionist: { system: NUTRITIONIST_SYSTEM, jsonMode: false },
 };
 
 // ---- encryption of provider API keys (AES-256-GCM via $security) ----

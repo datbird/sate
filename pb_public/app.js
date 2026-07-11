@@ -127,6 +127,13 @@ const SPARK = '<svg class="iico" viewBox="0 0 24 24" fill="none" stroke="current
 const HEART = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-7.5-4.9-10-9.3C.6 8.9 1.7 5.5 4.8 4.8 7 4.3 8.9 5.6 12 8.5c3.1-2.9 5-4.2 7.2-3.7 3.1.7 4.2 4.1 2.8 6.9C19.5 16.1 12 21 12 21z"/></svg>';
 
 async function renderHome() {
+  // The Weight tab is its own data source (measurements + goals), not the day stats/feed.
+  const charts = $("#charts");
+  if (HOME.scope === "weight") {
+    if (charts) charts.style.visibility = "hidden";
+    return renderWeight();
+  }
+  if (charts) charts.style.visibility = "";
   let stats = null, feed = null;
   try {
     [stats, feed] = await Promise.all([
@@ -136,6 +143,272 @@ async function renderHome() {
   } catch (e) { toast(e.message); return; }
   renderStats(stats);
   renderFeed(feed.entries || []);
+}
+
+// ------------------------------------------------------------------ weight tab
+async function renderWeight() {
+  const statbody = $("#statbody"), feed = $("#feed");
+  let d;
+  try { d = await api("/weight?range=" + HOME.range); } catch (e) { statbody.innerHTML = `<div class="subline">${escapeHtml(e.message)}</div>`; return; }
+  $("#feedlbl").textContent = "Weight history";
+  const cur = d.current_lb || 0;
+  const pts = (d.series || []).map((s) => s.weight_lb);
+  const goal0 = (d.goals || [])[0];
+  const chart = pts.length > 1
+    ? lineChart(pts, goal0 ? goal0.target_lb : 0, RC.nutrition)
+    : '<div class="subline">Log a few weigh-ins to see your trend.</div>';
+  const goalsHtml = (d.goals || []).map((g) => {
+    const verb = g.to_go_lb >= 0 ? "to lose" : "to gain";
+    const pace = g.pace ? (g.pace.on_track ? '<span class="ontrack">on track</span>' : `<span class="behind">${Math.abs(g.pace.behind_lb)} lb behind</span>`) : "";
+    return `<div class="wgoal"><b>${g.target_lb} lb</b> by ${g.target_date} · ${Math.abs(g.to_go_lb)} lb ${verb} ${pace}</div>`;
+  }).join("") || '<div class="subline">No weight goal yet — set one in Goals &amp; tracking.</div>';
+  const srcPrompt = (!d.weight_source && isNativeApp())
+    ? '<div class="wsrc">Manage weight from <button class="link" id="wsrcHealth">Apple Health</button> or <button class="link" id="wsrcManual">enter it manually</button>?</div>'
+    : "";
+  statbody.innerHTML =
+    `<div class="wcur">${cur ? cur + ' <span class="wunit">lb</span>' : "No weight logged yet"}</div>` +
+    chart +
+    `<div class="wgoals">${goalsHtml}</div>` +
+    srcPrompt +
+    '<div class="wlog"><input type="number" id="wIn" placeholder="Log weight (lb)" inputmode="decimal" step="0.1"><button class="primary small" id="wLogBtn">Log</button></div>' +
+    '<button class="link coachlink" id="coachOpen">💬 Ask your nutrition coach</button>';
+  $("#wLogBtn").addEventListener("click", logWeightManual);
+  $("#wIn").addEventListener("keydown", (e) => { if (e.key === "Enter") logWeightManual(); });
+  const h = $("#wsrcHealth"); if (h) h.addEventListener("click", () => setWeightSource("health"));
+  const m = $("#wsrcManual"); if (m) m.addEventListener("click", () => setWeightSource("manual"));
+  $("#coachOpen").addEventListener("click", openCoach);
+  feed.innerHTML = (d.series || []).slice().reverse().slice(0, 40).map((s) => {
+    const dt = new Date(s.t).toLocaleDateString([], { month: "short", day: "numeric" });
+    return `<li class="entry"><div class="body"><b>${s.weight_lb} lb</b> <span class="s">${dt}</span></div></li>`;
+  }).join("");
+}
+
+async function logWeightManual() {
+  const v = +$("#wIn").value;
+  if (!(v > 0)) { toast("Enter a weight"); return; }
+  try {
+    await api("/weight/log", { method: "POST", body: JSON.stringify({ weight_kg: v / 2.2046226 }) });
+    ME.body_weight_kg = v / 2.2046226;
+    toast("Weight logged");
+    renderWeight();
+  } catch (e) { toast(e.message); }
+}
+
+async function setWeightSource(src) {
+  try { const r = await api("/goals", { method: "PATCH", body: JSON.stringify({ weight_source: src }) }); ME.weight_source = r.weight_source; } catch (_) {}
+  if (src === "health" && isNativeApp()) await weightSyncNow(false);
+  renderWeight();
+}
+
+// Apple Health body-mass import (native). Throttled to ≤ every 6h on launch.
+async function weightSyncNow(silent) {
+  const HK = healthPlugin();
+  if (!HK) { if (!silent) toast("Apple Health needs the Sate app"); return; }
+  try {
+    await HK.requestAuthorization();
+    const r = await HK.queryWeights({ months: 12 });
+    const res = await api("/weight/sync", { method: "POST", body: JSON.stringify({ weights: (r && r.samples) || [] }) });
+    ME.weight_synced_at = res.synced_at; ME.weight_source = "health";
+    if (!silent) toast(res.added ? ("Imported " + res.added + " weigh-in" + (res.added === 1 ? "" : "s")) : "Weight up to date");
+    if (HOME.scope === "weight" && $("#view-home") && !$("#view-home").hidden) renderWeight();
+  } catch (e) { if (!silent) toast((e && e.message) || "Weight sync failed"); }
+}
+function weightSyncDue() {
+  if (!ME || ME.weight_source !== "health") return false;
+  const last = ME.weight_synced_at ? Date.parse(ME.weight_synced_at) : 0;
+  if (!last) return true;
+  return Date.now() - last >= 6 * 3600 * 1000;
+}
+
+// ---------------------------------------------------------- nutrition coach chat
+function openCoach() {
+  const bg = $("#coachBg"), sheet = $("#coachSheet"), log = $("#coachLog");
+  bg.hidden = false; sheet.hidden = false; bg.onclick = closeCoach;
+  if (!log.dataset.init) {
+    log.dataset.init = "1";
+    coachAppend("coach", "Hi! I'm your nutrition coach. Ask me anything about reaching your goals, or generate your plan.");
+    const q = document.createElement("button");
+    q.className = "link coachplan"; q.textContent = "📋 Generate my plan";
+    q.onclick = () => coachSend("__plan__");
+    log.appendChild(q);
+  }
+  $("#coachSend").onclick = () => coachSend();
+  $("#coachInput").onkeydown = (e) => { if (e.key === "Enter") coachSend(); };
+  setTimeout(() => $("#coachInput").focus(), 60);
+}
+function closeCoach() { $("#coachBg").hidden = true; $("#coachSheet").hidden = true; }
+function coachAppend(who, text) {
+  const el = document.createElement("div");
+  el.className = "cmsg " + who; el.textContent = text;
+  const log = $("#coachLog"); log.appendChild(el); log.scrollTop = log.scrollHeight;
+  return el;
+}
+async function coachSend(preset) {
+  const inp = $("#coachInput");
+  const isPlan = preset === "__plan__";
+  const msg = isPlan ? "" : (typeof preset === "string" ? preset : inp.value || "").trim();
+  if (!isPlan && !msg) return;
+  if (!isPlan) coachAppend("me", msg);
+  inp.value = "";
+  const thinking = coachAppend("coach", "…");
+  try {
+    const r = await api("/nutritionist", { method: "POST", body: JSON.stringify(isPlan ? { mode: "plan" } : { mode: "chat", message: msg }) });
+    thinking.textContent = r.reply || "(no reply)";
+  } catch (e) { thinking.textContent = (e && e.message) || "Coach unavailable"; }
+  $("#coachLog").scrollTop = $("#coachLog").scrollHeight;
+}
+
+// ------------------------------------------------------------- onboarding wizard
+let OB = null;
+const OB_ACT = [["sedentary", "Sedentary"], ["light", "Light (1-3 d/wk)"], ["moderate", "Moderate (3-5 d/wk)"], ["active", "Active (6-7 d/wk)"], ["athlete", "Athlete"]];
+const OB_METHODS = [["calories", "Calories (simple)"], ["carb", "Carb-focused (low-carb/keto)"], ["protein", "High-protein"], ["fat", "Low-fat"], ["balanced", "Balanced macros"], ["heart", "Heart-healthy"]];
+
+function maybeOnboard() {
+  if (!ME || ME.onboarded || OB) return;
+  OB = {
+    i: 0, weight_lb: "", height_ft: "", height_in: "", age: ME.body_age || "", sex: ME.body_sex || "male",
+    activity: ME.activity_level || "moderate", source: isNativeApp() ? "" : "manual",
+    goals: [{ target_lb: "", target_date: "" }], method: ME.track_mode || "calories",
+    targets: null, bmr: 0, tdee: 0, warnings: [],
+  };
+  OB.steps = ["welcome", "stats", isNativeApp() ? "source" : null, "goals", "method", "review", "plan"].filter(Boolean);
+  $("#onboard").hidden = false;
+  obRender();
+}
+function obClose() { $("#onboard").hidden = true; OB = null; }
+function obNavBar(back, nextLabel, canNext, skip) {
+  return '<div class="ob-nav">' +
+    (back ? '<button type="button" class="link" id="obBack">Back</button>' : "<span></span>") +
+    '<span class="ob-navr">' + (skip ? '<button type="button" class="link" id="obSkip">Skip</button>' : "") +
+    `<button type="button" class="primary" id="obNext"${canNext === false ? " disabled" : ""}>${nextLabel || "Next"}</button></span></div>`;
+}
+function obGoalRow(g, i) {
+  return `<div class="ob-goalrow"><input type="number" placeholder="target lb" inputmode="decimal" data-gi="${i}" data-gk="target_lb" value="${g.target_lb}">` +
+    `<input type="date" data-gi="${i}" data-gk="target_date" value="${g.target_date}">` +
+    (OB.goals.length > 1 ? `<button type="button" class="link" data-grm="${i}">×</button>` : "") + "</div>";
+}
+const OB_STEP = {
+  welcome: () => '<div class="ob-hero">👋</div><h2>Welcome to Sate</h2>' +
+    '<p class="ob-sub">Let\'s get your stats and goals set up, then build a plan to reach them. Takes a minute.</p>' +
+    '<div class="ob-nav"><button type="button" class="link" id="obDismiss">Skip setup</button><button type="button" class="primary" id="obNext">Get started</button></div>',
+  stats: () => '<h2>About you</h2><p class="ob-sub">Used to calculate your calorie needs.</p>' +
+    '<div class="ob-grid">' +
+    `<label>Weight (lb)<input type="number" id="obW" inputmode="decimal" value="${OB.weight_lb}"></label>` +
+    `<label>Height<div class="ob-ht"><input type="number" id="obHf" placeholder="ft" value="${OB.height_ft}"><input type="number" id="obHi" placeholder="in" value="${OB.height_in}"></div></label>` +
+    `<label>Age<input type="number" id="obA" value="${OB.age}"></label>` +
+    `<label>Sex<select id="obS"><option value="male"${OB.sex === "male" ? " selected" : ""}>Male</option><option value="female"${OB.sex === "female" ? " selected" : ""}>Female</option></select></label>` +
+    "</div>" +
+    `<label class="ob-full">Activity level<select id="obAct">${OB_ACT.map(([v, l]) => `<option value="${v}"${OB.activity === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>` +
+    obNavBar(true, "Next"),
+  source: () => '<h2>Weight tracking</h2><p class="ob-sub">How do you want to manage your weight history?</p>' +
+    '<div class="ob-choices">' +
+    `<button type="button" class="ob-choice${OB.source === "health" ? " on" : ""}" data-src="health">🍎 Apple Health<small>Import automatically</small></button>` +
+    `<button type="button" class="ob-choice${OB.source === "manual" ? " on" : ""}" data-src="manual">✏️ Manually<small>Enter it yourself</small></button>` +
+    "</div>" + obNavBar(true, "Next", !!OB.source),
+  goals: () => '<h2>Your goal</h2><p class="ob-sub">Set up to 3 weight goals — or skip to just track.</p>' +
+    `<div id="obGoals">${OB.goals.map((g, i) => obGoalRow(g, i)).join("")}</div>` +
+    (OB.goals.length < 3 ? '<button type="button" class="link" id="obAddGoal">+ Add another goal</button>' : "") +
+    obNavBar(true, "Next", true, true),
+  method: () => '<h2>Tracking method</h2><p class="ob-sub">How do you want to hit your goal?</p>' +
+    `<div class="ob-methods">${OB_METHODS.map(([v, l]) => `<button type="button" class="ob-method${OB.method === v ? " on" : ""}" data-m="${v}">${l}</button>`).join("")}</div>` +
+    obNavBar(true, "Calculate my plan"),
+  review: () => '<h2>Your targets</h2>' +
+    (OB.targets ? '<div class="ob-targets">' +
+      `<div><b>${OB.targets.kcal}</b><span>kcal/day</span></div><div><b>${OB.targets.protein}g</b><span>protein</span></div>` +
+      `<div><b>${OB.targets.carbs}g</b><span>carbs</span></div><div><b>${OB.targets.fat}g</b><span>fat</span></div></div>` +
+      `<p class="ob-sub">BMR ${OB.bmr} · maintenance ${OB.tdee} kcal/day.</p>` : '<p class="ob-sub">Calculating…</p>') +
+    (OB.warnings.length ? `<div class="ob-warn">⚠ ${OB.warnings.map(escapeHtml).join("<br>")}</div>` : "") +
+    obNavBar(true, "See my plan"),
+  plan: () => '<h2>Your plan</h2><div class="ob-plan" id="obPlan">Generating your plan…</div>' +
+    '<div class="ob-nav"><button type="button" class="link" id="obBack">Back</button><button type="button" class="primary" id="obNext">Finish</button></div>',
+};
+function obRender() {
+  $("#onboardBody").innerHTML = OB_STEP[OB.steps[OB.i]]();
+  obWire(OB.steps[OB.i]);
+}
+function obCaptureStats() {
+  if ($("#obW")) OB.weight_lb = $("#obW").value;
+  if ($("#obHf")) OB.height_ft = $("#obHf").value;
+  if ($("#obHi")) OB.height_in = $("#obHi").value;
+  if ($("#obA")) OB.age = $("#obA").value;
+  if ($("#obS")) OB.sex = $("#obS").value;
+  if ($("#obAct")) OB.activity = $("#obAct").value;
+}
+function obCaptureGoals() { $$("#obGoals [data-gk]").forEach((el) => { const i = +el.dataset.gi; if (OB.goals[i]) OB.goals[i][el.dataset.gk] = el.value; }); }
+function obHeightCm() { return Math.round((+OB.height_ft * 12 + (+OB.height_in || 0)) * 2.54); }
+function obGo() { OB.i = Math.min(OB.steps.length - 1, OB.i + 1); obRender(); }
+function obWire(s) {
+  const back = $("#obBack"); if (back) back.onclick = () => { OB.i = Math.max(0, OB.i - 1); obRender(); };
+  const next = $("#obNext"); if (next) next.onclick = () => obNext(s);
+  const skip = $("#obSkip"); if (skip) skip.onclick = () => { OB.goals = []; obGo(); };
+  const dis = $("#obDismiss"); if (dis) dis.onclick = obDismiss;
+  if (s === "source") $$(".ob-choice").forEach((b) => (b.onclick = () => { OB.source = b.dataset.src; obRender(); }));
+  if (s === "method") $$(".ob-method").forEach((b) => (b.onclick = () => { OB.method = b.dataset.m; obRender(); }));
+  if (s === "goals") {
+    const add = $("#obAddGoal"); if (add) add.onclick = () => { obCaptureGoals(); OB.goals.push({ target_lb: "", target_date: "" }); obRender(); };
+    $$("#obGoals [data-gk]").forEach((el) => (el.onchange = () => { const i = +el.dataset.gi; if (OB.goals[i]) OB.goals[i][el.dataset.gk] = el.value; }));
+    $$("#obGoals [data-grm]").forEach((el) => (el.onclick = () => { obCaptureGoals(); OB.goals.splice(+el.dataset.grm, 1); obRender(); }));
+  }
+  if (s === "plan") obPlan();
+}
+async function obNext(s) {
+  if (s === "stats") { obCaptureStats(); return obGo(); }
+  if (s === "goals") { obCaptureGoals(); return obGo(); }
+  if (s === "method") return obComputeThenReview();
+  if (s === "review") return obSaveThenPlan();
+  if (s === "plan") return obFinish();
+  obGo();
+}
+async function obCompute() {
+  const goals = OB.goals.filter((g) => +g.target_lb > 0 && g.target_date).map((g) => ({ target_lb: +g.target_lb, target_date: g.target_date }));
+  const r = await api("/plan/compute", { method: "POST", body: JSON.stringify({
+    weight_lb: +OB.weight_lb, height_cm: obHeightCm(), age: +OB.age, sex: OB.sex, activity: OB.activity, method: OB.method, goals: goals,
+  }) });
+  OB.targets = r.targets; OB.bmr = r.bmr; OB.tdee = r.tdee; OB.warnings = r.warnings || [];
+}
+async function obComputeThenReview() {
+  const n = $("#obNext"); if (n) { n.disabled = true; n.textContent = "Calculating…"; }
+  try { await obCompute(); } catch (e) { toast(e.message); if (n) { n.disabled = false; n.textContent = "Calculate my plan"; } return; }
+  obGo();
+}
+async function obSaveAll() {
+  const cm = obHeightCm();
+  const payload = {
+    body_age: +OB.age || 0, body_sex: OB.sex, height_cm: cm, activity_level: OB.activity,
+    track_mode: OB.method, weight_source: OB.source || "manual", onboarded: true,
+  };
+  if (OB.targets) {
+    payload.goal_kcal = OB.targets.kcal; payload.goal_protein = OB.targets.protein;
+    payload.goal_carbs = OB.targets.carbs; payload.goal_fat = OB.targets.fat; payload.goal_sodium = OB.targets.sodium;
+  }
+  await api("/goals", { method: "PATCH", body: JSON.stringify(payload) });
+  if (+OB.weight_lb > 0) await api("/weight/log", { method: "POST", body: JSON.stringify({ weight_kg: +OB.weight_lb / 2.2046226, height_cm: cm }) });
+  for (const g of OB.goals) {
+    if (+g.target_lb > 0 && g.target_date) { try { await api("/weight/goals", { method: "POST", body: JSON.stringify({ target_lb: +g.target_lb, target_date: g.target_date }) }); } catch (_) {} }
+  }
+  try { ME = await api("/me"); } catch (_) {}
+  if (OB.source === "health" && isNativeApp()) { try { await weightSyncNow(true); } catch (_) {} }
+}
+async function obSaveThenPlan() {
+  const n = $("#obNext"); if (n) { n.disabled = true; n.textContent = "Saving…"; }
+  try { await obSaveAll(); } catch (e) { toast(e.message); if (n) { n.disabled = false; n.textContent = "See my plan"; } return; }
+  obGo();
+}
+async function obPlan() {
+  if (OB._planned) return;
+  OB._planned = true;
+  try { const r = await api("/nutritionist", { method: "POST", body: JSON.stringify({ mode: "plan" }) }); $("#obPlan").textContent = r.reply || "(no plan)"; }
+  catch (e) { $("#obPlan").textContent = (e && e.message) || "Couldn't generate a plan right now."; }
+}
+async function obDismiss() {
+  try { await api("/goals", { method: "PATCH", body: JSON.stringify({ onboarded: true }) }); ME.onboarded = true; } catch (_) {}
+  obClose();
+}
+function obFinish() {
+  obClose();
+  if (ME && ME.app_name) $("#brandName").textContent = ME.app_name;
+  if (ME && ME.isAdmin) $$("[data-admin-only]").forEach((el) => (el.hidden = false));
+  showView("home");
 }
 
 // Explicit refresh (pull-to-refresh on Home). Unlike the launch auto-sync this ignores the
@@ -540,11 +813,50 @@ function openGoals() {
     hrRow.hidden = !isNativeApp();
     if (isNativeApp()) $("#hrMethod").value = ME.hr_estimate_method === "ai" ? "ai" : "formula";
   }
+  const act = $("#goalActivity");
+  if (act) {
+    act.innerHTML = '<option value="">— set —</option>' + OB_ACT.map(([v, l]) => `<option value="${v}"${ME.activity_level === v ? " selected" : ""}>${l}</option>`).join("");
+  }
+  loadGoalWeightGoals();
   goalModeHint();
   goalsDialog.showModal();
 }
+
+// The weight-goals editor inside the Goals dialog (up to 3), backed by /weight/goals.
+async function loadGoalWeightGoals() {
+  const wrap = $("#goalWeightGoals"); if (!wrap) return;
+  let goals = [];
+  try { goals = (await api("/weight/goals")).goals || []; } catch (_) {}
+  wrap.innerHTML = goals.map((g) =>
+    `<div class="wgrow"><span>${g.target_lb} lb by ${g.target_date}</span><button type="button" class="link danger" data-del="${g.id}">remove</button></div>`
+  ).join("") || '<div class="dim" style="font-size:12px">No weight goals yet.</div>';
+  wrap.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
+    try { await api("/weight/goals/" + b.dataset.del, { method: "DELETE" }); loadGoalWeightGoals(); } catch (e) { toast(e.message); }
+  }));
+  const add = $("#wgAdd"); if (add) add.onclick = addWeightGoalPrompt;
+  const rc = $("#wgRecompute"); if (rc) rc.onclick = recomputeTargets;
+}
+async function addWeightGoalPrompt() {
+  const lb = parseFloat(prompt("Target weight (lb)?", "") || "");
+  if (!(lb > 0)) return;
+  const date = (prompt("Target date (YYYY-MM-DD)?", todayISO()) || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast("Enter a date as YYYY-MM-DD"); return; }
+  try { await api("/weight/goals", { method: "POST", body: JSON.stringify({ target_lb: lb, target_date: date }) }); loadGoalWeightGoals(); }
+  catch (e) { toast(e.message); }
+}
+// Recompute calorie/macro targets from saved stats + goals and fill the goal fields.
+async function recomputeTargets() {
+  const act = $("#goalActivity");
+  try {
+    const r = await api("/plan/compute", { method: "POST", body: JSON.stringify({ method: $("#goalMode").value, activity: act ? act.value : undefined }) });
+    const t = r.targets, f = $("#goalsForm");
+    f.goal_kcal.value = t.kcal; f.goal_protein.value = t.protein; f.goal_carbs.value = t.carbs; f.goal_fat.value = t.fat; f.goal_sodium.value = t.sodium;
+    toast(r.warnings && r.warnings.length ? r.warnings[0] : "Targets recomputed — Save to keep them");
+  } catch (e) { toast(e.message); }
+}
 $("#goalsBtn").addEventListener("click", openGoals);
 $("#menuGoals").addEventListener("click", () => { $("#userMenu").hidden = true; openGoals(); });
+$("#menuCoach").addEventListener("click", () => { $("#userMenu").hidden = true; openCoach(); });
 $("#goalMode").addEventListener("change", goalModeHint);
 $("#goalsForm").addEventListener("submit", async (e) => {
   if (e.submitter && e.submitter.value === "cancel") return;
@@ -556,11 +868,13 @@ $("#goalsForm").addEventListener("submit", async (e) => {
     goal_carbs: f.goal_carbs.value, goal_fat: f.goal_fat.value, goal_sodium: f.goal_sodium.value,
   };
   if (isNativeApp() && $("#hrMethod")) payload.hr_estimate_method = $("#hrMethod").value;
+  if ($("#goalActivity") && $("#goalActivity").value) payload.activity_level = $("#goalActivity").value;
   const r = await api("/goals", { method: "PATCH", body: JSON.stringify(payload) });
   ME.goals = r.goals;
   if (r.track_mode) ME.track_mode = r.track_mode;
   if (typeof r.net_exercise === "boolean") ME.net_exercise = r.net_exercise;
   if (r.hr_estimate_method) ME.hr_estimate_method = r.hr_estimate_method;
+  if (r.activity_level !== undefined) ME.activity_level = r.activity_level;
   renderHome();
   toast("Goals saved");
 });
@@ -1186,6 +1500,7 @@ const FN_LABELS = {
   chat: "Normal AI — chat / coaching",
   daily_summary: "Normal AI — daily recap",
   web_lookup: "Normal AI — web-search lookup",
+  nutritionist: "Normal AI — nutrition coach",
 };
 
 function renderFunctions(functions, providers) {
@@ -1654,6 +1969,8 @@ async function start() {
   // Native + connected + past the user's chosen interval → quietly pull new workouts.
   // Throttled at launch only; nothing syncs in the background.
   if (isNativeApp() && healthSyncDue()) healthSyncNow(true);
+  if (isNativeApp() && weightSyncDue()) weightSyncNow(true);
+  maybeOnboard();
 }
 
 async function boot() {
@@ -1713,8 +2030,11 @@ async function boot() {
     const home = document.getElementById("view-home");
     if (!home || home.hidden) return true;
     if (document.querySelector("dialog[open]")) return true;               // goals dialog
-    const add = document.getElementById("addSheet"), edit = document.getElementById("editSheet"), hr = document.getElementById("hrSheet");
-    if ((add && !add.hidden) || (edit && !edit.hidden) || (hr && !hr.hidden)) return true;  // compose / edit / HR sheets
+    for (const id of ["addSheet", "editSheet", "hrSheet", "coachSheet", "onboard"]) {
+      const el = document.getElementById(id);
+      if (el && !el.hidden) return true;   // a sheet/overlay is open
+    }
+    if (HOME.scope === "weight") return true; // weight tab isn't day-refreshable
     return false;
   }
   // Pull the whole page (main) down by `d`; the spinner rides just above the content, tucked

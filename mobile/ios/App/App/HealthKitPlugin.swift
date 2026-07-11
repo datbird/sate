@@ -18,6 +18,7 @@ public class HealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "queryWorkouts", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "queryHeartRate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "queryBodyStats", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "queryWeights", returnType: CAPPluginReturnPromise),
     ]
 
     private let store = HKHealthStore()
@@ -161,6 +162,44 @@ public class HealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
                 result["weight_kg"] = s.quantity.doubleValue(for: .gramUnit(with: .kilo))
             }
             call.resolve(result)
+        }
+        store.execute(query)
+    }
+
+    // Body-mass (weight) samples over the last `months` (default 12), ascending, downsampled to
+    // ≤ ~400 points. `id` is the sample UUID so a re-sync dedupes. kg via the kilogram unit.
+    @objc func queryWeights(_ call: CAPPluginCall) {
+        guard HKHealthStore.isHealthDataAvailable(),
+              let massType = HKObjectType.quantityType(forIdentifier: .bodyMass) else {
+            call.resolve(["samples": []])
+            return
+        }
+        let months = call.getInt("months") ?? 12
+        let start = Calendar.current.date(byAdding: .month, value: -max(1, months), to: Date()) ?? Date()
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: Date(), options: .strictStartDate)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+        let query = HKSampleQuery(sampleType: massType, predicate: predicate,
+                                  limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, samples, error in
+            if let error = error {
+                call.reject("Weight query failed: \(error.localizedDescription)")
+                return
+            }
+            let iso = ISO8601DateFormatter()
+            let all = (samples as? [HKQuantitySample]) ?? []
+            let stride = max(1, all.count / 400)
+            var out: [[String: Any]] = []
+            var i = 0
+            while i < all.count {
+                let s = all[i]
+                out.append([
+                    "id": s.uuid.uuidString,
+                    "date": iso.string(from: s.startDate),
+                    "kg": s.quantity.doubleValue(for: .gramUnit(with: .kilo)),
+                ])
+                i += stride
+            }
+            call.resolve(["samples": out])
         }
         store.execute(query)
     }

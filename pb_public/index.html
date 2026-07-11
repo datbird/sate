@@ -11,7 +11,7 @@
     <link rel="icon" href="/icons/icon-192.png?v2" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png?v2" />
     <script>try{var t=localStorage.getItem('sate-theme');if(t&&t!=='system')document.documentElement.dataset.theme=t;}catch(e){}</script>
-    <link rel="stylesheet" href="/style.css?v32" />
+    <link rel="stylesheet" href="/style.css?v33" />
   </head>
   <body>
     <header class="topbar">
@@ -37,6 +37,7 @@
             <button data-theme-choice="light">Light</button>
             <button data-theme-choice="dark">Dark</button>
           </div>
+          <button type="button" class="menu-item" id="menuCoach">Nutrition coach</button>
           <button type="button" class="menu-item" id="menuGoals">Goals &amp; tracking</button>
           <a class="menu-item" href="/cdn-cgi/access/logout">Sign out</a>
         </div>
@@ -51,6 +52,7 @@
           <button class="on" data-scope="both">Both</button>
           <button data-scope="nutrition">Nutrition</button>
           <button data-scope="activity">Activity</button>
+          <button data-scope="weight">Weight</button>
         </div>
 
         <!-- stats -->
@@ -274,6 +276,17 @@
             </select>
           </label>
         </div>
+        <div class="wgsection">
+          <div class="wglabel">Weight &amp; goals</div>
+          <label class="healthintlbl">Activity level
+            <select id="goalActivity"></select>
+          </label>
+          <div id="goalWeightGoals"></div>
+          <div class="row" style="gap:10px;margin-top:6px">
+            <button type="button" class="link" id="wgAdd">+ Add weight goal</button>
+            <button type="button" class="link" id="wgRecompute">Recompute targets</button>
+          </div>
+        </div>
         <div class="row end">
           <button value="cancel" class="link">Cancel</button>
           <button value="save" class="primary">Save</button>
@@ -348,9 +361,25 @@
       <div id="hrBody"></div>
     </div>
 
+    <!-- NUTRITIONIST COACH SHEET -->
+    <div class="sheet-bg" id="coachBg" hidden></div>
+    <div class="sheet" id="coachSheet" hidden>
+      <div class="grab"></div>
+      <h3>Nutrition coach</h3>
+      <div class="coachlog" id="coachLog"></div>
+      <div class="coachbar"><input id="coachInput" placeholder="Ask about your goals…" autocomplete="off"><button class="primary small" id="coachSend">Send</button></div>
+    </div>
+
+    <!-- ONBOARDING WALKTHROUGH (first run) -->
+    <div class="onboard" id="onboard" hidden>
+      <div class="onboard-card">
+        <div class="onboard-body" id="onboardBody"></div>
+      </div>
+    </div>
+
     <div class="toast" id="toast" hidden></div>
     <script src="/vendor/pocketbase.umd.js?v1"></script>
     <script src="/vendor/html5-qrcode.min.js"></script>
-    <script src="/app.js?v32"></script>
+    <script src="/app.js?v33"></script>
   </body>
 </html>
