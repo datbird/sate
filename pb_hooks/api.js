@@ -2138,6 +2138,67 @@ function adminGetFoods(e) {
   return e.json(200, { foods: recs.map(foodJSON), shown: recs.length, total: total });
 }
 
+// Admin: estimate nutrition to prefill the food editor WITHOUT logging. method photo|web|text.
+function adminFoodEstimate(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app, email = identity(e);
+  const b = e.requestInfo().body || {};
+  const method = String(b.method || "text");
+  let r, name;
+  try {
+    if (method === "photo") {
+      let data = String(b.image || ""), mimeType = "image/jpeg";
+      const m = data.match(/^data:([^;]+);base64,(.*)$/); if (m) { mimeType = m[1]; data = m[2]; }
+      if (!data) return e.json(400, { error: "image required" });
+      r = estimate(app, "vision_estimate", "Identify this single food or packaged product and estimate its nutrition per typical serving.", { mimeType: mimeType, data: data }, email);
+      name = ((r.parsed.items || [])[0] || {}).name || "Food from photo";
+    } else {
+      const text = String(b.text || "").trim();
+      if (!text) return e.json(400, { error: "name required" });
+      r = (method === "web") ? webEstimate(app, text, email) : estimate(app, "text_parse", text, null, email);
+      name = text;
+    }
+  } catch (err) { return e.json(502, { error: String(err.message || err) }); }
+  const t = (r.parsed && r.parsed.total) || {};
+  const first = ((r.parsed && r.parsed.items) || [])[0] || {};
+  return e.json(200, { food: {
+    name: name, serving_desc: first.qty || "1 serving",
+    kcal: Math.round(t.kcal || 0), protein: Math.round(t.protein || 0),
+    carbs: Math.round(t.carbs || 0), fat: Math.round(t.fat || 0),
+  }, note: (r.parsed && r.parsed.note) || "" });
+}
+
+// Admin: look up a barcode's product nutrition to prefill the food editor (no logging).
+function adminFoodBarcode(e) {
+  const a = requireAdmin(e);
+  if (!a.ok) return a.res;
+  const app = e.app, email = identity(e);
+  const b = e.requestInfo().body || {};
+  const code = String(b.barcode || "").replace(/[^0-9]/g, "");
+  if (!code) return e.json(400, { error: "no barcode" });
+  const asFood = (o, via) => e.json(200, { via: via, food: {
+    name: o.name || "", brand: o.brand || "", barcode: code, serving_desc: o.serving_desc || "1 serving",
+    serving_g: Math.round(num(o.serving_g)), kcal: Math.round(num(o.kcal)), protein: Math.round(num(o.protein)),
+    carbs: Math.round(num(o.carbs)), fat: Math.round(num(o.fat)),
+  } });
+  let food = null;
+  try { food = app.findFirstRecordByFilter("foods", "barcode = {:c}", { c: code }); } catch (_) {}
+  if (!food && code.length === 12) { try { food = app.findFirstRecordByFilter("foods", "barcode = {:c}", { c: "0" + code }); } catch (_) {} }
+  if (food) return asFood({ name: food.getString("name"), brand: food.getString("brand"), serving_desc: food.getString("serving_desc"), serving_g: food.getFloat("serving_g"), kcal: food.getFloat("kcal"), protein: food.getFloat("protein"), carbs: food.getFloat("carbs"), fat: food.getFloat("fat") }, "database");
+  let hit = null; try { hit = barcodeLookupOnline(app, code); } catch (_) {}
+  if (hit && (hit.name || num(hit.kcal) > 0)) return asFood(hit, hit.source || "online");
+  const cfg = lookupCfg(app);
+  let ident = null; try { ident = barcodeIdentifyOnline(app, code, cfg); } catch (_) {}
+  if (ident) {
+    const label = ident.brand ? ident.name + " " + ident.brand : ident.name;
+    let est = null; try { est = webEstimate(app, label, email); } catch (_) {}
+    const t = (est && est.parsed && est.parsed.total) || {};
+    return asFood({ name: ident.name, brand: ident.brand || "", serving_desc: "1 serving", kcal: t.kcal, protein: t.protein, carbs: t.carbs, fat: t.fat }, "ai-estimate");
+  }
+  return e.json(404, { error: "no product found for that barcode" });
+}
+
 function adminPutFood(e) {
   const a = requireAdmin(e);
   if (!a.ok) return a.res;
@@ -2158,6 +2219,7 @@ function adminPutFood(e) {
     : String(b.aliases || "").split(",").map((s) => s.trim()).filter(Boolean);
   rec.set("name", name);
   rec.set("brand", brand);
+  if (b.barcode !== undefined) rec.set("barcode", String(b.barcode).replace(/[^0-9]/g, ""));
   rec.set("serving_desc", String(b.serving_desc || ""));
   rec.set("serving_g", num(b.serving_g));
   rec.set("kcal", num(b.kcal));
@@ -2389,6 +2451,8 @@ module.exports = {
   adminSetUserModels,
   adminGetFoods,
   adminPutFood,
+  adminFoodEstimate,
+  adminFoodBarcode,
   adminDeleteFood,
   webLookupEntry,
   adminGetSources,

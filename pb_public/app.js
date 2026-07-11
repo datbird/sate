@@ -730,7 +730,9 @@ async function applyEdit(payload) {
 let scanner = null;
 let scanBusy = false;
 
-async function openScanner() {
+let SCAN_ONRESULT = null; // when set, a decoded barcode is handed to this callback instead of logged
+async function openScanner(onResult) {
+  SCAN_ONRESULT = typeof onResult === "function" ? onResult : null;
   if (typeof Html5Qrcode === "undefined") return toast("Scanner failed to load");
   $("#scanwrap").hidden = false;
   $("#scanStatus").textContent = "Starting camera…";
@@ -752,6 +754,7 @@ async function openScanner() {
 async function closeScanner() {
   try { if (scanner) { await scanner.stop(); scanner.clear(); } } catch (_) {}
   scanner = null;
+  SCAN_ONRESULT = null;
   $("#scanwrap").hidden = true;
 }
 
@@ -768,6 +771,12 @@ async function onScan(decodedText) {
   const raw = String(decodedText).trim();
   scanBusy = true;
   const gtin = gtinFromScan(raw);
+  if (gtin && SCAN_ONRESULT) {
+    const cb = SCAN_ONRESULT; SCAN_ONRESULT = null;
+    await closeScanner();
+    cb(gtin);
+    return;
+  }
   if (gtin) {
     $("#scanStatus").textContent = "Looking up " + gtin + "…";
     try {
@@ -1350,7 +1359,60 @@ function fillFoodEditor(f) {
   $("#fFat").value = f.fat || "";
   $("#fAliases").value = (f.aliases || []).join(", ");
   $("#fVerified").checked = !!f.verified;
+  if ($("#fBarcode")) $("#fBarcode").value = f.barcode || "";
   $("#foodEditorTitle").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// Merge AI/barcode-derived fields into the editor without wiping the id/verified state.
+function prefillFoodEditor(f, msg) {
+  if (f.name) $("#fName").value = f.name;
+  if (f.brand) $("#fBrand").value = f.brand;
+  if (f.serving_desc) $("#fServing").value = f.serving_desc;
+  if (f.serving_g) $("#fServingG").value = f.serving_g;
+  if (f.kcal !== undefined) $("#fKcal").value = f.kcal;
+  if (f.protein !== undefined) $("#fProtein").value = f.protein;
+  if (f.carbs !== undefined) $("#fCarbs").value = f.carbs;
+  if (f.fat !== undefined) $("#fFat").value = f.fat;
+  if (f.barcode && $("#fBarcode")) $("#fBarcode").value = f.barcode;
+  $("#foodEditorTitle").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  toast(msg || "Filled — review, mark verified, and Save");
+}
+
+// Admin quick-add: photo → vision AI.
+async function adminFoodPhoto(file) {
+  const dataUrl = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(file); });
+  toast("Reading photo…");
+  try {
+    const r = await api("/admin/foods/estimate", { method: "POST", body: JSON.stringify({ method: "photo", image: dataUrl }) });
+    prefillFoodEditor(r.food, "Filled from photo — review & Save");
+  } catch (e) { toast(e.message); }
+}
+// Admin quick-add: name → AI web-search lookup.
+async function adminFoodWeb() {
+  const name = ($("#fName").value || prompt("Food name to look up?", "") || "").trim();
+  if (!name) return;
+  $("#fName").value = name;
+  toast("Searching the web…");
+  try {
+    const r = await api("/admin/foods/estimate", { method: "POST", body: JSON.stringify({ method: "web", text: name }) });
+    prefillFoodEditor(r.food, "Filled from web search — review & Save");
+  } catch (e) { toast(e.message); }
+}
+// Admin quick-add: scan/enter a barcode → product lookup.
+function adminFoodBarcode() {
+  const run = async (code) => {
+    toast("Looking up " + code + "…");
+    try {
+      const r = await api("/admin/foods/barcode", { method: "POST", body: JSON.stringify({ barcode: code }) });
+      prefillFoodEditor(r.food, "Found via " + (r.via || "lookup") + " — review & Save");
+    } catch (e) { toast(e.message); }
+  };
+  if (isNativeApp() || (navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+    openScanner(run);
+  } else {
+    const code = (prompt("Enter the barcode number:", "") || "").replace(/[^0-9]/g, "");
+    if (code) run(code);
+  }
 }
 
 function clearFoodEditor() {
@@ -1373,6 +1435,7 @@ async function saveFood() {
     fat: $("#fFat").value || 0,
     aliases: $("#fAliases").value,
     verified: $("#fVerified").checked,
+    barcode: ($("#fBarcode") && $("#fBarcode").value) || undefined,
   };
   try {
     await api("/admin/foods", { method: "PUT", body: JSON.stringify(payload) });
@@ -1397,6 +1460,10 @@ $("#foodSearch").addEventListener("keydown", (ev) => {
 });
 $("#foodSaveBtn").addEventListener("click", saveFood);
 $("#foodClearBtn").addEventListener("click", clearFoodEditor);
+$("#faPhoto").addEventListener("click", () => $("#faPhotoInput").click());
+$("#faPhotoInput").addEventListener("change", (e) => { if (e.target.files[0]) adminFoodPhoto(e.target.files[0]); e.target.value = ""; });
+$("#faWeb").addEventListener("click", adminFoodWeb);
+$("#faBarcode").addEventListener("click", adminFoodBarcode);
 
 // ---------------------------------------------------- nutrition sources
 async function loadSources() {

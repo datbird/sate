@@ -344,6 +344,10 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .healthintlbl { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; font-size: 13px; font-weight: 600; }
 .healthintlbl select { width: auto; flex: 0 0 auto; font-size: 13px; padding: 6px 8px; }
 
+/* Admin food quick-add (photo / AI+web / barcode) */
+.foodadd { display: flex; gap: 8px; margin: 6px 0 12px; }
+.foodadd .method { flex: 1; }
+
 /* Weight tab */
 .wcur { font-size: 30px; font-weight: 800; text-align: center; margin: 4px 0 10px; }
 .wcur .wunit { font-size: 16px; font-weight: 600; color: var(--muted); }
