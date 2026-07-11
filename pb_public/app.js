@@ -289,8 +289,9 @@ function obGoalRow(g, i) {
     (OB.goals.length > 1 ? `<button type="button" class="link ob-grm" data-grm="${i}">×</button>` : "") + "</div>";
 }
 const OB_STEP = {
-  welcome: () => '<div class="ob-hero">👋</div><h2>Welcome to Sate</h2>' +
-    '<p class="ob-sub">Let\'s get your stats and goals set up, then build a plan to reach them. Takes a minute.</p>' +
+  welcome: () => `<img class="ob-logo" src="/icons/icon-192.png?v2" alt="Sate">` +
+    `<h2 style="text-align:center">Welcome to ${escapeHtml((ME && ME.app_name) || "Sate")}</h2>` +
+    '<p class="ob-sub" style="text-align:center">Let\'s set up your stats and goals, then build a plan to reach them. Takes about a minute.</p>' +
     '<div class="ob-nav"><button type="button" class="link" id="obDismiss">Skip setup</button><button type="button" class="primary" id="obNext">Get started</button></div>',
   stats: () => '<h2>About you</h2><p class="ob-sub">Used to personalize your coach and calculate your calorie needs.</p>' +
     `<label class="ob-full" style="margin-bottom:10px">Your name<input type="text" id="obName" placeholder="first name" value="${escapeHtml(OB.name)}"></label>` +
@@ -325,8 +326,10 @@ const OB_STEP = {
     '<div class="ob-nav"><button type="button" class="link" id="obBack">Back</button><button type="button" class="primary" id="obNext">Finish</button></div>',
 };
 function obRender() {
-  $("#onboardBody").innerHTML = OB_STEP[OB.steps[OB.i]]();
-  obWire(OB.steps[OB.i]);
+  const s = OB.steps[OB.i];
+  const dots = '<div class="ob-progress">' + OB.steps.map((_, i) => `<i class="${i === OB.i ? "on" : ""}"></i>`).join("") + "</div>";
+  $("#onboardBody").innerHTML = dots + OB_STEP[s]();
+  obWire(s);
 }
 function obCaptureStats() {
   if ($("#obName")) OB.name = $("#obName").value;
