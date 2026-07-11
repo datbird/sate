@@ -33,5 +33,9 @@ if [ -z "$APP_ENCRYPTION_KEY" ] || [ "${#APP_ENCRYPTION_KEY}" -ne 32 ]; then
   export APP_ENCRYPTION_KEY="$(openssl rand -hex 16)"
 fi
 
+# Local dev: honour DEV_EMAIL (the no-proxy escape hatch). In production this flag is unset, so a
+# stray DEV_EMAIL can never authenticate a header-less request.
+export SATE_DEV=1
+
 echo "Sate dev server on http://127.0.0.1:8090   (admin dashboard: /_/)"
 exec ./pocketbase serve --http=127.0.0.1:8090

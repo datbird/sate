@@ -145,8 +145,10 @@ All config is via environment variables:
 | `ADMIN_EMAILS` | ✅ | Comma-separated emails granted the Admin panel. |
 | `AUTH_MODE` | — | `proxy` (default) or `apple`. See below. |
 | `AUTH_EMAIL_HEADER` | — | `proxy` mode only. Header carrying the authenticated email. Default `Cf-Access-Authenticated-User-Email`. |
-| `DEV_EMAIL` | — | **Local dev only** — impersonate this email with no proxy. Never set in prod. |
-| `SUPERUSER_EMAIL` / `SUPERUSER_PASSWORD` | — | Auto-create the PocketBase dashboard superuser (`/_/`). |
+| `SATE_PROXY_SECRET` | — | Optional defense-in-depth. When set, requests must carry a matching `X-Sate-Proxy-Secret` header (injected by your edge) or get a 403. See [Security model](#security-model). |
+| `SATE_DEV` | — | Set to `1` to enable the `DEV_EMAIL` escape hatch. Unset in production. `scripts/dev.sh` sets it. |
+| `DEV_EMAIL` | — | **Local dev only** — impersonate this email with no proxy. Only honoured when `SATE_DEV=1`. |
+| `SUPERUSER_EMAIL` / `SUPERUSER_PASSWORD` | — | Auto-create the PocketBase dashboard superuser (`/_/`). Dropped from the process env after first boot. |
 
 ### Choosing an auth mode
 
@@ -179,11 +181,26 @@ Using a different proxy? Set `AUTH_EMAIL_HEADER` to whatever it injects (e.g. `X
 - Provider API keys are encrypted at rest with `APP_ENCRYPTION_KEY` and never returned in full.
 - All app data is read/written through privileged server hooks that scope every query to the
   caller's email; the raw PocketBase collection API is superuser-only.
+- The container runs PocketBase as an **unprivileged user** (not root), and the release binary is
+  **pinned by SHA-256** at build time.
 - The built-in PocketBase dashboard at `/_/` has its own superuser login — keep it behind the
   same Access policy.
 
-> Roadmap: optional cryptographic verification of the Cloudflare Access JWT
-> (`Cf-Access-Jwt-Assertion`) for defense even if the loopback assumption is broken.
+### Defense-in-depth: the origin guard (`SATE_PROXY_SECRET`)
+
+The loopback bind is the primary control, but it's a single point of failure — a co-located
+container, a misrouted hostname, or an SSRF that reaches the origin directly could forge the email
+header. Full RS256 verification of the `Cf-Access-Jwt-Assertion` JWT isn't possible inside
+PocketBase's JS runtime (no RSA primitive), so Sate implements the equivalent guarantee with a
+proxy-injected shared secret:
+
+1. Set `SATE_PROXY_SECRET` on the container to a long random value (`openssl rand -hex 32`).
+2. Add the same value as a request header **at your edge**, on your hostname only — e.g. a
+   Cloudflare **Transform Rule → Modify Request Header → Set static** `X-Sate-Proxy-Secret`.
+
+Now every request that came through Cloudflare carries the secret; anything hitting the origin
+directly does not, and Sate returns `403`. The container health check (`/api/health`, loopback) is
+exempt. Leave `SATE_PROXY_SECRET` unset to disable the guard (default).
 
 ## Local development
 

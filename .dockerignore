@@ -1,0 +1,15 @@
+# Keep the build context to just the source the Dockerfile COPYs. Without this, `docker build .`
+# tars the whole checkout to the daemon — including the live pb_data (DB + AES-encrypted keys), the
+# local pocketbase binary, and .env (APP_ENCRYPTION_KEY) — which is slow and a standing footgun if a
+# COPY is ever broadened.
+.git
+.github
+pb_data/
+pocketbase
+*.zip
+.env
+.env.*
+!.env.example
+scripts/build-seed/
+mobile/
+*.md

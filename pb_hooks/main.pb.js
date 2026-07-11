@@ -5,14 +5,38 @@
 // (require caches, so this is cheap after the first call.) The static frontend is served
 // automatically from ./pb_public.
 
-// Always revalidate the SPA entry point + assets. PocketBase's static server sends only
-// Last-Modified (no Cache-Control), so browsers/webviews heuristically cache index.html and can pin
-// an OLD app.js?vN even after a hard refresh. no-cache forces a cheap conditional request (304 when
-// unchanged), so a new deploy is picked up immediately. Versioned ?vN assets could cache forever, but
-// no-cache on them is harmless (still 304s) and keeps this simple.
+// Origin guard (defense-in-depth) + cache-control, run before every request.
+//
+// Guard: Sate's proxy-mode identity trusts an email header that the auth proxy (Cloudflare Access)
+// injects, which is only safe if the origin is reachable ONLY through that proxy. Full RS256
+// verification of the Cf-Access-Jwt-Assertion isn't feasible inside PocketBase's JSVM (no RSA
+// primitive), so the implementable equivalent is a proxy-injected shared secret: set SATE_PROXY_SECRET
+// on the container AND have the edge (a Cloudflare Transform Rule on the hostname) add the matching
+// X-Sate-Proxy-Secret header. Requests that bypass the proxy and hit the origin directly lack the
+// header → 403, so a direct-to-origin request can't forge an identity header. Opt-in: when the env is
+// unset the guard is a no-op (current behaviour). /api/health is exempt so the container healthcheck
+// (loopback, no header) keeps working.
+//
+// Cache-control: PocketBase's static server sends only Last-Modified (no Cache-Control), so
+// browsers/webviews heuristically cache index.html and can pin an OLD app.js?vN even after a hard
+// refresh. no-cache forces a cheap conditional request (304 when unchanged) so a new deploy is picked
+// up immediately.
+function constEq(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
 routerUse((e) => {
+  const p = (e.request && e.request.url && e.request.url.path) || "";
+  let secret = "";
+  try { secret = ($os && $os.getenv && $os.getenv("SATE_PROXY_SECRET")) || ""; } catch (_) {}
+  if (secret && p !== "/api/health") {
+    let got = "";
+    try { got = e.request.header.get("X-Sate-Proxy-Secret") || ""; } catch (_) {}
+    if (!constEq(got, secret)) throw new ApiError(403, "forbidden", null);
+  }
   try {
-    const p = (e.request && e.request.url && e.request.url.path) || "";
     if (p.indexOf("/api/") !== 0) e.response.header().set("Cache-Control", "no-cache, must-revalidate");
   } catch (_) {}
   return e.next();
@@ -55,7 +79,6 @@ routerAdd("POST", "/api/sate/admin/backup/local-now", (e) => require(`${__hooks}
 routerAdd("GET", "/api/sate/entries", (e) => require(`${__hooks}/api.js`).listEntries(e));
 routerAdd("DELETE", "/api/sate/entries/{id}", (e) => require(`${__hooks}/api.js`).deleteEntry(e));
 routerAdd("PATCH", "/api/sate/entries/{id}", (e) => require(`${__hooks}/api.js`).updateEntry(e));
-routerAdd("POST", "/api/sate/entries/{id}/web-lookup", (e) => require(`${__hooks}/api.js`).webLookupEntry(e));
 routerAdd("PATCH", "/api/sate/goals", (e) => require(`${__hooks}/api.js`).setGoals(e));
 routerAdd("GET", "/api/sate/day/summary", (e) => require(`${__hooks}/api.js`).daySummary(e));
 

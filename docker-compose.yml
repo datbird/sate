@@ -12,7 +12,20 @@ services:
       APP_ENCRYPTION_KEY: "${APP_ENCRYPTION_KEY}"
       ADMIN_EMAILS: "${ADMIN_EMAILS}"
       AUTH_EMAIL_HEADER: "${AUTH_EMAIL_HEADER:-Cf-Access-Authenticated-User-Email}"
+      # Defense-in-depth origin guard: when set, Sate rejects any request that doesn't carry the
+      # matching X-Sate-Proxy-Secret header (which your edge/proxy injects). Blocks direct-to-origin
+      # header spoofing even if the loopback bind is ever bypassed. See README › Security.
+      SATE_PROXY_SECRET: "${SATE_PROXY_SECRET:-}"
       # SUPERUSER_EMAIL: "${SUPERUSER_EMAIL:-}"
       # SUPERUSER_PASSWORD: "${SUPERUSER_PASSWORD:-}"
     volumes:
       - ./pb_data:/pb/pb_data
+    # Keep a runaway hook (AI retry loop, oversized backup/restore) from exhausting host RAM.
+    mem_limit: 512m
+    cpus: 1.5
+    # Cap container logs so json-file logging can't fill the host disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
