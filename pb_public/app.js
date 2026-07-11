@@ -2,7 +2,7 @@
 
 // Bumped with each deploy; shown in Admin → Instance so you can confirm the loaded build at a glance
 // (if it lags the latest, the client is serving a cached bundle).
-const APP_VERSION = "v57";
+const APP_VERSION = "v58";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -114,7 +114,14 @@ function modeOf() { return MODES[(ME && ME.track_mode)] || MODES.calories; }
 
 
 function escapeHtml(s) {
-  return String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// Only http(s) URLs are safe in an href; anything else (javascript:, data:, …) collapses to "#" so a
+// stored string can never become a script link even if the server-side normalization is bypassed.
+function safeUrl(u) {
+  const s = String(u || "").trim();
+  return /^https?:\/\//i.test(s) ? s : "#";
 }
 
 // ---------------------------------------------------------------------- log
@@ -165,7 +172,7 @@ async function renderWeight() {
   const goalsHtml = (d.goals || []).map((g) => {
     const verb = g.to_go_lb >= 0 ? "to lose" : "to gain";
     const pace = g.pace ? (g.pace.on_track ? '<span class="ontrack">on track</span>' : `<span class="behind">${Math.abs(g.pace.behind_lb)} lb behind</span>`) : "";
-    return `<div class="wgoal"><b>${g.target_lb} lb</b> by ${g.target_date} · ${Math.abs(g.to_go_lb)} lb ${verb} ${pace}</div>`;
+    return `<div class="wgoal"><b>${escapeHtml(g.target_lb)} lb</b> by ${escapeHtml(g.target_date)} · ${Math.abs(g.to_go_lb)} lb ${verb} ${pace}</div>`;
   }).join("") || '<div class="subline">No weight goal yet — set one in Goals &amp; tracking.</div>';
   const srcPrompt = (!d.weight_source && isNativeApp())
     ? '<div class="wsrc">Manage weight from <button class="link" id="wsrcHealth">Apple Health</button> or <button class="link" id="wsrcManual">enter it manually</button>?</div>'
@@ -364,7 +371,7 @@ async function coachSend(preset) {
   const image = isPlan ? null : COACH.pending;
   if (!isPlan && !msg && !image) return;
   if (!isPlan) {
-    const bubble = coachAppend("me", msg || (image ? "" : ""));
+    const bubble = coachAppend("me", msg || "");
     if (image) {
       const im = document.createElement("img");
       im.className = "cmsg-img"; im.src = image.url;
@@ -921,15 +928,6 @@ async function logMeal(text) {
   } catch (e) { toast(e.message); }
 }
 
-async function webLookup(entryId) {
-  toast("Searching the web…");
-  try {
-    const r = await api("/entries/" + entryId + "/web-lookup", { method: "POST" });
-    toast(r.note || `Updated to ${fmt(r.entry.kcal)} kcal from the web.`);
-    renderHome();
-  } catch (e) { toast(e.message); }
-}
-
 async function logPhoto(file) {
   const dataUrl = await new Promise((resolve, reject) => {
     const fr = new FileReader();
@@ -1208,7 +1206,7 @@ async function loadGoalWeightGoals() {
   let goals = [];
   try { goals = (await api("/weight/goals")).goals || []; } catch (_) {}
   wrap.innerHTML = goals.map((g) =>
-    `<div class="wgrow"><span>${g.target_lb} lb by ${g.target_date}</span><button type="button" class="link danger" data-del="${g.id}">remove</button></div>`
+    `<div class="wgrow"><span>${escapeHtml(g.target_lb)} lb by ${escapeHtml(g.target_date)}</span><button type="button" class="link danger" data-del="${g.id}">remove</button></div>`
   ).join("") || '<div class="dim" style="font-size:12px">No weight goals yet.</div>';
   wrap.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
     try { await api("/weight/goals/" + b.dataset.del, { method: "DELETE" }); loadGoalWeightGoals(); } catch (e) { toast(e.message); }
@@ -1291,11 +1289,16 @@ async function loadHistory() {
   const d = $("#histDate");
   if (!d.value) d.value = todayISO();
   $("#summary").hidden = true;
-  const data = await api("/entries?date=" + d.value);
   const ul = $("#histEntries");
-  ul.innerHTML = "";
-  if (!data.entries.length) ul.innerHTML = '<li class="hint">No entries for this day.</li>';
-  data.entries.forEach((en) => ul.appendChild(entryLi(en)));
+  try {
+    const data = await api("/entries?date=" + d.value);
+    ul.innerHTML = "";
+    if (!data.entries.length) ul.innerHTML = '<li class="hint">No entries for this day.</li>';
+    data.entries.forEach((en) => ul.appendChild(entryLi(en)));
+  } catch (e) {
+    toast(e.message);
+    ul.innerHTML = '<li class="hint">Couldn’t load this day — ' + escapeHtml(e.message) + "</li>";
+  }
 }
 $("#histDate").addEventListener("change", loadHistory);
 $("#summaryBtn").addEventListener("click", async () => {
@@ -1356,32 +1359,36 @@ function collapsify(head, bodyNodes) {
 
 async function loadAdmin() {
   initAdminCollapse();
-  const [{ providers }, { functions }, usersResp, settingsResp] = await Promise.all([
-    api("/admin/providers"), api("/admin/functions"), api("/admin/users"), api("/admin/settings"),
-  ]);
-  PROVIDERS = providers;
-  renderInstance(settingsResp);
-  renderProviders(providers);
-  // Fetch live model lists for any provider that has a key.
-  MODELS = {};
-  await Promise.all(
-    providers.filter((p) => p.key_set).map(async (p) => {
-      try { const r = await api("/admin/models?provider=" + p.name); MODELS[p.name] = r.models || []; }
-      catch (_) { MODELS[p.name] = []; }
-    })
-  );
-  renderGlobals(settingsResp.settings);
-  renderFeatures(settingsResp.settings);
-  renderFunctions(functions, providers);
-  renderUsers(usersResp.users);
-  loadFoods("");
-  loadSources();
-  loadPrompts();
-  loadLookup();
-  loadAiLimits();
-  loadAiUsage();
-  loadAiPrices();
-  loadBackup();
+  try {
+    const [{ providers }, { functions }, usersResp, settingsResp] = await Promise.all([
+      api("/admin/providers"), api("/admin/functions"), api("/admin/users"), api("/admin/settings"),
+    ]);
+    PROVIDERS = providers;
+    renderInstance(settingsResp);
+    renderProviders(providers);
+    // Fetch live model lists for any provider that has a key.
+    MODELS = {};
+    await Promise.all(
+      providers.filter((p) => p.key_set).map(async (p) => {
+        try { const r = await api("/admin/models?provider=" + p.name); MODELS[p.name] = r.models || []; }
+        catch (_) { MODELS[p.name] = []; }
+      })
+    );
+    renderGlobals(settingsResp.settings);
+    renderFeatures(settingsResp.settings);
+    renderFunctions(functions, providers);
+    renderUsers(usersResp.users);
+    loadFoods("");
+    loadSources();
+    loadPrompts();
+    loadLookup();
+    loadAiLimits();
+    loadAiUsage();
+    loadAiPrices();
+    loadBackup();
+  } catch (e) {
+    toast("Couldn’t load admin: " + e.message);
+  }
 }
 
 // ---- external backup / sync ----
@@ -2162,7 +2169,7 @@ function sourceRow(s) {
   body.className = "fbody";
   body.innerHTML =
     `<div class="fname">${escapeHtml(s.title)}</div>` +
-    `<div class="fsub"><a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.domain || s.url)}</a>` +
+    `<div class="fsub"><a href="${escapeHtml(safeUrl(s.url))}" target="_blank" rel="noopener">${escapeHtml(s.domain || s.url)}</a>` +
     (s.notes ? ` · ${escapeHtml(s.notes)}` : "") + `</div>`;
   const toggle = document.createElement("label");
   toggle.className = "switch";
