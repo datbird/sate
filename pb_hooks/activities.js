@@ -7,29 +7,19 @@
 // ~70 kg reference: kcal/min = MET * 3.5 * kg / 200 ≈ MET * 1.23. No per-user weight yet.
 const KCAL_PER_MIN_PER_MET = 3.5 * 70 / 200;
 
+// Generic retrieval primitives (norm/num/readAliases/searchByText/bumpUsage) are shared with foods.js
+// via kb.js.
+const KB = require(`${__hooks}/kb.js`);
+const { norm, num, readAliases, bumpUsage } = KB;
+
 const STOP = [
   "and","the","with","for","min","mins","minute","minutes","hour","hours","hr","hrs","sec","secs",
   "of","at","a","an","did","was","were","some","about","around","light","easy","hard","intense","moderate",
   "session","workout","exercise","today","morning","evening","mile","miles","mi","km","pace","reps","sets",
 ];
 
-function norm(s) {
-  return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
-}
 function normKey(name) {
   return norm(name) + "|";
-}
-function num(v) {
-  const n = Number(v);
-  return isFinite(n) ? n : 0;
-}
-function readAliases(rec) {
-  let v = rec.get("aliases");
-  if (v == null) return [];
-  if (typeof v === "string") {
-    try { return JSON.parse(v); } catch (_) { return []; }
-  }
-  return v;
 }
 
 // kcal burned for a given activity record over `minutes`.
@@ -40,38 +30,7 @@ function burnFor(rec, minutes) {
 
 // Find activities whose name/alias appears (as a whole phrase) in the description.
 function searchByText(app, text) {
-  const nt = norm(text);
-  if (!nt) return [];
-  const words = nt.split(" ").filter((w) => w.length >= 3 && STOP.indexOf(w) === -1);
-  if (!words.length) return [];
-  const uniq = [];
-  for (const w of words) if (uniq.indexOf(w) === -1 && uniq.length < 10) uniq.push(w);
-
-  const conds = uniq.map((_, i) => `search ~ {:w${i}}`).join(" || ");
-  const params = {};
-  uniq.forEach((w, i) => (params["w" + i] = w));
-  let cands = [];
-  try {
-    cands = app.findRecordsByFilter("activities", conds, "-verified", 200, 0, params);
-  } catch (_) {
-    cands = [];
-  }
-
-  const padded = " " + nt + " ";
-  const matches = [];
-  for (const f of cands) {
-    const names = [norm(f.getString("name"))].concat(readAliases(f).map(norm)).filter(Boolean);
-    let best = "";
-    for (const nm of names) {
-      if (!nm) continue;
-      if (padded.indexOf(" " + nm + " ") !== -1 || (nm.length >= 5 && nt.indexOf(nm) !== -1)) {
-        if (nm.length > best.length) best = nm;
-      }
-    }
-    if (best) matches.push({ f: f, len: best.length, v: f.getBool("verified") ? 1 : 0, u: f.getFloat("usage_count") });
-  }
-  matches.sort((a, b) => b.v - a.v || b.len - a.len || b.u - a.u);
-  return matches.slice(0, 12).map((m) => m.f);
+  return KB.searchByText(app, "activities", text, STOP);
 }
 
 // Free-text prefix/substring search for the autocomplete dropdown.
@@ -95,15 +54,6 @@ function referenceBlock(records) {
     "Known activities and their approximate burn rate (use these rates when the description matches, " +
     "scaled by the actual duration):\n" + lines.join("\n")
   );
-}
-
-function bumpUsage(app, records) {
-  for (const f of records) {
-    try {
-      f.set("usage_count", (f.getFloat("usage_count") || 0) + 1);
-      app.save(f);
-    } catch (_) {}
-  }
 }
 
 // Auto-save newly seen activities the AI names, as unverified (self-growth). Stores an approximate

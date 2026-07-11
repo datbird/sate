@@ -143,9 +143,11 @@ function runGoogle(req) {
 
   const base = req.baseUrl || "https://generativelanguage.googleapis.com";
   const res = $http.send({
-    url: `${base}/v1beta/models/${req.model}:generateContent?key=${encodeURIComponent(req.apiKey)}`,
+    // Key goes in the x-goog-api-key header, not the query string, so it can't land in proxy/CDN
+    // access logs or a URL-bearing error string.
+    url: `${base}/v1beta/models/${req.model}:generateContent`,
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-goog-api-key": req.apiKey },
     body: JSON.stringify({
       systemInstruction: req.system ? { parts: [{ text: req.system }] } : undefined,
       contents: contents,
@@ -220,9 +222,9 @@ function listModels(req) {
   if (req.provider === "google") {
     const base = req.baseUrl || "https://generativelanguage.googleapis.com";
     const res = $http.send({
-      url: base + "/v1beta/models?key=" + encodeURIComponent(req.apiKey) + "&pageSize=1000",
+      url: base + "/v1beta/models?pageSize=1000",
       method: "GET",
-      headers: {},
+      headers: { "x-goog-api-key": req.apiKey },
       timeout: 30,
     });
     if (res.statusCode >= 300) fail("google", res);

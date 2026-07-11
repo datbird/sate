@@ -173,20 +173,6 @@ function redact(plaintext) {
 
 // ---- resolve which provider+model+key handles a function ----
 
-// Try to build a usable config for a provider+model; returns null if the provider is missing,
-// disabled, or has no key (so callers can fall back).
-function tryResolveProvider(app, provider, model) {
-  if (!provider || !model) return null;
-  const prov = app.findFirstRecordByFilter("providers", "name = {:n}", { n: provider });
-  if (!prov || !prov.getBool("enabled")) return null;
-  const enc = prov.getString("api_key_enc");
-  if (!enc) return null;
-  return { provider: provider, model: model, apiKey: decryptKey(enc), baseUrl: prov.getString("base_url") || "" };
-}
-
-// Resolve which provider+model+key handles a function. An optional per-user `override`
-// ({provider, model}) wins when its provider is enabled and keyed; otherwise the global
-// per-function default is used.
 // Resolve a concrete (provider, model) to a callable config: the provider record must exist, be
 // enabled, and have a key. Throws a clear error otherwise. (The routing hierarchy that CHOOSES the
 // provider/model lives in api.js resolveFor; this is just the provider/key lookup tail.)
@@ -197,35 +183,6 @@ function resolveProviderKey(app, provider, model) {
   const enc = prov.getString("api_key_enc");
   if (!enc) throw new Error("no API key configured for provider: " + provider);
   return { provider: provider, model: model, apiKey: decryptKey(enc), baseUrl: prov.getString("base_url") || "" };
-}
-
-function resolveFunction(app, fn, override) {
-  if (override && override.provider && override.model) {
-    const r = tryResolveProvider(app, override.provider, override.model);
-    if (r) return r;
-  }
-
-  const cfg = app.findFirstRecordByFilter("function_config", "fn = {:fn}", { fn: fn });
-  if (!cfg) throw new Error("function not configured: " + fn);
-  if (!cfg.getBool("enabled")) throw new Error("function is disabled: " + fn);
-
-  const provider = cfg.getString("provider");
-  const model = cfg.getString("model");
-  if (!provider || !model) throw new Error("function missing provider/model: " + fn);
-
-  const prov = app.findFirstRecordByFilter("providers", "name = {:n}", { n: provider });
-  if (!prov) throw new Error("unknown provider: " + provider);
-  if (!prov.getBool("enabled")) throw new Error("provider not enabled: " + provider);
-
-  const enc = prov.getString("api_key_enc");
-  if (!enc) throw new Error("no API key configured for provider: " + provider);
-
-  return {
-    provider: provider,
-    model: model,
-    apiKey: decryptKey(enc),
-    baseUrl: prov.getString("base_url") || "",
-  };
 }
 
 // ---- defensive JSON extraction from a model reply ----
@@ -303,7 +260,6 @@ module.exports = {
   encryptKey,
   decryptKey,
   redact,
-  resolveFunction,
   resolveProviderKey,
   parseJSON,
   normalizeNutrition,

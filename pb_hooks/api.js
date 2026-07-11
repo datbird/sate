@@ -34,7 +34,11 @@ function env(name) {
 //             The origin may be exposed directly; the proxy header is ignored entirely.
 const AUTH_MODE = (env("AUTH_MODE") || "proxy").toLowerCase().trim() === "apple" ? "apple" : "proxy";
 const AUTH_HEADER = env("AUTH_EMAIL_HEADER") || "Cf-Access-Authenticated-User-Email";
-const DEV_EMAIL = env("DEV_EMAIL").toLowerCase().trim();
+// DEV_EMAIL is a local-dev escape hatch (use the app with no auth proxy / no Apple sign-in). It is
+// honoured ONLY when SATE_DEV is explicitly enabled, so a stray DEV_EMAIL left in a production .env
+// can't silently turn every header-less request into a (possibly admin) login.
+const DEV_MODE = ["1", "true", "yes", "on"].indexOf(env("SATE_DEV").toLowerCase().trim()) !== -1;
+const DEV_EMAIL = DEV_MODE ? env("DEV_EMAIL").toLowerCase().trim() : "";
 const ADMINS = env("ADMIN_EMAILS")
   .toLowerCase()
   .split(",")
@@ -435,7 +439,7 @@ function estimateActivity(app, text, email, role) {
   try {
     const prof = profileOf(app, email);
     const kg = prof ? currentWeightKg(app, email, prof) : 0;
-    if (kg > 0) userMsg = "Person's body weight: " + Math.round(kg) + " kg (" + Math.round(kg * 2.2046226) + " lb).\n" + userMsg;
+    if (kg > 0) userMsg = "Person's body weight: " + Math.round(kg) + " kg (" + Math.round(kg * LB_PER_KG) + " lb).\n" + userMsg;
   } catch (_) {}
 
   const reply = callAI(app, {
@@ -683,46 +687,6 @@ function secondOpinion(e) {
   }
 }
 
-// Re-estimate an existing entry using web search, then update it in place.
-function webLookupEntry(e) {
-  const email = identity(e);
-  if (!email) return e.json(401, { error: "not authenticated" });
-  const app = e.app;
-  const id = e.request.pathValue("id");
-  let rec;
-  try {
-    rec = app.findRecordById("entries", id);
-  } catch (_) {
-    return e.json(404, { error: "not found" });
-  }
-  if (rec.getString("user_email") !== email) return e.json(403, { error: "forbidden" });
-  const text = rec.getString("description");
-  if (!text || text === "(photo)") return e.json(400, { error: "entry has no description to search" });
-  try {
-    const r = webEstimate(app, text, email);
-    rec.set("source", "web");
-    rec.set("items", r.parsed.items);
-    rec.set("kcal", r.parsed.total.kcal);
-    rec.set("protein", r.parsed.total.protein);
-    rec.set("carbs", r.parsed.total.carbs);
-    rec.set("fat", r.parsed.total.fat);
-    rec.set("fiber", num(r.parsed.total.fiber));
-    rec.set("sugar", num(r.parsed.total.sugar));
-    rec.set("sodium", num(r.parsed.total.sodium));
-    rec.set("sat_fat", num(r.parsed.total.sat_fat));
-    rec.set("provider", r.provider);
-    rec.set("model", r.model);
-    app.save(rec);
-    return e.json(200, {
-      entry: entryJSON(rec),
-      note: r.parsed.note,
-      totals: sumTotals(dayEntries(app, email, todayStr())),
-    });
-  } catch (err) {
-    return e.json(502, { error: String(err.message || err) });
-  }
-}
-
 // Look up a product by barcode on Open Food Facts (runtime API call — not redistributed data).
 function fetchOpenFoodFacts(code) {
   const url = "https://world.openfoodfacts.org/api/v2/product/" + encodeURIComponent(code) +
@@ -740,7 +704,6 @@ function fetchOpenFoodFacts(code) {
   const name = String(p.product_name || "").trim();
   if (!name) return null;
   const sq = Number(p.serving_quantity) || 0; // grams per serving
-  const r1 = (x) => Math.round((Number(x) || 0) * 10) / 10;
   let kcal, protein, carbs, fat, fiber, sugar, sodium, sat_fat, servingDesc, servingG;
   const perServ = Number(nut["energy-kcal_serving"]);
   if (isFinite(perServ) && perServ > 0) {
@@ -762,8 +725,8 @@ function fetchOpenFoodFacts(code) {
   if (!(kcal > 0)) return null;
   return { name: name, brand: String(p.brands || "").split(",")[0].trim(),
     serving_desc: servingDesc.slice(0, 40), serving_g: Math.round(servingG),
-    kcal: Math.round(kcal), protein: r1(protein), carbs: r1(carbs), fat: r1(fat),
-    fiber: r1(fiber), sugar: r1(sugar), sodium: Math.round(sodium), sat_fat: r1(sat_fat) };
+    kcal: Math.round(kcal), protein: r1x(protein), carbs: r1x(carbs), fat: r1x(fat),
+    fiber: r1x(fiber), sugar: r1x(sugar), sodium: Math.round(sodium), sat_fat: r1x(sat_fat) };
 }
 
 function r1x(x) { return Math.round((Number(x) || 0) * 10) / 10; }
@@ -2911,7 +2874,6 @@ module.exports = {
   adminFoodEstimate,
   adminFoodBarcode,
   adminDeleteFood,
-  webLookupEntry,
   adminGetSources,
   adminPutSource,
   adminDeleteSource,

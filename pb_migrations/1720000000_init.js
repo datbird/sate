@@ -93,11 +93,12 @@ migrate(
       app.save(r);
     }
 
-    // --- seed the four AI functions with sensible Claude defaults ---
+    // --- seed the base AI functions with sensible Claude defaults ---
+    // (later migrations add the rest of the registry; the routing hierarchy lets any of them fall
+    // back to the global default, so only the originals need an explicit seed here.)
     const defaults = [
       { fn: "vision_estimate", model: "claude-sonnet-5" },
       { fn: "text_parse", model: "claude-haiku-4-5-20251001" },
-      { fn: "chat", model: "claude-sonnet-5" },
       { fn: "daily_summary", model: "claude-haiku-4-5-20251001" },
     ];
     for (const d of defaults) {

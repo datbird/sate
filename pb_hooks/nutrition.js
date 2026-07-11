@@ -140,6 +140,6 @@ function contextText(inp, plan, recent) {
   return L.join("\n");
 }
 
-module.exports = {
-  LB, ACTIVITY_MULT, bmr, tdee, analyzeGoal, goalCalories, macroTargets, computePlan, contextText, cmToFtIn,
-};
+// Only the three symbols api.js actually consumes are exported; bmr/tdee/analyzeGoal/goalCalories/
+// macroTargets/LB/cmToFtIn are internal helpers of this pure-function module.
+module.exports = { ACTIVITY_MULT, computePlan, contextText };

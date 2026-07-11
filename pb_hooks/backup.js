@@ -27,7 +27,11 @@ function exportSnapshot(app) {
   for (const name of SNAPSHOT_COLLECTIONS) {
     let recs = [];
     try { recs = app.findAllRecords(name); } catch (_) { continue; }
-    out.collections[name] = recs.map((r) => r.publicExport());
+    let rows = recs.map((r) => r.publicExport());
+    // Never ship the local backup-target credentials / sync bookkeeping off-box: a restore keeps the
+    // live instance's backup_* keys anyway (see importSnapshot), so exporting them only leaks secrets.
+    if (name === "settings") rows = rows.filter((row) => !isLocalOnlySetting(String(row.key || "")));
+    out.collections[name] = rows;
   }
   return out;
 }
@@ -62,15 +66,25 @@ function importSnapshot(app, snapshot) {
     }
 
     // Replace: delete existing, recreate from the snapshot's field data (fresh ids — Sate's model is
-    // keyed by user_email/natural fields, not cross-collection record-id relations).
-    try { app.findAllRecords(name).forEach((r) => { try { app.delete(r); } catch (_) {} }); } catch (_) {}
-    let n = 0;
-    for (const row of rows) {
-      const rec = new Record(coll);
-      for (const k in row) { if (SYS_FIELDS[k]) continue; try { rec.set(k, row[k]); } catch (_) {} }
-      try { app.save(rec); n++; } catch (_) {}
+    // keyed by user_email/natural fields, not cross-collection record-id relations). The delete+recreate
+    // runs in ONE transaction so a mid-restore failure (schema drift, a unique collision, a required
+    // field) rolls the whole collection back to its original rows instead of silently leaving it
+    // half-emptied — and the failure is reported, not swallowed as a successful-looking partial count.
+    try {
+      let n = 0;
+      app.runInTransaction((tx) => {
+        tx.findAllRecords(name).forEach((r) => tx.delete(r));
+        for (const row of rows) {
+          const rec = new Record(coll);
+          for (const k in row) { if (SYS_FIELDS[k]) continue; try { rec.set(k, row[k]); } catch (_) {} }
+          tx.save(rec); n++;
+        }
+      });
+      report[name] = n;
+    } catch (err) {
+      // Transaction rolled back — the collection's original rows are intact. Surface the failure.
+      report[name] = { restored: 0, expected: rows.length, error: String((err && err.message) || err) };
     }
-    report[name] = n;
   }
   return report;
 }
@@ -126,7 +140,7 @@ function pbEnsureCollection(s) {
   });
   if (create.statusCode >= 300) throw new Error("could not create " + SNAPSHOT_COLL_NAME + " on target (" + create.statusCode + ")");
 }
-function pbPush(app, cfg, snapshot, label) {
+function pbPush(cfg, snapshot, label) {
   const s = pbAuth(cfg); pbEnsureCollection(s);
   const res = $http.send({
     url: s.url + "/api/collections/" + SNAPSHOT_COLL_NAME + "/records", method: "POST",
@@ -160,7 +174,7 @@ function fbAuth(cfg) {
   if (res.statusCode >= 300) throw new Error("Firebase auth failed (" + res.statusCode + ")");
   return { token: res.json.idToken, base: "https://firestore.googleapis.com/v1/projects/" + cfg.fb.project + "/databases/(default)/documents" };
 }
-function fbPush(app, cfg, snapshot, label) {
+function fbPush(cfg, snapshot, label) {
   const s = fbAuth(cfg);
   const doc = { fields: { label: { stringValue: label || ("sate-" + nowIso()) }, created: { timestampValue: nowIso() }, data: { stringValue: JSON.stringify(snapshot) } } };
   const res = $http.send({ url: s.base + "/" + SNAPSHOT_COLL_NAME, method: "POST", headers: { "content-type": "application/json", Authorization: "Bearer " + s.token }, body: JSON.stringify(doc), timeout: 120 });
@@ -195,7 +209,7 @@ function testTarget(app, cfg) {
 }
 function pushSnapshot(app, cfg, label) {
   const snap = exportSnapshot(app);
-  const r = cfg.type === "firebase" ? fbPush(app, cfg, snap, label) : pbPush(app, cfg, snap, label);
+  const r = cfg.type === "firebase" ? fbPush(cfg, snap, label) : pbPush(cfg, snap, label);
   try { setSetting(app, "backup_last_at", nowIso()); setSetting(app, "backup_last_status", "ok"); } catch (_) {}
   const count = Object.keys(snap.collections).reduce((a, k) => a + (snap.collections[k] || []).length, 0);
   return { id: r.id, records: count };
@@ -216,12 +230,21 @@ const FLUSH_LIMIT = 300;
 
 function syncLiveEnabled(app) { return getSetting(app, "sync_live") === "on"; }
 
+// Local operational bookkeeping (sync/backup timestamps + the encrypted backup-target credentials)
+// that lives in the `settings` collection but must NEVER mirror: it's per-instance state, and
+// mirroring `sync_last_at` would re-enqueue itself on every flush — an endless per-minute loop.
+function isLocalOnlySetting(key) {
+  return key.indexOf("sync_") === 0 || key.indexOf("backup_") === 0;
+}
+
 // Called from the record event hooks. Enqueue only when live sync is on and it's a synced collection.
 function onLocalChange(app, record, op) {
   try {
     if (!syncLiveEnabled(app)) return;
     const coll = record.collection().name;
     if (SNAPSHOT_COLLECTIONS.indexOf(coll) === -1) return;
+    // Skip local-only settings so flushQueue's own sync_last_at write can't re-trigger a flush.
+    if (coll === "settings" && isLocalOnlySetting(record.getString("key"))) return;
     const q = new Record(app.findCollectionByNameOrId("sync_queue"));
     q.set("coll", coll); q.set("rid", record.id); q.set("op", op === "delete" ? "delete" : "upsert");
     app.save(q);
@@ -317,7 +340,11 @@ function initialMirror(app) {
   const coll = app.findCollectionByNameOrId("sync_queue");
   for (const name of SNAPSHOT_COLLECTIONS) {
     let recs = []; try { recs = app.findAllRecords(name); } catch (_) { continue; }
-    for (const r of recs) { const q = new Record(coll); q.set("coll", name); q.set("rid", r.id); q.set("op", "upsert"); app.save(q); n++; }
+    for (const r of recs) {
+      // Same exclusion as onLocalChange: never seed local-only settings into the mirror.
+      if (name === "settings" && isLocalOnlySetting(r.getString("key"))) continue;
+      const q = new Record(coll); q.set("coll", name); q.set("rid", r.id); q.set("op", "upsert"); app.save(q); n++;
+    }
   }
   return n;
 }

@@ -52,12 +52,17 @@ function monthRows(app, provider) {
   } catch (_) { return []; }
 }
 
-function monthIO(app, provider) {
+// Sum input/output/calls over a set of ai_usage rows.
+function ioOfRows(rows) {
   let inp = 0, out = 0, calls = 0;
-  for (const r of monthRows(app, provider)) {
+  for (const r of rows) {
     inp += r.getInt("input_tokens"); out += r.getInt("output_tokens"); calls += r.getInt("calls");
   }
   return { input: inp, output: out, tokens: inp + out, calls: calls };
+}
+
+function monthIO(app, provider) {
+  return ioOfRows(monthRows(app, provider));
 }
 
 // Per-model price row, or null. Returns { in_usd, out_usd } per 1M tokens.
@@ -76,14 +81,31 @@ function costUsd(app, provider, model, input, output) {
   return (input / 1e6) * p.in_usd + (output / 1e6) * p.out_usd;
 }
 
-// This month's total spend for a provider (sums only priced models).
-function monthCostUsd(app, provider) {
+// All ai_prices as a { "provider|model": { in_usd, out_usd } } map — one query instead of a per-row
+// findFirst (avoids the N+1 when costing a month of usage).
+function priceMap(app) {
+  const m = {};
+  try {
+    app.findAllRecords("ai_prices").forEach((r) => {
+      m[r.getString("provider") + "|" + r.getString("model")] = { in_usd: r.getFloat("in_usd"), out_usd: r.getFloat("out_usd") };
+    });
+  } catch (_) {}
+  return m;
+}
+
+// Spend over a set of rows using a pre-loaded price map (sums only priced models).
+function costOfRows(rows, provider, pm) {
   let usd = 0;
-  for (const r of monthRows(app, provider)) {
-    const c = costUsd(app, provider, r.getString("model"), r.getInt("input_tokens"), r.getInt("output_tokens"));
-    if (c != null) usd += c;
+  for (const r of rows) {
+    const p = pm[provider + "|" + r.getString("model")];
+    if (p) usd += (r.getInt("input_tokens") / 1e6) * p.in_usd + (r.getInt("output_tokens") / 1e6) * p.out_usd;
   }
   return usd;
+}
+
+// This month's total spend for a provider (sums only priced models).
+function monthCostUsd(app, provider) {
+  return costOfRows(monthRows(app, provider), provider, priceMap(app));
 }
 
 // The ai_limits row for a provider as a plain object, or null.
@@ -131,15 +153,19 @@ function setLimit(app, provider, caps) {
   app.save(rec);
 }
 
-// Per-provider month summary for the admin Usage panel.
+// Per-provider month summary for the admin Usage panel. Fetches each provider's month rows ONCE and
+// prices them from a single shared price map (previously this ran the month query twice per provider
+// and issued a price query per usage row).
 function usageSummary(app, providers) {
+  const pm = priceMap(app);
   return (providers || []).map((provider) => {
-    const io = monthIO(app, provider);
+    const rows = monthRows(app, provider);
+    const io = ioOfRows(rows);
     const lim = limitFor(app, provider) || { monthly_tokens: 0, usd_budget: 0, in_cap: 0, out_cap: 0 };
     return {
       provider: provider,
       input: io.input, output: io.output, tokens: io.tokens, calls: io.calls,
-      cost_usd: +monthCostUsd(app, provider).toFixed(4),
+      cost_usd: +costOfRows(rows, provider, pm).toFixed(4),
       limit: lim,
     };
   });
