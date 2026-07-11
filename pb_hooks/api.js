@@ -1114,9 +1114,13 @@ function logPhoto(e) {
       ? "Estimate the nutrition of the food in this photo. Context: " + note
       : "Estimate the nutrition of the food in this photo.";
     const r = estimate(app, "vision_estimate", prompt, { mimeType: mimeType, data: data }, email);
+    // Title the entry with what the AI actually saw, not a bare "(photo)". Prefer the user's note,
+    // else summarize the identified items, else fall back.
+    const names = (r.parsed.items || []).map((i) => (i && i.name ? String(i.name) : "")).filter(Boolean);
+    const summary = names.length ? names.slice(0, 4).join(", ") + (names.length > 4 ? "…" : "") : "";
     const rec = addEntry(app, email, {
       source: "photo",
-      description: note || "(photo)",
+      description: note || summary || "(photo)",
       items: r.parsed.items,
       total: r.parsed.total,
       provider: r.provider,

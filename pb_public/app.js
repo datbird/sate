@@ -2,7 +2,7 @@
 
 // Bumped with each deploy; shown in Admin → Instance so you can confirm the loaded build at a glance
 // (if it lags the latest, the client is serving a cached bundle).
-const APP_VERSION = "v56";
+const APP_VERSION = "v57";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -854,10 +854,12 @@ function renderFeed(entries) {
   rows.forEach((en) => ul.appendChild(entryLi(en)));
 }
 
-function entryLi(en, readonly) {
-  const li = document.createElement(readonly ? "div" : "button");
-  li.className = "entry" + (readonly ? " readonly" : "");
-  li.type = readonly ? "" : "button";
+const ICON_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+const ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>';
+
+function entryLi(en) {
+  const li = document.createElement("div");
+  li.className = "entry";
   const activity = en.kind === "activity";
   const items = (en.items || []).map((i) => i.name).join(", ");
   const title = en.description || items || (activity ? "Activity" : "Entry");
@@ -873,8 +875,19 @@ function entryLi(en, readonly) {
     ? `<span class="health" title="From Apple Health">${HEART}Health</span>` : "";
   li.innerHTML =
     `<span class="ticon ${activity ? "a" : "n"}">${activity ? TICON.a : TICON.n}</span>` +
-    `<span class="etext"><span class="t">${escapeHtml(title)}${badge}</span><span class="s">${escapeHtml(sub)}</span></span>` + kcal;
-  if (!readonly) li.addEventListener("click", () => openEdit(en));
+    `<span class="etext"><span class="t">${escapeHtml(title)}${badge}</span><span class="s">${escapeHtml(sub)}</span></span>` +
+    kcal +
+    `<span class="eactions">` +
+    `<button class="eact" type="button" data-edit title="Edit" aria-label="Edit">${ICON_EDIT}</button>` +
+    `<button class="eact del" type="button" data-del title="Delete" aria-label="Delete">${ICON_TRASH}</button>` +
+    `</span>`;
+  li.querySelector("[data-edit]").addEventListener("click", (ev) => { ev.stopPropagation(); openEdit(en); });
+  li.querySelector("[data-del]").addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    if (!confirm("Delete this " + (activity ? "activity" : "food") + " entry?")) return;
+    try { await deleteEntry(en.id); toast("Deleted"); } catch (e) { toast(e.message); }
+  });
+  li.addEventListener("click", () => openEdit(en));
   return li;
 }
 
@@ -887,7 +900,12 @@ function timeOf(iso) {
 
 async function deleteEntry(id) {
   await api("/entries/" + id, { method: "DELETE" });
-  renderHome();
+  afterEntryChange();
+}
+// Refresh whichever log view is showing after an edit/delete (Home feed or History).
+function afterEntryChange() {
+  const h = document.getElementById("view-history");
+  if (h && !h.hidden) loadHistory(); else renderHome();
 }
 
 // --------------------------------------------------------------- logging flows
@@ -1034,7 +1052,7 @@ async function applyEdit(payload) {
   try {
     const r = await api("/entries/" + editEntry.id, { method: "PATCH", body: JSON.stringify(payload) });
     toast(`Updated to ${fmt(r.entry.kcal)} ${r.entry.kind === "activity" ? "cal" : "kcal"}.`);
-    renderHome();
+    afterEntryChange();
   } catch (e) { toast(e.message); }
 }
 
@@ -1277,7 +1295,7 @@ async function loadHistory() {
   const ul = $("#histEntries");
   ul.innerHTML = "";
   if (!data.entries.length) ul.innerHTML = '<li class="hint">No entries for this day.</li>';
-  data.entries.forEach((en) => ul.appendChild(entryLi(en, true)));
+  data.entries.forEach((en) => ul.appendChild(entryLi(en)));
 }
 $("#histDate").addEventListener("change", loadHistory);
 $("#summaryBtn").addEventListener("click", async () => {

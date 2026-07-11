@@ -663,6 +663,11 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .ekcal { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 14px; flex: none; }
 .ekcal.out { color: var(--activity); }
 .ekcal small { font-weight: 500; color: var(--muted); font-size: 11px; }
+.eactions { display: flex; align-items: center; gap: 1px; flex: none; margin-left: 2px; }
+.eact { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 7px; border-radius: 8px; display: inline-flex; -webkit-tap-highlight-color: transparent; }
+.eact svg { width: 17px; height: 17px; }
+.eact:active { background: var(--bg); }
+.eact.del { color: var(--danger, #dc2626); }
 .health { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 600;
   color: #e0245e; background: color-mix(in srgb, #e0245e 12%, transparent); padding: 1px 6px; border-radius: 999px; }
 .health svg { width: 11px; height: 11px; }
