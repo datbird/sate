@@ -2,7 +2,7 @@
 
 // Bumped with each deploy; shown in Admin → Instance so you can confirm the loaded build at a glance
 // (if it lags the latest, the client is serving a cached bundle).
-const APP_VERSION = "v60";
+const APP_VERSION = "v61";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -848,6 +848,24 @@ $("#addBg").addEventListener("click", closeAdd);
 $("#editBg").addEventListener("click", closeEdit);
 $("#mfBg").addEventListener("click", closeManualFood);
 $("#fsBg").addEventListener("click", closeFoodSearch);
+
+// Keyboard-aware bottom sheets: track the visual viewport and publish the on-screen keyboard
+// height as --kb, so .sheet lifts above the keyboard and shrinks to the visible area (iOS
+// otherwise anchors position:fixed to the layout viewport, burying the sheet behind the keyboard).
+(function () {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  let raf = 0;
+  const apply = () => {
+    raf = 0;
+    const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    document.documentElement.style.setProperty("--kb", kb + "px");
+  };
+  const schedule = () => { if (!raf) raf = requestAnimationFrame(apply); };
+  vv.addEventListener("resize", schedule);
+  vv.addEventListener("scroll", schedule);
+  apply();
+})();
 $$("#addScope button").forEach((b) => b.addEventListener("click", () => setAddTab(b.dataset.add)));
 
 function renderFeed(entries) {
@@ -1079,7 +1097,7 @@ function openManualFood(name) {
       `<label class="mfield"><span>${label}${u ? ` <em>(${u})</em>` : ""}</span><input type="number" step="any" inputmode="decimal" data-mf="${k}"></label>`).join("") + `</div>` +
     `<div class="sheet-actions"><button class="primary" id="mfSave" style="flex:1">Add &amp; log</button></div>`;
   $("#mfSave").addEventListener("click", saveManualFood);
-  $("#mfBg").hidden = false; $("#mfSheet").hidden = false;
+  $("#mfBg").hidden = false; $("#mfSheet").hidden = false; $("#mfSheet").scrollTop = 0;
   setTimeout(() => $("#mfName").focus(), 60);
 }
 function closeManualFood() { $("#mfBg").hidden = true; $("#mfSheet").hidden = true; }

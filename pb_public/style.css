@@ -11,6 +11,7 @@
   --radius: 14px;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
   --hi: rgba(255, 255, 255, 0.5);
+  --kb: 0px; /* on-screen keyboard height, kept live by the visualViewport listener */
 }
 :root[data-theme="dark"] {
   --bg: #0f1113;
@@ -675,9 +676,17 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 /* bottom-sheet overlays (compose + edit). [hidden] must beat the transform display. */
 .sheet-bg[hidden], .sheet[hidden] { display: none; }
 .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 40; }
-.sheet { position: fixed; left: 0; right: 0; bottom: 0; max-width: 480px; margin: 0 auto; z-index: 41;
+.sheet { position: fixed; left: 0; right: 0; bottom: var(--kb); max-width: 480px; margin: 0 auto; z-index: 41;
   background: var(--card); border-radius: 20px 20px 0 0; padding: 8px 16px calc(20px + env(safe-area-inset-bottom));
-  max-height: 88vh; overflow: auto; box-shadow: 0 -8px 40px rgba(0,0,0,.35); }
+  max-height: calc(100dvh - var(--kb) - env(safe-area-inset-top) - 18px);
+  overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  box-shadow: 0 -8px 40px rgba(0,0,0,.35); transition: bottom .18s ease, max-height .18s ease; }
+/* Search overlay: header + input stay put, only the results list scrolls (so the keyboard never
+   buries the field and you never have to scroll back up to the top). */
+.fssheet { display: flex; flex-direction: column; overflow: hidden; }
+.fssheet #fsBody { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.fssheet .search { flex: none; }
+.fsresults { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 6px auto 12px; }
 .sheet h3 { margin: 2px 0 12px; font-size: 18px; }
 .search { display: flex; align-items: center; gap: 9px; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 12px; padding: 11px 13px; }
@@ -699,9 +708,8 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .res .add { color: var(--brand); font-size: 22px; font-weight: 400; }
 .res.act { border: 1px dashed color-mix(in srgb, var(--brand) 35%, var(--line)); margin-bottom: 2px; }
 .res.act .add { font-size: 18px; color: var(--muted); }
-.fsresults { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
 .fsdetail h4 { margin: 8px 0 2px; font-size: 16px; }
-.kvs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin: 8px 0 4px; }
+.kvs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; margin: 8px 0 4px; }
 .kv { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
 .kv span { color: var(--muted); }
 .aibtn { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 12px; justify-content: center;
@@ -725,6 +733,6 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .mfield > span { font-size: 12px; color: var(--muted); }
 .mfield > span em { font-style: normal; opacity: .7; }
 .mfield input { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 16px; min-width: 0; }
-.manualgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; margin: 6px 0 4px; }
-.manualgrid .mfield { margin: 0; }
+.manualgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; margin: 6px 0 4px; }
+.manualgrid .mfield { margin: 0; min-width: 0; }
 .danger-btn { background: transparent; border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--line)); color: var(--danger); border-radius: 10px; padding: 12px 16px; font: inherit; font-weight: 600; cursor: pointer; }
