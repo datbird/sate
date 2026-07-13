@@ -12,6 +12,7 @@
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
   --hi: rgba(255, 255, 255, 0.5);
   --kb: 0px; /* on-screen keyboard height, kept live by the visualViewport listener */
+  --sheet-max: 85dvh; /* px cap for bottom sheets = visible area above keyboard (JS overrides in px) */
 }
 :root[data-theme="dark"] {
   --bg: #0f1113;
@@ -681,7 +682,7 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 body.sheet-open { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
 .sheet { position: fixed; left: 0; right: 0; bottom: var(--kb); max-width: 480px; margin: 0 auto; z-index: 41;
   background: var(--card); border-radius: 20px 20px 0 0; padding: 8px 16px calc(20px + env(safe-area-inset-bottom));
-  max-height: calc(100dvh - var(--kb) - env(safe-area-inset-top) - 18px);
+  max-height: var(--sheet-max);
   overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch;
   box-shadow: 0 -8px 40px rgba(0,0,0,.35); transition: bottom .18s ease, max-height .18s ease; }
 /* Search overlay: header + input stay put, only the results list scrolls (so the keyboard never

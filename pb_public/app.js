@@ -2,7 +2,7 @@
 
 // Bumped with each deploy; shown in Admin → Instance so you can confirm the loaded build at a glance
 // (if it lags the latest, the client is serving a cached bundle).
-const APP_VERSION = "v63";
+const APP_VERSION = "v64";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -860,6 +860,10 @@ $("#fsBg").addEventListener("click", closeFoodSearch);
     raf = 0;
     const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
     document.documentElement.style.setProperty("--kb", kb + "px");
+    // Concrete px cap for sheets = the visible area above the keyboard. iOS WKWebView does NOT
+    // reliably honor `max-height: calc(100dvh - …)` on a position:fixed element, so the sheet grew
+    // to full content height and its top (the pinned input) pushed off-screen. A px value works.
+    document.documentElement.style.setProperty("--sheet-max", Math.max(220, Math.round(vv.height - 12)) + "px");
   };
   const schedule = () => { if (!raf) raf = requestAnimationFrame(apply); };
   vv.addEventListener("resize", schedule);
