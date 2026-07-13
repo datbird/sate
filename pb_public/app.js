@@ -2,7 +2,7 @@
 
 // Bumped with each deploy; shown in Admin → Instance so you can confirm the loaded build at a glance
 // (if it lags the latest, the client is serving a cached bundle).
-const APP_VERSION = "v58";
+const APP_VERSION = "v60";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -846,6 +846,8 @@ segControl("#charts", "chart", () => api("/stats?range=" + HOME.range).then(rend
 $("#addBtn").addEventListener("click", openAdd);
 $("#addBg").addEventListener("click", closeAdd);
 $("#editBg").addEventListener("click", closeEdit);
+$("#mfBg").addEventListener("click", closeManualFood);
+$("#fsBg").addEventListener("click", closeFoodSearch);
 $$("#addScope button").forEach((b) => b.addEventListener("click", () => setAddTab(b.dataset.add)));
 
 function renderFeed(entries) {
@@ -872,8 +874,8 @@ function entryLi(en) {
   const title = en.description || items || (activity ? "Activity" : "Entry");
   const timeStr = timeOf(en.logged_at);
   const sub = activity
-    ? [timeStr, en.duration_min ? Math.round(en.duration_min) + " min" : "", en.intensity].filter(Boolean).join(" · ")
-    : [timeStr, items || en.source].filter(Boolean).join(" · ");
+    ? [timeStr, en.duration_min ? Math.round(en.duration_min) + " min" : "", en.intensity, en.note].filter(Boolean).join(" · ")
+    : [timeStr, items || en.source, en.note].filter(Boolean).join(" · ");
   const kcal = activity
     ? `<span class="ekcal out">−${fmt(en.kcal)}<small> cal</small></span>`
     : `<span class="ekcal">${fmt(en.kcal)}<small> kcal</small></span>`;
@@ -981,13 +983,15 @@ function renderAddBody() {
     b.innerHTML =
       `<div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h7" stroke-linecap="round"/></svg>` +
       `<input id="mealInput" placeholder="What did you eat? e.g. two eggs and toast" autocomplete="off"></div>` +
+      `<div class="reslist" id="mealResults"></div>` +
       `<div class="methods">` +
       `<button class="method" id="mBarcode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 5v14M7 5v14M11 5v14M14 5v14M18 5v14M21 5v14"/></svg><b>Barcode</b><span>scan a package</span></button>` +
       `<button class="method" id="mPhoto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="3"/><circle cx="12" cy="13.5" r="3.5"/><path d="M9 7l1.5-2h3L15 7"/></svg><b>Photo AI</b><span>snap your plate</span></button>` +
       `</div>` +
-      `<button class="aibtn" id="mLog" style="background:var(--brand);color:var(--brand-ink);border-style:solid;border-color:var(--brand)">Log this meal</button>`;
+      `<button class="aibtn" id="mLog" style="background:var(--brand);color:var(--brand-ink);border-style:solid;border-color:var(--brand)">Log with AI estimate</button>`;
     const inp = $("#mealInput");
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") logMeal(inp.value); });
+    inp.addEventListener("input", () => { clearTimeout(mealTimer); mealTimer = setTimeout(runMealSearch, 180); });
     $("#mLog").addEventListener("click", () => logMeal(inp.value));
     $("#mBarcode").addEventListener("click", () => { closeAdd(); openScanner(); });
     $("#mPhoto").addEventListener("click", () => $("#photoInput").click());
@@ -1019,14 +1023,182 @@ function renderAddBody() {
   }
 }
 
+// -------------------------------------------------- food autocomplete + search
+let mealTimer = null;
+let mealFoods = [];
+function n1(x) { return Math.round((+x || 0) * 10) / 10; }
+
+// Live dropdown under the "What did you eat?" input: two pinned actions on top
+// (add manually / search the internet), then matching foods from your database.
+async function runMealSearch() {
+  const inp = $("#mealInput");
+  const box = $("#mealResults");
+  if (!inp || !box) return;
+  const q = inp.value.trim();
+  if (!q) { box.innerHTML = ""; mealFoods = []; return; }
+  try { mealFoods = (await api("/foods/search?q=" + encodeURIComponent(q))).foods || []; }
+  catch (_) { mealFoods = []; }
+  if ($("#mealInput") !== inp || inp.value.trim() !== q) return; // a newer keystroke won
+  const esc = escapeHtml(q);
+  let html =
+    `<button class="res act" data-mact="manual"><div class="rt"><b>➕ Add “${esc}” manually</b><span>enter the nutrition facts yourself</span></div><span class="add">›</span></button>` +
+    `<button class="res act" data-mact="web"><div class="rt"><b>🔎 Search the internet for “${esc}”</b><span>your database, USDA, Open Food Facts &amp; the web</span></div><span class="add">›</span></button>`;
+  if (mealFoods.length) {
+    html += `<div class="grouplbl">In your database</div>` + mealFoods.map((f, i) => foodResRow(f, i)).join("");
+  }
+  box.innerHTML = html;
+  $("#mealResults [data-mact='manual']").addEventListener("click", () => openManualFood(q));
+  $("#mealResults [data-mact='web']").addEventListener("click", () => openFoodSearch(q));
+  $$("#mealResults .res.food").forEach((el) => el.addEventListener("click", () => pickFood(mealFoods[+el.dataset.i])));
+}
+function foodResRow(f, i) {
+  const brand = f.brand ? " · " + escapeHtml(f.brand) : "";
+  return `<button class="res food" data-i="${i}"><div class="rt"><b>${escapeHtml(f.name)}</b>` +
+    `<span>${escapeHtml(f.serving_desc || "1 serving")}${brand} · ${Math.round(f.kcal)} kcal · ${Math.round(f.protein || 0)}P ${Math.round(f.carbs || 0)}C ${Math.round(f.fat || 0)}F</span></div>` +
+    `<span class="add">+</span></button>`;
+}
+async function pickFood(f) {
+  if (!f) return;
+  closeAdd();
+  toast("Logging…");
+  try {
+    const r = await api("/log/food", { method: "POST", body: JSON.stringify({ food_id: f.id }) });
+    toast(`Logged ${fmt(r.entry.kcal)} kcal.`);
+    afterEntryChange();
+  } catch (e) { toast(e.message); }
+}
+
+// "Add manually" — a food editor prefilled with the typed name; saves to your DB and logs it.
+function openManualFood(name) {
+  const fields = MANUAL_FIELDS.food;
+  $("#mfBody").innerHTML =
+    `<label class="mfield"><span>Name</span><input id="mfName" maxlength="200" value="${escapeHtml(name || "")}" placeholder="e.g. Grandma's chili"></label>` +
+    `<label class="mfield"><span>Serving <em>(optional)</em></span><input id="mfServing" maxlength="40" placeholder="e.g. 1 cup"></label>` +
+    `<label class="mfield"><span>Note <em>(optional)</em></span><input id="mfNote" maxlength="2000" placeholder="Add a note…"></label>` +
+    `<div class="manualgrid">` + fields.map(([k, label, u]) =>
+      `<label class="mfield"><span>${label}${u ? ` <em>(${u})</em>` : ""}</span><input type="number" step="any" inputmode="decimal" data-mf="${k}"></label>`).join("") + `</div>` +
+    `<div class="sheet-actions"><button class="primary" id="mfSave" style="flex:1">Add &amp; log</button></div>`;
+  $("#mfSave").addEventListener("click", saveManualFood);
+  $("#mfBg").hidden = false; $("#mfSheet").hidden = false;
+  setTimeout(() => $("#mfName").focus(), 60);
+}
+function closeManualFood() { $("#mfBg").hidden = true; $("#mfSheet").hidden = true; }
+async function saveManualFood() {
+  const name = $("#mfName").value.trim();
+  if (!name) { toast("Name is required"); return; }
+  const payload = { name: name, serving_desc: $("#mfServing").value.trim(), note: $("#mfNote").value.trim() };
+  $$("#mfBody [data-mf]").forEach((inp) => { const raw = inp.value.trim(); if (raw !== "" && !isNaN(+raw)) payload[inp.dataset.mf] = +raw; });
+  closeManualFood(); closeAdd();
+  toast("Adding…");
+  try {
+    const r = await api("/foods/manual", { method: "POST", body: JSON.stringify(payload) });
+    toast(`Logged ${fmt(r.entry.kcal)} kcal.`);
+    afterEntryChange();
+  } catch (e) { toast(e.message); }
+}
+
+// Internet search overlay — a taller, scrollable sheet of results from every source.
+const FS_SOURCE = { local: "In your database", usda: "USDA FoodData Central", off: "Open Food Facts", web: "From the web (AI)" };
+const FS_ORDER = ["local", "usda", "off", "web"];
+let fsResults = [];
+let fsSeq = 0;
+function openFoodSearch(q) {
+  $("#fsBody").innerHTML =
+    `<div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4" stroke-linecap="round"/></svg>` +
+    `<input id="fsInput" value="${escapeHtml(q || "")}" placeholder="Search foods…" autocomplete="off"></div>` +
+    `<div class="fsresults" id="fsResults"></div>`;
+  const inp = $("#fsInput");
+  inp.addEventListener("keydown", (e) => { if (e.key === "Enter") runFoodSearch(inp.value.trim()); });
+  $("#fsBg").hidden = false; $("#fsSheet").hidden = false;
+  runFoodSearch(q);
+  setTimeout(() => inp.focus(), 60);
+}
+function closeFoodSearch() { $("#fsBg").hidden = true; $("#fsSheet").hidden = true; }
+async function runFoodSearch(q) {
+  q = (q || "").trim();
+  const box = $("#fsResults");
+  if (!q) { box.innerHTML = `<div class="grouplbl">Type something to search.</div>`; return; }
+  const seq = ++fsSeq;
+  fsResults = [];
+  box.innerHTML = `<div class="grouplbl">Searching your database, USDA &amp; Open Food Facts…</div>`;
+  try {
+    const r = await api("/foods/search-online?q=" + encodeURIComponent(q));
+    if (seq !== fsSeq) return;
+    fsResults = r.results || [];
+  } catch (e) { if (seq === fsSeq) box.innerHTML = `<div class="grouplbl">${escapeHtml(e.message || "Search failed")}</div>`; }
+  renderFsResults();
+  // AI/web candidate streams in separately so it never blocks the structured results.
+  api("/foods/web-candidate", { method: "POST", body: JSON.stringify({ q: q }) })
+    .then((r) => { if (seq === fsSeq && r && r.result) { fsResults.push(r.result); renderFsResults(); } })
+    .catch(() => {});
+}
+function renderFsResults() {
+  const box = $("#fsResults");
+  if (!fsResults.length) {
+    box.innerHTML = `<div class="grouplbl">No matches yet — the AI web result may still be loading, or add it manually.</div>`;
+    return;
+  }
+  const groups = {};
+  fsResults.forEach((r, i) => { (groups[r.source] = groups[r.source] || []).push(i); });
+  let html = "";
+  FS_ORDER.forEach((s) => {
+    if (!groups[s]) return;
+    html += `<div class="grouplbl">${FS_SOURCE[s] || s}</div>`;
+    html += groups[s].map((i) => {
+      const f = fsResults[i], brand = f.brand ? " · " + escapeHtml(f.brand) : "";
+      return `<button class="res" data-i="${i}"><div class="rt"><b>${escapeHtml(f.name)}</b>` +
+        `<span>${escapeHtml(f.serving_desc || "1 serving")}${brand} · ${Math.round(f.kcal)} kcal · ${Math.round(f.protein || 0)}P ${Math.round(f.carbs || 0)}C ${Math.round(f.fat || 0)}F</span></div>` +
+        `<span class="add">›</span></button>`;
+    }).join("");
+  });
+  box.innerHTML = html;
+  $$("#fsResults .res").forEach((el) => el.addEventListener("click", () => openFsDetail(+el.dataset.i)));
+}
+function openFsDetail(i) {
+  const f = fsResults[i];
+  if (!f) return;
+  const rows = [["Serving", escapeHtml(f.serving_desc || "1 serving")], ["Calories", Math.round(f.kcal) + " kcal"],
+    ["Protein", n1(f.protein) + " g"], ["Carbs", n1(f.carbs) + " g"], ["Fat", n1(f.fat) + " g"],
+    ["Fiber", n1(f.fiber) + " g"], ["Sugar", n1(f.sugar) + " g"], ["Sodium", Math.round(f.sodium || 0) + " mg"], ["Sat. fat", n1(f.sat_fat) + " g"]];
+  $("#fsResults").innerHTML =
+    `<button class="link" id="fsBack">‹ Back to results</button>` +
+    `<div class="fsdetail"><h4>${escapeHtml(f.name)}${f.brand ? ` <span class="muted">${escapeHtml(f.brand)}</span>` : ""}</h4>` +
+    `<div class="muted" style="font-size:12px;margin-bottom:8px">${FS_SOURCE[f.source] || f.source}</div>` +
+    `<div class="kvs">${rows.map(([k, v]) => `<div class="kv"><span>${k}</span><b>${v}</b></div>`).join("")}</div>` +
+    `<div class="sheet-actions"><button class="primary" id="fsAccept" style="flex:1">Accept &amp; log this</button></div>` +
+    `<div class="subline" style="text-align:left;margin-top:8px">We'll ask AI to tidy the numbers, fill any gaps, and save it to your database.</div></div>`;
+  $("#fsBack").addEventListener("click", renderFsResults);
+  $("#fsAccept").addEventListener("click", () => acceptFood(f));
+}
+async function acceptFood(f) {
+  toast("Normalizing with AI…");
+  try {
+    const r = await api("/foods/accept", { method: "POST", body: JSON.stringify({ candidate: f }) });
+    closeFoodSearch(); closeAdd();
+    toast(`Logged ${fmt(r.entry.kcal)} kcal.`);
+    afterEntryChange();
+  } catch (e) { toast(e.message); }
+}
+
 // ------------------------------------------------------------------- edit sheet
 let editEntry = null;
+// Editable numeric fields per entry kind, for the "edit manually" section.
+const MANUAL_FIELDS = {
+  food: [["kcal", "Calories", "kcal"], ["protein", "Protein", "g"], ["carbs", "Carbs", "g"], ["fat", "Fat", "g"],
+    ["fiber", "Fiber", "g"], ["sugar", "Sugar", "g"], ["sodium", "Sodium", "mg"], ["sat_fat", "Sat. fat", "g"]],
+  activity: [["kcal", "Calories burned", "cal"], ["duration_min", "Duration", "min"], ["distance", "Distance", "mi"]],
+};
 function openEdit(en) {
   editEntry = en;
   const activity = en.kind === "activity";
   $("#editTitle").textContent = en.description || "Edit entry";
   const unit = activity ? "cal burned" : "kcal";
   const scales = [["½", 0.5], ["¾", 0.75], ["1¼", 1.25], ["1½", 1.5], ["2×", 2]];
+  const fields = MANUAL_FIELDS[activity ? "activity" : "food"];
+  const numFor = (k) => { const v = en[k]; return v === undefined || v === null ? "" : (Math.round(v * 100) / 100); };
+  const manualCells = fields.map(([k, label, u]) =>
+    `<label class="mfield"><span>${label}${u ? ` <em>(${u})</em>` : ""}</span>` +
+    `<input type="number" step="any" inputmode="decimal" data-mnum="${k}" value="${numFor(k)}"></label>`).join("");
   $("#editBody").innerHTML =
     `<div class="subline" style="text-align:left;margin:0 0 10px">Currently <b style="color:var(--ink)">${fmt(en.kcal)} ${unit}</b>${activity && en.duration_min ? " · " + Math.round(en.duration_min) + " min" : ""}</div>` +
     `<div class="menu-label" style="padding-left:0">Adjust the amount</div>` +
@@ -1034,13 +1206,31 @@ function openEdit(en) {
     `<div class="menu-label" style="padding-left:0">${activity ? "Or re-describe the workout" : "Or re-describe the meal"}</div>` +
     `<div class="editrow"><input id="editText" placeholder="${activity ? "e.g. a 5 mile run" : "e.g. half a cup of rice"}" value="${escapeHtml(en.description || "")}"></div>` +
     `<div class="sheet-actions"><button class="primary" id="editApply" style="flex:1">Re-estimate</button><button class="danger-btn" id="editDelete">Delete</button></div>` +
-    (en.description && en.description !== "(photo)" && !(ME && ME.second_opinion_enabled === false) ? `<div class="row" style="margin-top:8px"><button class="link" id="editSecond">🔀 Get a second opinion</button></div><div id="secondPanel"></div>` : "");
+    (en.description && en.description !== "(photo)" && !(ME && ME.second_opinion_enabled === false) ? `<div class="row" style="margin-top:8px"><button class="link" id="editSecond">🔀 Get a second opinion</button></div><div id="secondPanel"></div>` : "") +
+    `<div class="menu-label" style="padding-left:0;margin-top:14px">Or edit the details manually</div>` +
+    `<label class="mfield"><span>Name</span><input id="mName" maxlength="2000" value="${escapeHtml(en.description || "")}" placeholder="${activity ? "e.g. Morning run" : "e.g. Chicken and rice"}"></label>` +
+    `<label class="mfield"><span>Description <em>(optional)</em></span><input id="mNote" maxlength="2000" value="${escapeHtml(en.note || "")}" placeholder="Add a note…"></label>` +
+    `<div class="manualgrid">${manualCells}</div>` +
+    `<div class="sheet-actions"><button class="primary" id="mSave" style="flex:1">Save changes</button></div>`;
   $$("#editBody [data-scale]").forEach((b) => b.addEventListener("click", () => applyEdit({ scale: +b.dataset.scale })));
   $("#editApply").addEventListener("click", () => applyEdit({ re_estimate: true, text: $("#editText").value }));
   $("#editDelete").addEventListener("click", async () => { await deleteEntry(en.id); closeEdit(); });
+  $("#mSave").addEventListener("click", saveManualEdit);
   const secondBtn = $("#editSecond");
   if (secondBtn) secondBtn.addEventListener("click", () => requestSecondOpinion(en, secondBtn));
   $("#editBg").hidden = false; $("#editSheet").hidden = false;
+}
+// Apply the hand-typed name / note / numbers. Blank number fields are left unchanged;
+// a typed value (including 0) overrides. Tags the entry source as user-provided.
+function saveManualEdit() {
+  const payload = { manual: true, description: $("#mName").value.trim(), note: $("#mNote").value.trim() };
+  $$("#editBody [data-mnum]").forEach((inp) => {
+    const raw = inp.value.trim();
+    if (raw === "") return;
+    const n = Number(raw);
+    if (!isNaN(n)) payload[inp.dataset.mnum] = n;
+  });
+  applyEdit(payload);
 }
 function closeEdit() { $("#editBg").hidden = true; $("#editSheet").hidden = true; editEntry = null; }
 async function applyEdit(payload) {

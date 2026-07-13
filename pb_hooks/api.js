@@ -206,6 +206,7 @@ function entryJSON(rec) {
     logged_at: rec.getString("logged_at"),
     source: rec.getString("source"),
     description: rec.getString("description"),
+    note: rec.getString("note"),
     items: readItems(rec),
     duration_min: rec.getFloat("duration_min"),
     distance: rec.getFloat("distance"),
@@ -298,6 +299,7 @@ function addEntry(app, email, data) {
   rec.set("kind", data.kind || "food");
   rec.set("source", data.source);
   rec.set("description", data.description || "");
+  if (data.note !== undefined) rec.set("note", String(data.note || ""));
   rec.set("items", data.items || []);
   rec.set("duration_min", num(data.duration_min));
   rec.set("distance", num(data.distance));
@@ -1998,10 +2000,16 @@ function updateEntry(e) {
 
     // Direct overrides (applied after scale/re-estimate).
     if (b.kcal !== undefined) rec.set("kcal", num(b.kcal));
+    for (const k of ["protein", "carbs", "fat", "fiber", "sugar", "sodium", "sat_fat"]) {
+      if (b[k] !== undefined) rec.set(k, num(b[k]));
+    }
     if (b.duration_min !== undefined) rec.set("duration_min", num(b.duration_min));
     if (b.distance !== undefined) rec.set("distance", num(b.distance));
     if (b.intensity !== undefined) rec.set("intensity", String(b.intensity));
-    if (b.description !== undefined) rec.set("description", String(b.description));
+    if (b.description !== undefined) rec.set("description", String(b.description).slice(0, 2000));
+    if (b.note !== undefined) rec.set("note", String(b.note).slice(0, 2000));
+    // A hand-edited entry is honestly tagged as user-provided.
+    if (b.manual) rec.set("source", "manual");
 
     app.save(rec);
     return e.json(200, { entry: entryJSON(rec), totals: sumTotals(dayEntries(app, email, todayStr())) });
@@ -2652,6 +2660,290 @@ function adminDeleteFood(e) {
   return e.json(200, { deleted: id });
 }
 
+// ============================================================================
+// Consumer food search + pick/manual/online-accept (the "What did you eat?" flow)
+// ============================================================================
+
+// A food record → the shape the composer autocomplete and search overlay expect.
+function foodPickJSON(r) {
+  return {
+    id: r.id, source: "local",
+    name: r.getString("name"), brand: r.getString("brand"),
+    serving_desc: r.getString("serving_desc") || "1 serving",
+    kcal: r.getFloat("kcal"), protein: r.getFloat("protein"), carbs: r.getFloat("carbs"), fat: r.getFloat("fat"),
+    fiber: r.getFloat("fiber"), sugar: r.getFloat("sugar"), sodium: r.getFloat("sodium"), sat_fat: r.getFloat("sat_fat"),
+  };
+}
+
+// GET /api/sate/foods/search?q= — local DB matches for the composer autocomplete dropdown.
+function foodsSearch(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const term = FOODS.norm((e.requestInfo().query || {}).q || "");
+  let recs = [];
+  try {
+    recs = term
+      ? app.findRecordsByFilter("foods", "search ~ {:t}", "-verified,-usage_count,name", 12, 0, { t: term })
+      : app.findRecordsByFilter("foods", "id != ''", "-usage_count,name", 12, 0, {});
+  } catch (_) { recs = []; }
+  return e.json(200, { foods: recs.map(foodPickJSON) });
+}
+
+// Build the per-serving totals for `servings` of a food record (no AI).
+function foodTotals(f, servings) {
+  const s = servings > 0 ? servings : 1;
+  return {
+    kcal: Math.round(f.getFloat("kcal") * s),
+    protein: r1x(f.getFloat("protein") * s), carbs: r1x(f.getFloat("carbs") * s), fat: r1x(f.getFloat("fat") * s),
+    fiber: r1x(f.getFloat("fiber") * s), sugar: r1x(f.getFloat("sugar") * s),
+    sodium: Math.round(f.getFloat("sodium") * s), sat_fat: r1x(f.getFloat("sat_fat") * s),
+  };
+}
+
+// POST /api/sate/log/food { food_id, servings } — log a known food straight from its stored
+// nutrition. No AI round-trip.
+function logFood(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const b = e.requestInfo().body || {};
+  const servings = num(b.servings) > 0 ? num(b.servings) : 1;
+  let f;
+  try { f = app.findRecordById("foods", String(b.food_id)); } catch (_) { return e.json(404, { error: "food not found" }); }
+  const total = foodTotals(f, servings);
+  const brand = f.getString("brand");
+  const name = f.getString("name") + (brand ? " (" + brand + ")" : "");
+  const qty = (servings === 1 ? "" : servings + "× ") + (f.getString("serving_desc") || "1 serving");
+  const items = [{ name: f.getString("name"), qty: qty, kcal: total.kcal, protein: total.protein, carbs: total.carbs, fat: total.fat }];
+  try { FOODS.bumpUsage(app, [f]); } catch (_) {}
+  const rec = addEntry(app, email, { kind: "food", source: "db", description: name, items: items, total: total });
+  return e.json(200, { entry: entryJSON(rec), totals: sumTotals(dayEntries(app, email, todayStr())) });
+}
+
+// Save (or bump) a food record from a plain nutrition object. Never overwrites a verified/seed row.
+function upsertFoodRecord(app, name, brand, serving, total, source) {
+  const key = FOODS.normKey(name, brand || "");
+  let rec = null;
+  try { rec = app.findFirstRecordByFilter("foods", "norm_key = {:k}", { k: key }); } catch (_) {}
+  const isNew = !rec;
+  if (isNew) {
+    rec = new Record(app.findCollectionByNameOrId("foods"));
+    rec.set("name", name); rec.set("brand", brand || ""); rec.set("category", ""); rec.set("aliases", []);
+    rec.set("verified", false); rec.set("usage_count", 0); rec.set("norm_key", key);
+    rec.set("search", (name + " " + (brand || "")).toLowerCase());
+  }
+  const protect = rec.getBool("verified") || rec.getString("source") === "seed";
+  if (isNew || !protect) {
+    rec.set("serving_desc", serving);
+    for (const k of ["kcal", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "sat_fat"]) rec.set(k, num(total[k]));
+    rec.set("source", source);
+  }
+  rec.set("usage_count", (rec.getFloat("usage_count") || 0) + 1);
+  app.save(rec);
+  return rec;
+}
+
+// POST /api/sate/foods/manual { name, serving_desc, note, kcal, protein, ... } — the "Add manually"
+// action: save a user-entered food to the DB (reusable) and log it now.
+function foodsManual(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const b = e.requestInfo().body || {};
+  const name = String(b.name || "").trim();
+  if (!name) return e.json(400, { error: "name is required" });
+  const total = {};
+  for (const k of ["kcal", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "sat_fat"]) total[k] = num(b[k]);
+  const serving = String(b.serving_desc || "").trim() || "1 serving";
+  try { upsertFoodRecord(app, name, "", serving, total, "manual"); } catch (_) {}
+  const items = [{ name: name, qty: serving, kcal: total.kcal, protein: total.protein, carbs: total.carbs, fat: total.fat }];
+  const rec = addEntry(app, email, { kind: "food", source: "manual", description: name, note: b.note, items: items, total: total });
+  return e.json(200, { entry: entryJSON(rec), totals: sumTotals(dayEntries(app, email, todayStr())) });
+}
+
+// Parse one USDA /foods/search hit (Branded label values, else per-100g foodNutrients) into a candidate.
+function parseUsdaFood(hit) {
+  const ln = hit.labelNutrients || {};
+  const lv = (o) => (o && isFinite(o.value)) ? Number(o.value) : 0;
+  let kcal, protein, carbs, fat, fiber, sugar, sodium, sat_fat, servingDesc, servingG;
+  if (String(hit.dataType || "") === "Branded" && lv(ln.calories) > 0) {
+    kcal = lv(ln.calories); protein = lv(ln.protein); carbs = lv(ln.carbohydrates); fat = lv(ln.fat);
+    fiber = lv(ln.fiber); sugar = lv(ln.sugars); sodium = lv(ln.sodium); sat_fat = lv(ln.saturatedFat);
+    const sg = Number(hit.servingSize) || 0;
+    servingDesc = sg ? (hit.householdServingFullText || (sg + " " + (hit.servingSizeUnit || "g"))) : "1 serving";
+    servingG = sg || 0;
+  } else {
+    const per = {};
+    for (const n of (hit.foodNutrients || [])) {
+      const id = String(n.nutrientId || n.nutrientNumber || "");
+      const v = Number(n.value); if (!isFinite(v)) continue;
+      if ((id === "1008" || id === "208" || id === "2048" || id === "2047") && per.kcal === undefined) per.kcal = v;
+      else if (id === "1003" || id === "203") per.protein = v;
+      else if (id === "1004" || id === "204") per.fat = v;
+      else if (id === "1005" || id === "205") per.carbs = v;
+      else if (id === "1079" || id === "291") per.fiber = v;
+      else if (id === "2000" || id === "269") per.sugar = v;
+      else if (id === "1093" || id === "307") per.sodium = v;
+      else if (id === "1258" || id === "606") per.sat_fat = v;
+    }
+    if (!(per.kcal > 0)) return null;
+    const sg = Number(hit.servingSize) || 0;
+    const f = sg ? sg / 100 : 1;
+    kcal = per.kcal * f; protein = (per.protein || 0) * f; carbs = (per.carbs || 0) * f; fat = (per.fat || 0) * f;
+    fiber = (per.fiber || 0) * f; sugar = (per.sugar || 0) * f; sodium = (per.sodium || 0) * f; sat_fat = (per.sat_fat || 0) * f;
+    servingDesc = sg ? (hit.householdServingFullText || (sg + " g")) : "100 g";
+    servingG = sg || 100;
+  }
+  if (!(kcal > 0)) return null;
+  return {
+    source: "usda", name: String(hit.description || "").trim().slice(0, 70),
+    brand: String(hit.brandName || hit.brandOwner || "").trim().slice(0, 40),
+    serving_desc: String(servingDesc).slice(0, 40), serving_g: Math.round(servingG),
+    kcal: Math.round(kcal), protein: r1x(protein), carbs: r1x(carbs), fat: r1x(fat),
+    fiber: r1x(fiber), sugar: r1x(sugar), sodium: Math.round(sodium), sat_fat: r1x(sat_fat),
+  };
+}
+
+// USDA FoodData Central free-text search (public domain). Returns up to 8 candidates.
+function searchUsdaText(query, apiKey) {
+  const key = apiKey || "DEMO_KEY";
+  const url = "https://api.nal.usda.gov/fdc/v1/foods/search?api_key=" + encodeURIComponent(key) +
+    "&pageSize=8&dataType=Foundation,SR%20Legacy,Branded&query=" + encodeURIComponent(query);
+  let res;
+  try { res = $http.send({ url: url, method: "GET", timeout: 20 }); } catch (_) { return []; }
+  if (res.statusCode >= 300 || !res.json) return [];
+  const out = [];
+  for (const hit of (res.json.foods || [])) { const p = parseUsdaFood(hit); if (p) out.push(p); }
+  return out;
+}
+
+// Parse one Open Food Facts product (serving values preferred, else per-100g) into a candidate.
+function parseOffProduct(p) {
+  const nut = p.nutriments || {};
+  const name = String(p.product_name || "").trim();
+  if (!name) return null;
+  const sq = Number(p.serving_quantity) || 0;
+  let kcal, protein, carbs, fat, fiber, sugar, sodium, sat_fat, servingDesc, servingG;
+  const perServ = Number(nut["energy-kcal_serving"]);
+  if (isFinite(perServ) && perServ > 0) {
+    kcal = perServ;
+    protein = num(nut["proteins_serving"]); carbs = num(nut["carbohydrates_serving"]); fat = num(nut["fat_serving"]);
+    fiber = num(nut["fiber_serving"]); sugar = num(nut["sugars_serving"]);
+    sodium = num(nut["sodium_serving"]) * 1000; sat_fat = num(nut["saturated-fat_serving"]);
+    servingDesc = String(p.serving_size || (sq ? sq + " g" : "1 serving")); servingG = sq || 0;
+  } else {
+    const f = sq ? sq / 100 : 1;
+    kcal = num(nut["energy-kcal_100g"]) * f;
+    protein = num(nut["proteins_100g"]) * f; carbs = num(nut["carbohydrates_100g"]) * f; fat = num(nut["fat_100g"]) * f;
+    fiber = num(nut["fiber_100g"]) * f; sugar = num(nut["sugars_100g"]) * f;
+    sodium = num(nut["sodium_100g"]) * 1000 * f; sat_fat = num(nut["saturated-fat_100g"]) * f;
+    servingDesc = sq ? String(p.serving_size || sq + " g") : "100 g"; servingG = sq || 100;
+  }
+  if (!(kcal > 0)) return null;
+  return {
+    source: "off", name: name.slice(0, 70), brand: String(p.brands || "").split(",")[0].trim().slice(0, 40),
+    serving_desc: String(servingDesc).slice(0, 40), serving_g: Math.round(servingG),
+    kcal: Math.round(kcal), protein: r1x(protein), carbs: r1x(carbs), fat: r1x(fat),
+    fiber: r1x(fiber), sugar: r1x(sugar), sodium: Math.round(sodium), sat_fat: r1x(sat_fat),
+  };
+}
+
+// Open Food Facts free-text product search (runtime API — not redistributed data).
+function searchOffText(query) {
+  const url = "https://world.openfoodfacts.org/cgi/search.pl?search_terms=" + encodeURIComponent(query) +
+    "&search_simple=1&action=process&json=1&page_size=8" +
+    "&fields=product_name,brands,serving_size,serving_quantity,nutriments";
+  let res;
+  try { res = $http.send({ url: url, method: "GET", headers: { "User-Agent": "Sate/1.0 (self-hosted calorie app)" }, timeout: 20 }); }
+  catch (_) { return []; }
+  if (res.statusCode >= 300 || !res.json) return [];
+  const out = [];
+  for (const p of (res.json.products || [])) { const c = parseOffProduct(p); if (c) out.push(c); }
+  return out;
+}
+
+// GET /api/sate/foods/search-online?q= — aggregate the fast, free structured sources
+// (your DB + USDA + Open Food Facts). The AI/web candidate is a separate call (foodsWebCandidate)
+// so the overlay can show these instantly and stream the AI result in.
+function foodsSearchOnline(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const q = String((e.requestInfo().query || {}).q || "").trim();
+  if (!q) return e.json(200, { results: [] });
+  const out = [];
+  try {
+    const recs = app.findRecordsByFilter("foods", "search ~ {:t}", "-verified,-usage_count,name", 8, 0, { t: FOODS.norm(q) });
+    for (const r of recs) out.push(foodPickJSON(r));
+  } catch (_) {}
+  const cfg = lookupCfg(app);
+  try { for (const c of searchUsdaText(q, cfg.usdaKey)) out.push(c); } catch (_) {}
+  try { for (const c of searchOffText(q)) out.push(c); } catch (_) {}
+  return e.json(200, { results: out });
+}
+
+// POST /api/sate/foods/web-candidate { q } — one AI/web-grounded best guess (Google grounding).
+// Best-effort: returns { result: null } rather than erroring so the overlay just skips it.
+function foodsWebCandidate(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const q = String((e.requestInfo().body || {}).q || "").trim();
+  if (!q) return e.json(400, { error: "query required" });
+  try {
+    const r = webEstimate(app, q, email);
+    const t = (r.parsed && r.parsed.total) || {};
+    const first = ((r.parsed && r.parsed.items) || [])[0] || {};
+    if (!(num(t.kcal) > 0)) return e.json(200, { result: null });
+    return e.json(200, { result: {
+      source: "web", name: String(first.name || q).slice(0, 70), brand: "",
+      serving_desc: String(first.qty || "1 serving").slice(0, 40),
+      kcal: Math.round(num(t.kcal)), protein: r1x(t.protein), carbs: r1x(t.carbs), fat: r1x(t.fat),
+      fiber: r1x(t.fiber), sugar: r1x(t.sugar), sodium: Math.round(num(t.sodium)), sat_fat: r1x(t.sat_fat),
+    } });
+  } catch (err) { return e.json(200, { result: null, error: String(err.message || err) }); }
+}
+
+// POST /api/sate/foods/accept { candidate } — the user picked a search result and accepted it.
+// Feed it to AI to normalize / fill gaps (keeping the source's own non-zero values), save it to
+// the foods DB for reuse, then log it.
+function foodsAccept(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const c = (e.requestInfo().body || {}).candidate || {};
+  const name = String(c.name || "").trim();
+  if (!name) return e.json(400, { error: "candidate name required" });
+  const brand = String(c.brand || "").trim();
+  const serving = String(c.serving_desc || "1 serving");
+  const base = {};
+  for (const k of ["kcal", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "sat_fat"]) base[k] = num(c[k]);
+
+  // AI pass: complete the profile, but merge conservatively — keep every non-zero source value,
+  // fill only the blanks from the model. Skipped for local DB picks (already-normalized values).
+  let ai = null;
+  if (c.source !== "local") {
+    try {
+      const desc = "1 serving (" + serving + ") of " + name + (brand ? " by " + brand : "") +
+        ". Known per-serving values: " + JSON.stringify(base) + ". Give the complete per-serving nutrition for this exact item.";
+      const r = estimate(app, "text_parse", desc, null, email);
+      ai = (r.parsed && r.parsed.total) || null;
+    } catch (_) { ai = null; }
+  }
+  const total = {};
+  for (const k of ["kcal", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "sat_fat"]) {
+    total[k] = base[k] > 0 ? base[k] : (ai ? num(ai[k]) : 0);
+  }
+  if (!(total.kcal > 0)) return e.json(400, { error: "could not determine calories for this item" });
+
+  try { upsertFoodRecord(app, name, brand, serving, total, "web"); } catch (_) {}
+  const display = name + (brand ? " (" + brand + ")" : "");
+  const items = [{ name: name, qty: serving, kcal: total.kcal, protein: total.protein, carbs: total.carbs, fat: total.fat }];
+  const rec = addEntry(app, email, { kind: "food", source: "web", description: display, items: items, total: total });
+  return e.json(200, { entry: entryJSON(rec), totals: sumTotals(dayEntries(app, email, todayStr())) });
+}
+
 // ---- admin: curated nutrition sources ----
 
 function sourceJSON(r) {
@@ -2869,6 +3161,12 @@ module.exports = {
   adminGetUsers,
   adminSetUserRole,
   adminSetUserModels,
+  foodsSearch,
+  logFood,
+  foodsManual,
+  foodsSearchOnline,
+  foodsWebCandidate,
+  foodsAccept,
   adminGetFoods,
   adminPutFood,
   adminFoodEstimate,
