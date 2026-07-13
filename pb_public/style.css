@@ -676,6 +676,9 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 /* bottom-sheet overlays (compose + edit). [hidden] must beat the transform display. */
 .sheet-bg[hidden], .sheet[hidden] { display: none; }
 .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 40; }
+/* While a sheet is open the body is pinned (top set inline to -scrollY) so the document can't
+   scroll — otherwise iOS drags the fixed sheet up when its input is focused. */
+body.sheet-open { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
 .sheet { position: fixed; left: 0; right: 0; bottom: var(--kb); max-width: 480px; margin: 0 auto; z-index: 41;
   background: var(--card); border-radius: 20px 20px 0 0; padding: 8px 16px calc(20px + env(safe-area-inset-bottom));
   max-height: calc(100dvh - var(--kb) - env(safe-area-inset-top) - 18px);

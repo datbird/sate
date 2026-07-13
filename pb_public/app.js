@@ -2,7 +2,7 @@
 
 // Bumped with each deploy; shown in Admin → Instance so you can confirm the loaded build at a glance
 // (if it lags the latest, the client is serving a cached bundle).
-const APP_VERSION = "v62";
+const APP_VERSION = "v63";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -866,6 +866,25 @@ $("#fsBg").addEventListener("click", closeFoodSearch);
   vv.addEventListener("scroll", schedule);
   apply();
 })();
+
+// Background scroll-lock while any bottom sheet is open. Without this, focusing an input in a
+// position:fixed sheet lets iOS scroll the document to "reveal" the field — which drags the whole
+// fixed sheet up off-screen (the field ends up above the top, and you see the results instead).
+// Pinning the body defeats that: with nothing to scroll, the sheet stays anchored above the keyboard.
+let _lockedScrollY = 0;
+function syncScrollLock() {
+  const open = !!document.querySelector(".sheet:not([hidden])");
+  const locked = document.body.classList.contains("sheet-open");
+  if (open && !locked) {
+    _lockedScrollY = window.scrollY || window.pageYOffset || 0;
+    document.body.style.top = `-${_lockedScrollY}px`;
+    document.body.classList.add("sheet-open");
+  } else if (!open && locked) {
+    document.body.classList.remove("sheet-open");
+    document.body.style.top = "";
+    window.scrollTo(0, _lockedScrollY);
+  }
+}
 $$("#addScope button").forEach((b) => b.addEventListener("click", () => setAddTab(b.dataset.add)));
 
 function renderFeed(entries) {
@@ -986,8 +1005,8 @@ async function logActivityText(text) {
 
 // -------------------------------------------------------------- compose overlay
 let addTab = "nutrition";
-function openAdd() { addTab = "nutrition"; setAddTab("nutrition"); $("#addBg").hidden = false; $("#addSheet").hidden = false; }
-function closeAdd() { $("#addBg").hidden = true; $("#addSheet").hidden = true; }
+function openAdd() { addTab = "nutrition"; setAddTab("nutrition"); $("#addBg").hidden = false; $("#addSheet").hidden = false; syncScrollLock(); }
+function closeAdd() { $("#addBg").hidden = true; $("#addSheet").hidden = true; syncScrollLock(); }
 function setAddTab(t) {
   addTab = t;
   $$("#addScope button").forEach((b) => b.classList.toggle("on", b.dataset.add === t));
@@ -1101,10 +1120,10 @@ function openManualFood(name) {
       `<label class="mfield"><span>${label}${u ? ` <em>(${u})</em>` : ""}</span><input type="number" step="any" inputmode="decimal" data-mf="${k}"></label>`).join("") + `</div>` +
     `<div class="sheet-actions"><button class="primary" id="mfSave" style="flex:1">Add &amp; log</button></div>`;
   $("#mfSave").addEventListener("click", saveManualFood);
-  $("#mfBg").hidden = false; $("#mfSheet").hidden = false; $("#mfSheet").scrollTop = 0;
+  $("#mfBg").hidden = false; $("#mfSheet").hidden = false; $("#mfSheet").scrollTop = 0; syncScrollLock();
   setTimeout(() => $("#mfName").focus(), 60);
 }
-function closeManualFood() { $("#mfBg").hidden = true; $("#mfSheet").hidden = true; }
+function closeManualFood() { $("#mfBg").hidden = true; $("#mfSheet").hidden = true; syncScrollLock(); }
 async function saveManualFood() {
   const name = $("#mfName").value.trim();
   if (!name) { toast("Name is required"); return; }
@@ -1131,11 +1150,11 @@ function openFoodSearch(q) {
     `<div class="fsresults" id="fsResults"></div>`;
   const inp = $("#fsInput");
   inp.addEventListener("keydown", (e) => { if (e.key === "Enter") runFoodSearch(inp.value.trim()); });
-  $("#fsBg").hidden = false; $("#fsSheet").hidden = false;
+  $("#fsBg").hidden = false; $("#fsSheet").hidden = false; syncScrollLock();
   runFoodSearch(q);
   setTimeout(() => inp.focus(), 60);
 }
-function closeFoodSearch() { $("#fsBg").hidden = true; $("#fsSheet").hidden = true; }
+function closeFoodSearch() { $("#fsBg").hidden = true; $("#fsSheet").hidden = true; syncScrollLock(); }
 async function runFoodSearch(q) {
   q = (q || "").trim();
   const box = $("#fsResults");
@@ -1240,7 +1259,7 @@ function openEdit(en) {
   $("#mSave").addEventListener("click", saveManualEdit);
   const secondBtn = $("#editSecond");
   if (secondBtn) secondBtn.addEventListener("click", () => requestSecondOpinion(en, secondBtn));
-  $("#editBg").hidden = false; $("#editSheet").hidden = false;
+  $("#editBg").hidden = false; $("#editSheet").hidden = false; $("#editSheet").scrollTop = 0; syncScrollLock();
 }
 // Apply the hand-typed name / note / numbers. Blank number fields are left unchanged;
 // a typed value (including 0) overrides. Tags the entry source as user-provided.
@@ -1254,7 +1273,7 @@ function saveManualEdit() {
   });
   applyEdit(payload);
 }
-function closeEdit() { $("#editBg").hidden = true; $("#editSheet").hidden = true; editEntry = null; }
+function closeEdit() { $("#editBg").hidden = true; $("#editSheet").hidden = true; editEntry = null; syncScrollLock(); }
 async function applyEdit(payload) {
   if (!editEntry) return;
   closeEdit();
