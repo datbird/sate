@@ -2,7 +2,7 @@
 
 // Bumped with each deploy; shown in Admin → Instance so you can confirm the loaded build at a glance
 // (if it lags the latest, the client is serving a cached bundle).
-const APP_VERSION = "v61";
+const APP_VERSION = "v62";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -1001,12 +1001,14 @@ function renderAddBody() {
     b.innerHTML =
       `<div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h7" stroke-linecap="round"/></svg>` +
       `<input id="mealInput" placeholder="What did you eat? e.g. two eggs and toast" autocomplete="off"></div>` +
+      `<div class="addscroll">` +
       `<div class="reslist" id="mealResults"></div>` +
       `<div class="methods">` +
       `<button class="method" id="mBarcode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 5v14M7 5v14M11 5v14M14 5v14M18 5v14M21 5v14"/></svg><b>Barcode</b><span>scan a package</span></button>` +
       `<button class="method" id="mPhoto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="3"/><circle cx="12" cy="13.5" r="3.5"/><path d="M9 7l1.5-2h3L15 7"/></svg><b>Photo AI</b><span>snap your plate</span></button>` +
       `</div>` +
-      `<button class="aibtn" id="mLog" style="background:var(--brand);color:var(--brand-ink);border-style:solid;border-color:var(--brand)">Log with AI estimate</button>`;
+      `<button class="aibtn" id="mLog" style="background:var(--brand);color:var(--brand-ink);border-style:solid;border-color:var(--brand)">Log with AI estimate</button>` +
+      `</div>`;
     const inp = $("#mealInput");
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") logMeal(inp.value); });
     inp.addEventListener("input", () => { clearTimeout(mealTimer); mealTimer = setTimeout(runMealSearch, 180); });
@@ -1019,9 +1021,11 @@ function renderAddBody() {
       `<div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4" stroke-linecap="round"/></svg>` +
       `<input id="actInput" placeholder="Search activities… e.g. running" autocomplete="off"></div>` +
       `<div class="dur"><label>Duration</label><input id="actDur" type="number" min="1" value="30"> <label>min</label></div>` +
+      `<div class="addscroll">` +
       `<div class="reslist" id="actResults"></div>` +
       `<button class="aibtn" id="actAI" style="border-color:color-mix(in srgb,var(--activity) 45%,var(--line));color:var(--activity)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/></svg>Estimate with AI — describe the workout</button>` +
-      (isNativeApp() ? `<button class="aibtn" id="actHR" style="border-color:color-mix(in srgb,var(--activity) 45%,var(--line));color:var(--activity)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l2.5 6 4-14 2.5 8H22"/></svg>From heart rate — pick a window from your watch</button>` : "");
+      (isNativeApp() ? `<button class="aibtn" id="actHR" style="border-color:color-mix(in srgb,var(--activity) 45%,var(--line));color:var(--activity)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l2.5 6 4-14 2.5 8H22"/></svg>From heart rate — pick a window from your watch</button>` : "") +
+      `</div>`;
     const inp = $("#actInput");
     const runSearch = async () => {
       let acts = [];

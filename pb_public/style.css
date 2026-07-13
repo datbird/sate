@@ -687,6 +687,13 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .fssheet #fsBody { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .fssheet .search { flex: none; }
 .fsresults { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+/* Compose sheet: tabs + the input (and activity duration) stay pinned; only the results/methods
+   scroll — so the field you're typing in never scrolls out from under you. */
+.addsheet { display: flex; flex-direction: column; overflow: hidden; }
+.addsheet > .grab, .addsheet > .seg { flex: none; }
+.addsheet #addBody { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.addsheet #addBody > .search, .addsheet #addBody > .dur { flex: none; }
+.addscroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 6px auto 12px; }
 .sheet h3 { margin: 2px 0 12px; font-size: 18px; }
 .search { display: flex; align-items: center; gap: 9px; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 12px; padding: 11px 13px; }
