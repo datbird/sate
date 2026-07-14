@@ -174,16 +174,25 @@ function ensureProfile(app, email) {
   return rec;
 }
 
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+// tzMin = the client's Date.getTimezoneOffset() (minutes, positive = behind UTC, e.g. US Central
+// CDT = 300). Days must bucket by the USER'S LOCAL calendar day, not UTC — otherwise every entry a
+// user logs before the UTC rollover (7pm Central) vanishes from "Today" the moment the UTC date
+// flips, which looks exactly like the log being wiped. Default 0 = UTC (server-side callers).
+function tzOf(e) {
+  try { const n = parseInt((e.requestInfo().query || {}).tz, 10); return isFinite(n) ? n : 0; } catch (_) { return 0; }
 }
 
-function dayRange(dateStr) {
-  const start = dateStr + " 00:00:00.000Z";
-  const d = new Date(dateStr + "T00:00:00.000Z");
-  d.setUTCDate(d.getUTCDate() + 1);
-  const end = d.toISOString().slice(0, 10) + " 00:00:00.000Z";
-  return { start: start, end: end };
+// The client's local calendar date (YYYY-MM-DD) right now.
+function todayStr(tzMin) {
+  return new Date(Date.now() - (Number(tzMin) || 0) * 60000).toISOString().slice(0, 10);
+}
+
+// The UTC window [start, end) that corresponds to the LOCAL calendar day `dateStr` in tzMin.
+// Stored/compared date strings use a space separator (PB's normalized format), so match that.
+function dayRange(dateStr, tzMin) {
+  const startMs = Date.parse(dateStr + "T00:00:00.000Z") + (Number(tzMin) || 0) * 60000;
+  const fmt = (ms) => new Date(ms).toISOString().replace("T", " ");
+  return { start: fmt(startMs), end: fmt(startMs + 86400000) };
 }
 
 // A json field reads back as raw bytes via rec.get() on a reloaded record; getString() gives the
@@ -224,8 +233,8 @@ function entryJSON(rec) {
   };
 }
 
-function dayEntries(app, email, dateStr) {
-  const r = dayRange(dateStr);
+function dayEntries(app, email, dateStr, tzMin) {
+  const r = dayRange(dateStr, tzMin);
   return app.findRecordsByFilter(
     "entries",
     "user_email = {:e} && logged_at >= {:s} && logged_at < {:end}",
@@ -238,14 +247,13 @@ function dayEntries(app, email, dateStr) {
 
 // A rolling window for the stats dashboard, anchored on today (UTC). Returns the half-open
 // [start,end) datetime-literal bounds plus the bucket granularity for the trend series.
-function periodWindow(range) {
+function periodWindow(range, tzMin) {
+  tzMin = Number(tzMin) || 0;
   const days = range === "day" ? 1 : range === "week" ? 7 : range === "month" ? 30 : 365;
-  const now = new Date();
-  const endD = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
-  const startD = new Date(endD);
-  startD.setUTCDate(startD.getUTCDate() - days);
-  const iso = (d) => d.toISOString().slice(0, 10) + " 00:00:00.000Z";
-  return { start: iso(startD), end: iso(endD), days: days, bucket: range === "year" ? "month" : "day" };
+  // Anchor to the user's local "tomorrow midnight" so the window covers full local days.
+  const endMs = Date.parse(todayStr(tzMin) + "T00:00:00.000Z") + tzMin * 60000 + 86400000;
+  const fmt = (ms) => new Date(ms).toISOString().replace("T", " ");
+  return { start: fmt(endMs - days * 86400000), end: fmt(endMs), days: days, bucket: range === "year" ? "month" : "day" };
 }
 
 // Fetch every entry in [start,end) for a user, paging past the 500-row cap so month/year
@@ -584,7 +592,8 @@ function me(e) {
   }
   const app = e.app;
   const profile = ensureProfile(app, email);
-  const today = todayStr();
+  const tz = tzOf(e);
+  const today = todayStr(tz);
   return e.json(200, {
     email: email,
     name: profile.getString("name"),
@@ -614,7 +623,7 @@ function me(e) {
     second_opinion_enabled: secondOpinionEnabled(app), // global admin toggle
     setup_done: setupDone(app),                    // first-run admin wizard gate
     today: today,
-    totals: sumTotals(dayEntries(app, email, today)),
+    totals: sumTotals(dayEntries(app, email, today, tz)),
   });
 }
 
@@ -1106,8 +1115,9 @@ function listEntries(e) {
   if (!email) return e.json(401, { error: "not authenticated" });
   const app = e.app;
   const q = e.requestInfo().query || {};
-  const date = (q.date || todayStr()).toString();
-  const records = dayEntries(app, email, date);
+  const tz = tzOf(e);
+  const date = (q.date || todayStr(tz)).toString();
+  const records = dayEntries(app, email, date, tz);
   return e.json(200, { date: date, entries: records.map(entryJSON), totals: sumTotals(records) });
 }
 
@@ -1891,7 +1901,8 @@ function statsRange(e) {
   const app = e.app;
   const q = e.requestInfo().query || {};
   const range = ["day", "week", "month", "year"].indexOf((q.range || "").toString()) !== -1 ? q.range.toString() : "day";
-  const w = periodWindow(range);
+  const tz = tzOf(e);
+  const w = periodWindow(range, tz);
   const recs = rangeEntries(app, email, w.start, w.end);
 
   const nutrition = [];
@@ -1902,10 +1913,12 @@ function statsRange(e) {
   let burn = 0, minutes = 0;
   for (const r of activity) { burn += r.getFloat("kcal"); minutes += r.getFloat("duration_min"); }
 
-  // Trend series bucketed by day (week/month) or month (year).
+  // Trend series bucketed by day (week/month) or month (year) — in the user's LOCAL calendar,
+  // so each bucket lines up with the day the user experienced (not the UTC day).
   const bucketOf = (r) => {
-    const s = r.getString("logged_at"); // "YYYY-MM-DD HH:MM..."
-    return w.bucket === "month" ? s.slice(0, 7) : s.slice(0, 10);
+    const utc = Date.parse(r.getString("logged_at").replace(" ", "T"));
+    const local = new Date(utc - tz * 60000).toISOString();
+    return w.bucket === "month" ? local.slice(0, 7) : local.slice(0, 10);
   };
   const buckets = {};
   const order = [];

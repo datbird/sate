@@ -2,7 +2,7 @@
 
 // Bumped with each deploy; shown in Admin → Instance so you can confirm the loaded build at a glance
 // (if it lags the latest, the client is serving a cached bundle).
-const APP_VERSION = "v64";
+const APP_VERSION = "v65";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -16,7 +16,9 @@ async function api(path, opts) {
   o.headers = Object.assign({ "content-type": "application/json" }, o.headers);
   // In proxy mode the proxy authenticates the request; in apple mode we carry a PocketBase token.
   if (PB && PB.authStore.isValid) o.headers["Authorization"] = PB.authStore.token;
-  const res = await fetch("/api/sate" + path, o);
+  // Tell the server the user's timezone offset so "day"/stats windows bucket by local calendar day.
+  const sep = path.indexOf("?") === -1 ? "?" : "&";
+  const res = await fetch("/api/sate" + path + sep + "tz=" + new Date().getTimezoneOffset(), o);
   let data = {};
   try { data = await res.json(); } catch (_) {}
   if (!res.ok) {
@@ -62,7 +64,9 @@ function applyTheme(t) {
 })();
 
 function fmt(n) { return Math.round(Number(n) || 0).toLocaleString(); }
-function todayISO() { return new Date().toISOString().slice(0, 10); }
+// The user's LOCAL calendar date. Days must follow local time, not UTC — otherwise the whole day's
+// log appears to vanish once the UTC date rolls over (7pm US Central), which looks like data loss.
+function todayISO() { return new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
 
 // ---------------------------------------------------------------- navigation
 // The header tabs and the bottom tab bar are the same nav rendered twice; [data-view] is the
@@ -848,6 +852,10 @@ $("#addBg").addEventListener("click", closeAdd);
 $("#editBg").addEventListener("click", closeEdit);
 $("#mfBg").addEventListener("click", closeManualFood);
 $("#fsBg").addEventListener("click", closeFoodSearch);
+$("#addX").addEventListener("click", closeAdd);
+$("#editX").addEventListener("click", closeEdit);
+$("#mfX").addEventListener("click", closeManualFood);
+$("#fsX").addEventListener("click", closeFoodSearch);
 
 // Keyboard-aware bottom sheets: track the visual viewport and publish the on-screen keyboard
 // height as --kb, so .sheet lifts above the keyboard and shrinks to the visible area (iOS

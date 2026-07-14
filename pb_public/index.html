@@ -11,7 +11,7 @@
     <link rel="icon" href="/icons/icon-192.png?v2" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png?v2" />
     <script>try{var t=localStorage.getItem('sate-theme');if(t&&t!=='system')document.documentElement.dataset.theme=t;}catch(e){}</script>
-    <link rel="stylesheet" href="/style.css?v64" />
+    <link rel="stylesheet" href="/style.css?v65" />
   </head>
   <body>
     <header class="topbar">
@@ -450,6 +450,7 @@
     <div class="sheet-bg" id="addBg" hidden></div>
     <div class="sheet addsheet" id="addSheet" hidden>
       <div class="grab"></div>
+      <button type="button" class="sheet-x" id="addX" aria-label="Close">✕</button>
       <div class="seg scope" id="addScope">
         <button class="on" data-add="nutrition"><svg class="tico" style="color:var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v7a2 2 0 0 0 4 0V3"/><path d="M10 12v9"/><ellipse cx="16" cy="6.4" rx="2.2" ry="3.4"/><path d="M16 9.8V21"/></svg>Nutrition</button>
         <button data-add="activity"><svg class="tico" style="color:var(--activity)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4" r="1"/><path d="M4 17l5 1 .75-1.5"/><path d="M15 21v-4l-4-3 1-6"/><path d="M7 12V9l5-1 3 3 3 1"/></svg>Activity</button>
@@ -461,6 +462,7 @@
     <div class="sheet-bg" id="editBg" hidden></div>
     <div class="sheet" id="editSheet" hidden>
       <div class="grab"></div>
+      <button type="button" class="sheet-x" id="editX" aria-label="Close">✕</button>
       <h3 id="editTitle">Edit entry</h3>
       <div id="editBody"></div>
     </div>
@@ -477,6 +479,7 @@
     <div class="sheet-bg" id="mfBg" hidden></div>
     <div class="sheet" id="mfSheet" hidden>
       <div class="grab"></div>
+      <button type="button" class="sheet-x" id="mfX" aria-label="Close">✕</button>
       <h3 id="mfTitle">Add item manually</h3>
       <div id="mfBody"></div>
     </div>
@@ -485,6 +488,7 @@
     <div class="sheet-bg" id="fsBg" hidden></div>
     <div class="sheet fssheet" id="fsSheet" hidden>
       <div class="grab"></div>
+      <button type="button" class="sheet-x" id="fsX" aria-label="Close">✕</button>
       <h3>Search for a food</h3>
       <div id="fsBody"></div>
     </div>
@@ -506,6 +510,6 @@
     <div class="toast" id="toast" hidden></div>
     <script src="/vendor/pocketbase.umd.js?v1"></script>
     <script src="/vendor/html5-qrcode.min.js"></script>
-    <script src="/app.js?v64"></script>
+    <script src="/app.js?v65"></script>
   </body>
 </html>

@@ -699,6 +699,10 @@ body.sheet-open { position: fixed; left: 0; right: 0; width: 100%; overflow: hid
 .addsheet #addBody > .search, .addsheet #addBody > .dur { flex: none; }
 .addscroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 6px auto 12px; }
+.sheet-x { position: absolute; top: 10px; right: 12px; z-index: 2; width: 32px; height: 32px; border-radius: 999px;
+  border: 1px solid var(--line); background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--muted);
+  font-size: 15px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.sheet-x:hover, .sheet-x:active { color: var(--ink); border-color: var(--brand); }
 .sheet h3 { margin: 2px 0 12px; font-size: 18px; }
 .search { display: flex; align-items: center; gap: 9px; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 12px; padding: 11px 13px; }
 .search input { border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 16px; width: 100%; outline: none; }
