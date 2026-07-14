@@ -2,7 +2,7 @@
 
 // Bumped with each deploy; shown in Admin → Instance so you can confirm the loaded build at a glance
 // (if it lags the latest, the client is serving a cached bundle).
-const APP_VERSION = "v65";
+const APP_VERSION = "v66";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -150,15 +150,11 @@ async function renderHome() {
     return renderWeight();
   }
   if (charts) charts.style.visibility = "";
-  let stats = null, feed = null;
-  try {
-    [stats, feed] = await Promise.all([
-      api("/stats?range=" + HOME.range),
-      api("/entries?date=" + todayISO()),
-    ]);
-  } catch (e) { toast(e.message); return; }
+  let stats = null;
+  try { stats = await api("/stats?range=" + HOME.range); } catch (e) { toast(e.message); return; }
   renderStats(stats);
-  renderFeed(feed.entries || []);
+  $("#feedlbl").textContent = "Log";
+  loadFeed(true);
 }
 
 // ------------------------------------------------------------------ weight tab
@@ -845,7 +841,7 @@ function segControl(sel, key, after) {
   });
 }
 segControl("#scope", "scope", renderHome);   // scope changes both stats + feed
-segControl("#range", "range", renderHome);   // range refetches stats
+segControl("#range", "range", () => api("/stats?range=" + HOME.range).then(renderStats).catch(() => {})); // range = stats only
 segControl("#charts", "chart", () => api("/stats?range=" + HOME.range).then(renderStats).catch(() => {}));
 $("#addBtn").addEventListener("click", openAdd);
 $("#addBg").addEventListener("click", closeAdd);
@@ -899,18 +895,66 @@ function syncScrollLock() {
 }
 $$("#addScope button").forEach((b) => b.addEventListener("click", () => setAddTab(b.dataset.add)));
 
-function renderFeed(entries) {
-  $("#feedlbl").textContent = "Today";
-  const scope = HOME.scope;
-  const rows = entries.filter((en) => scope === "all" || (scope === "nutrition" && en.kind !== "activity") || (scope === "activity" && en.kind === "activity"));
-  const ul = $("#feed");
-  ul.innerHTML = "";
-  if (!rows.length) {
-    ul.innerHTML = '<li class="hint" style="color:var(--muted);font-size:13px;padding:10px 2px">Nothing logged yet — tap <b>+ Add to log</b>.</li>';
-    return;
-  }
-  rows.forEach((en) => ul.appendChild(entryLi(en)));
+// Infinite, day-grouped log feed. The server pages by logged_at (newest first); we group each
+// page into the user's LOCAL calendar days and draw an obvious divider whenever the day changes.
+const FEED = { cursor: null, done: false, loading: false, lastDay: null, seq: 0 };
+
+function localDayKey(iso) { return new Date(String(iso).replace(" ", "T")).toLocaleDateString("en-CA"); }
+function dayLabel(iso) {
+  const d = new Date(String(iso).replace(" ", "T"));
+  const key = d.toLocaleDateString("en-CA");
+  const today = new Date().toLocaleDateString("en-CA");
+  const y = new Date(); y.setDate(y.getDate() - 1);
+  if (key === today) return "Today";
+  if (key === y.toLocaleDateString("en-CA")) return "Yesterday";
+  return d.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
 }
+
+async function loadFeed(reset) {
+  if (FEED.loading) return;
+  const ul = $("#feed");
+  if (reset) { FEED.cursor = null; FEED.done = false; FEED.lastDay = null; FEED.seq++; ul.innerHTML = ""; }
+  if (FEED.done) return;
+  const seq = FEED.seq;
+  FEED.loading = true;
+  try {
+    const qs = "/feed?limit=40&scope=" + HOME.scope + (FEED.cursor ? "&before=" + encodeURIComponent(FEED.cursor) : "");
+    const r = await api(qs);
+    if (seq !== FEED.seq) return; // a reset happened mid-flight
+    appendFeed(r.entries || []);
+    FEED.cursor = r.next;
+    if (!r.next) FEED.done = true;
+    if (reset && !ul.children.length) {
+      ul.innerHTML = '<li class="hint" style="color:var(--muted);font-size:13px;padding:10px 2px">Nothing logged yet — tap <b>+ Add to log</b>.</li>';
+      FEED.done = true;
+    }
+  } catch (e) { /* keep whatever is already shown */ }
+  finally { if (seq === FEED.seq) FEED.loading = false; }
+  // If the first page didn't fill the screen, pull the next so scrolling can start.
+  if (!FEED.done && document.body.offsetHeight <= window.innerHeight + 200) loadFeed(false);
+}
+
+function appendFeed(entries) {
+  const ul = $("#feed");
+  entries.forEach((en) => {
+    const key = localDayKey(en.logged_at);
+    if (key !== FEED.lastDay) {
+      FEED.lastDay = key;
+      const div = document.createElement("div");
+      div.className = "day-divider";
+      div.innerHTML = `<span>${escapeHtml(dayLabel(en.logged_at))}</span>`;
+      ul.appendChild(div);
+    }
+    ul.appendChild(entryLi(en));
+  });
+}
+
+// Infinite scroll: pull the next page as the user nears the bottom of the Home feed.
+window.addEventListener("scroll", () => {
+  const home = $("#view-home");
+  if (!home || home.hidden || HOME.scope === "weight") return;
+  if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 500) loadFeed(false);
+}, { passive: true });
 
 const ICON_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
 const ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>';

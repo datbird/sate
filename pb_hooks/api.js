@@ -1121,6 +1121,30 @@ function listEntries(e) {
   return e.json(200, { date: date, entries: records.map(entryJSON), totals: sumTotals(records) });
 }
 
+// GET /api/sate/feed?before=<logged_at cursor>&limit=N&scope=all|nutrition|activity
+// Cursor-paginated feed across ALL days, newest first, for the infinite-scroll log. The client
+// groups the returned entries into local days and draws the day dividers.
+function feedPage(e) {
+  const email = identity(e);
+  if (!email) return e.json(401, { error: "not authenticated" });
+  const app = e.app;
+  const q = e.requestInfo().query || {};
+  const limit = Math.min(100, Math.max(10, parseInt(q.limit, 10) || 40));
+  const scope = (q.scope || "all").toString();
+  let filter = "user_email = {:e}";
+  const params = { e: email };
+  const before = (q.before || "").toString();
+  if (before) { filter += " && logged_at < {:b}"; params.b = before; }
+  if (scope === "activity") filter += " && kind = 'activity'";
+  else if (scope === "nutrition") filter += " && kind != 'activity'";
+  let recs = [];
+  try { recs = app.findRecordsByFilter("entries", filter, "-logged_at", limit + 1, 0, params); } catch (_) { recs = []; }
+  const hasMore = recs.length > limit;
+  const page = hasMore ? recs.slice(0, limit) : recs;
+  const next = hasMore ? page[page.length - 1].getString("logged_at") : null;
+  return e.json(200, { entries: page.map(entryJSON), next: next });
+}
+
 function deleteEntry(e) {
   const email = identity(e);
   if (!email) return e.json(401, { error: "not authenticated" });
@@ -3124,6 +3148,7 @@ module.exports = {
   logPhoto,
   logBarcode,
   listEntries,
+  feedPage,
   deleteEntry,
   updateEntry,
   logActivity,

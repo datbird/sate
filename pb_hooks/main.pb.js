@@ -59,6 +59,7 @@ routerAdd("POST", "/api/sate/log/barcode", (e) => require(`${__hooks}/api.js`).l
 routerAdd("POST", "/api/sate/log/activity", (e) => require(`${__hooks}/api.js`).logActivity(e));
 routerAdd("POST", "/api/sate/log/heart-rate", (e) => require(`${__hooks}/api.js`).logHeartRate(e));
 routerAdd("GET", "/api/sate/activities/search", (e) => require(`${__hooks}/api.js`).activitiesSearch(e));
+routerAdd("GET", "/api/sate/feed", (e) => require(`${__hooks}/api.js`).feedPage(e));
 routerAdd("GET", "/api/sate/foods/search", (e) => require(`${__hooks}/api.js`).foodsSearch(e));
 routerAdd("POST", "/api/sate/log/food", (e) => require(`${__hooks}/api.js`).logFood(e));
 routerAdd("POST", "/api/sate/foods/manual", (e) => require(`${__hooks}/api.js`).foodsManual(e));
