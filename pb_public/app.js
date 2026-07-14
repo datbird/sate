@@ -2,7 +2,7 @@
 
 // Bumped with each deploy; shown in Admin → Instance so you can confirm the loaded build at a glance
 // (if it lags the latest, the client is serving a cached bundle).
-const APP_VERSION = "v66";
+const APP_VERSION = "v67";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -11,25 +11,55 @@ let ME = null;
 let AUTH = { mode: "proxy", apple_configured: false };
 let PB = null; // PocketBase client — only created in apple mode
 
+// ---- global activity indicator: a top sweep bar + a "spinning thing" pill, shown whenever any
+// request is in flight for more than a moment, so AI calls / searches never look frozen. Fast
+// calls (<220ms) never flash it. busy(label) sets the pill text for the next call's context.
+let NET = 0, netTimer = null, busyLabel = "Working…";
+function busy(label) {
+  busyLabel = label || "Working…";
+  const w = $("#working"); if (w && !w.hidden) { const l = w.querySelector(".wlabel"); if (l) l.textContent = busyLabel; }
+}
+function netStart() {
+  NET++;
+  if (netTimer == null) netTimer = setTimeout(() => {
+    const nb = $("#netbar"), w = $("#working");
+    if (nb) nb.hidden = false;
+    if (w) { const l = w.querySelector(".wlabel"); if (l) l.textContent = busyLabel; w.hidden = false; }
+  }, 220);
+}
+function netEnd() {
+  NET = Math.max(0, NET - 1);
+  if (NET === 0) {
+    if (netTimer != null) { clearTimeout(netTimer); netTimer = null; }
+    const nb = $("#netbar"), w = $("#working");
+    if (nb) nb.hidden = true;
+    if (w) w.hidden = true;
+    busyLabel = "Working…";
+  }
+}
+
 async function api(path, opts) {
   const o = Object.assign({}, opts);
   o.headers = Object.assign({ "content-type": "application/json" }, o.headers);
   // In proxy mode the proxy authenticates the request; in apple mode we carry a PocketBase token.
   if (PB && PB.authStore.isValid) o.headers["Authorization"] = PB.authStore.token;
-  // Tell the server the user's timezone offset so "day"/stats windows bucket by local calendar day.
-  const sep = path.indexOf("?") === -1 ? "?" : "&";
-  const res = await fetch("/api/sate" + path + sep + "tz=" + new Date().getTimezoneOffset(), o);
-  let data = {};
-  try { data = await res.json(); } catch (_) {}
-  if (!res.ok) {
-    // A stale token is indistinguishable from never having signed in — send them back to sign-in.
-    if (res.status === 401 && AUTH.mode === "apple") {
-      if (PB) PB.authStore.clear();
-      showSignIn();
+  netStart();
+  try {
+    // Tell the server the user's timezone offset so "day"/stats windows bucket by local calendar day.
+    const sep = path.indexOf("?") === -1 ? "?" : "&";
+    const res = await fetch("/api/sate" + path + sep + "tz=" + new Date().getTimezoneOffset(), o);
+    let data = {};
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok) {
+      // A stale token is indistinguishable from never having signed in — send them back to sign-in.
+      if (res.status === 401 && AUTH.mode === "apple") {
+        if (PB) PB.authStore.clear();
+        showSignIn();
+      }
+      throw new Error(data.error || res.status + " error");
     }
-    throw new Error(data.error || res.status + " error");
-  }
-  return data;
+    return data;
+  } finally { netEnd(); }
 }
 
 function toast(msg) {
@@ -380,20 +410,20 @@ async function coachSend(preset) {
   }
   if (inp) inp.value = "";
   coachClearAttach();
-  const thinking = coachAppend("coach", "…");
+  const thinking = coachAppend("coach", ""); thinking.classList.add("dots");
   const reqBody = isPlan
     ? { mode: "plan" }
     : { mode: "chat", message: msg, history: COACH.history.slice(-20) };
   if (image) reqBody.image = { mimeType: image.mimeType, data: image.data };
   try {
     const r = await api("/nutritionist", { method: "POST", body: JSON.stringify(reqBody) });
-    thinking.textContent = r.reply || "(no reply)";
+    thinking.classList.remove("dots"); thinking.textContent = r.reply || "(no reply)";
     if (!isPlan) {
       COACH.history.push({ role: "user", text: msg || "(shared a photo to discuss)" });
       COACH.history.push({ role: "assistant", text: r.reply || "" });
     }
     coachSecondOpinionBtn(reqBody);
-  } catch (e) { thinking.textContent = (e && e.message) || "Coach unavailable"; }
+  } catch (e) { thinking.classList.remove("dots"); thinking.textContent = (e && e.message) || "Coach unavailable"; }
   $("#coachTabLog").scrollTop = $("#coachTabLog").scrollHeight;
 }
 
@@ -409,17 +439,17 @@ function coachSecondOpinionBtn(reqBody) {
   btn.textContent = "🔀 Second opinion";
   btn.onclick = async () => {
     btn.disabled = true;
-    const thinking = coachAppend("coach second", "…");
+    const thinking = coachAppend("coach second", ""); thinking.classList.add("dots");
     try {
       const r = await api("/nutritionist", { method: "POST", body: JSON.stringify(Object.assign({}, reqBody, { role: "second" })) });
-      thinking.textContent = r.reply || "(no reply)";
+      thinking.classList.remove("dots"); thinking.textContent = r.reply || "(no reply)";
       thinking.dataset.model = r.model || "";
       const tag = document.createElement("div");
       tag.className = "second-tag";
       tag.textContent = "Second opinion" + (r.model ? " · " + r.model : "");
       thinking.insertBefore(tag, thinking.firstChild);
       bar.remove();
-    } catch (e) { thinking.textContent = (e && e.message) || "Second opinion unavailable"; btn.disabled = false; }
+    } catch (e) { thinking.classList.remove("dots"); thinking.textContent = (e && e.message) || "Second opinion unavailable"; btn.disabled = false; }
     log.scrollTop = log.scrollHeight;
   };
   bar.appendChild(btn);
@@ -1015,7 +1045,7 @@ function afterEntryChange() {
 async function logMeal(text) {
   if (!text.trim()) return;
   closeAdd();
-  toast("Estimating…");
+  busy("Estimating…");
   try {
     const r = await api("/log/text", { method: "POST", body: JSON.stringify({ text: text.trim() }) });
     toast(r.note || `Logged ${fmt(r.entry.kcal)} kcal.`);
@@ -1051,7 +1081,7 @@ async function logActivityPreset(id, minutes) {
 async function logActivityText(text) {
   if (!text.trim()) return;
   closeAdd();
-  toast("Estimating…");
+  busy("Estimating…");
   try {
     const r = await api("/log/activity", { method: "POST", body: JSON.stringify({ text: text.trim() }) });
     toast(r.note || `Logged ${fmt(r.entry.kcal)} cal burned.`);
@@ -1199,6 +1229,7 @@ const FS_SOURCE = { local: "In your database", usda: "USDA FoodData Central", of
 const FS_ORDER = ["local", "usda", "off", "web"];
 let fsResults = [];
 let fsSeq = 0;
+let fsAiPending = false;
 function openFoodSearch(q) {
   $("#fsBody").innerHTML =
     `<div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4" stroke-linecap="round"/></svg>` +
@@ -1216,25 +1247,24 @@ async function runFoodSearch(q) {
   const box = $("#fsResults");
   if (!q) { box.innerHTML = `<div class="grouplbl">Type something to search.</div>`; return; }
   const seq = ++fsSeq;
-  fsResults = [];
-  box.innerHTML = `<div class="grouplbl">Searching your database, USDA &amp; Open Food Facts…</div>`;
+  fsResults = []; fsAiPending = true;
+  box.innerHTML = `<div class="loadrow center"><span class="spinner big"></span><span>Searching your database, USDA &amp; Open Food Facts…</span></div>`;
+  busy("Searching…");
   try {
     const r = await api("/foods/search-online?q=" + encodeURIComponent(q));
     if (seq !== fsSeq) return;
     fsResults = r.results || [];
-  } catch (e) { if (seq === fsSeq) box.innerHTML = `<div class="grouplbl">${escapeHtml(e.message || "Search failed")}</div>`; }
+  } catch (e) { if (seq === fsSeq) box.innerHTML = `<div class="loadrow center"><span>${escapeHtml(e.message || "Search failed")}</span></div>`; }
+  if (seq !== fsSeq) return;
   renderFsResults();
-  // AI/web candidate streams in separately so it never blocks the structured results.
+  // AI/web candidate streams in separately so it never blocks the structured results; a spinner
+  // row shows "AI is searching the web…" until it lands.
   api("/foods/web-candidate", { method: "POST", body: JSON.stringify({ q: q }) })
-    .then((r) => { if (seq === fsSeq && r && r.result) { fsResults.push(r.result); renderFsResults(); } })
-    .catch(() => {});
+    .then((r) => { if (seq !== fsSeq) return; fsAiPending = false; if (r && r.result) fsResults.push(r.result); renderFsResults(); })
+    .catch(() => { if (seq === fsSeq) { fsAiPending = false; renderFsResults(); } });
 }
 function renderFsResults() {
   const box = $("#fsResults");
-  if (!fsResults.length) {
-    box.innerHTML = `<div class="grouplbl">No matches yet — the AI web result may still be loading, or add it manually.</div>`;
-    return;
-  }
   const groups = {};
   fsResults.forEach((r, i) => { (groups[r.source] = groups[r.source] || []).push(i); });
   let html = "";
@@ -1248,6 +1278,12 @@ function renderFsResults() {
         `<span class="add">›</span></button>`;
     }).join("");
   });
+  // While the AI web-search is still running, show a live spinner row so it's clearly working.
+  if (fsAiPending) {
+    html += `<div class="grouplbl">${FS_SOURCE.web}</div>` +
+      `<div class="loadrow"><span class="spinner"></span><span>Asking AI to search the web…</span></div>`;
+  }
+  if (!html) html = `<div class="loadrow center"><span>No matches — try adding it manually.</span></div>`;
   box.innerHTML = html;
   $$("#fsResults .res").forEach((el) => el.addEventListener("click", () => openFsDetail(+el.dataset.i)));
 }
@@ -1268,7 +1304,7 @@ function openFsDetail(i) {
   $("#fsAccept").addEventListener("click", () => acceptFood(f));
 }
 async function acceptFood(f) {
-  toast("Normalizing with AI…");
+  busy("Normalizing with AI…");
   try {
     const r = await api("/foods/accept", { method: "POST", body: JSON.stringify({ candidate: f }) });
     closeFoodSearch(); closeAdd();
@@ -1347,7 +1383,7 @@ async function requestSecondOpinion(en, btn) {
   const panel = $("#secondPanel");
   if (!panel) return;
   btn.disabled = true;
-  panel.innerHTML = '<div class="second-card"><span class="muted">Getting a second opinion…</span></div>';
+  panel.innerHTML = '<div class="second-card loadrow"><span class="spinner"></span><span class="muted">Getting a second opinion…</span></div>';
   try {
     const r = await api("/second-opinion", { method: "POST", body: JSON.stringify({ entry_id: en.id }) });
     const activity = en.kind === "activity";
@@ -1590,7 +1626,7 @@ async function loadHistory() {
 $("#histDate").addEventListener("change", loadHistory);
 $("#summaryBtn").addEventListener("click", async () => {
   const box = $("#summary");
-  box.hidden = false; box.textContent = "Thinking…";
+  box.hidden = false; box.innerHTML = '<div class="loadrow"><span class="spinner"></span><span>Thinking…</span></div>';
   try {
     const r = await api("/day/summary?date=" + $("#histDate").value);
     box.textContent = r.summary;
@@ -2366,7 +2402,7 @@ async function adminFoodWeb() {
   const name = ($("#fName").value || prompt("Food name to look up?", "") || "").trim();
   if (!name) return;
   $("#fName").value = name;
-  toast("Searching the web…");
+  busy("Searching the web…");
   try {
     const r = await api("/admin/foods/estimate", { method: "POST", body: JSON.stringify({ method: "web", text: name }) });
     prefillFoodEditor(r.food, "Filled from web search — review & Save");
