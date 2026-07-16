@@ -53,6 +53,7 @@ export const Entry = z.object({
   source: z.string().default("manual"), // manual|ai|db|web|barcode|photo|health|heart_rate…
   logged_at: z.string(),
   tz_offset_min: z.number().default(0),
+  day: z.string().optional(), // local calendar day (tz-aware bucket) for day queries/stats
   // activity-only
   duration_min: z.number().optional(),
   distance_mi: z.number().optional(),
