@@ -84,10 +84,20 @@ export interface Secrets {
   get(name: string): Promise<string | undefined>;
 }
 
+// ---- Identity (optional) ------------------------------------------------
+// Mints a GCP identity token for calling an IAM-protected upstream (e.g. a private entitlements
+// plane on Cloud Run). Provided only by hosts that run on GCP; undefined on self-host, where the
+// upstream is either public or absent.
+export interface Identity {
+  /** An OIDC identity token whose audience is `audience` (the target service URL), or undefined. */
+  token(audience: string): Promise<string | undefined>;
+}
+
 // ---- The adapter bundle a host wires up at startup ----------------------
 export interface Platform {
   data: DataStoreProvider;
   auth: Auth;
   files: FileStorage;
   secrets: Secrets;
+  identity?: Identity;
 }

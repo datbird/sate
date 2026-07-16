@@ -15,7 +15,7 @@
 // BE: when the plane is UNSET (self-host Docker, no control plane), every feature is OPEN — a
 // self-hoster owns their instance and should not be gated.
 
-import type { Secrets } from "../ports";
+import type { Platform, Secrets, Identity } from "../ports";
 
 interface FlagResponse {
   id: string;
@@ -34,31 +34,49 @@ type CacheEntry<T> = { value: T; expiresAt: number };
 const flagCache = new Map<string, CacheEntry<FlagResponse | null>>();
 const entCache = new Map<string, CacheEntry<EntitlementResponse>>();
 
-async function planeConfig(secrets: Secrets): Promise<{ url: string; key: string } | null> {
+interface PlaneConfig {
+  url: string;
+  key: string;
+  identity?: Identity;
+}
+
+async function planeConfig(secrets: Secrets, identity?: Identity): Promise<PlaneConfig | null> {
   const [url, key] = await Promise.all([
     secrets.get("entitlements-api-url"),
     secrets.get("entitlements-read-key"),
   ]);
   if (!url || !key) return null;
-  return { url: url.replace(/\/$/, ""), key };
+  return { url: url.replace(/\/$/, ""), key, identity };
 }
 
-async function fetchFlag(cfg: { url: string; key: string }, featureId: string): Promise<FlagResponse | null> {
+// Build auth headers for a plane request. When the host can mint a GCP identity token (the plane is
+// a private, IAM-gated Cloud Run service), the token goes in Authorization (consumed by Cloud Run)
+// and the app key travels in X-Api-Key. Without an identity provider (self-host / public plane) the
+// key stays in Authorization — the plane's backward-compatible fallback.
+async function planeHeaders(cfg: PlaneConfig): Promise<Record<string, string>> {
+  if (cfg.identity) {
+    const idToken = await cfg.identity.token(cfg.url);
+    if (idToken) return { Authorization: `Bearer ${idToken}`, "X-Api-Key": cfg.key };
+  }
+  return { Authorization: `Bearer ${cfg.key}` };
+}
+
+async function fetchFlag(cfg: PlaneConfig, featureId: string): Promise<FlagResponse | null> {
   const cached = flagCache.get(featureId);
   if (cached && Date.now() < cached.expiresAt) return cached.value;
   const res = await fetch(`${cfg.url}/flags/${encodeURIComponent(featureId)}`, {
-    headers: { Authorization: `Bearer ${cfg.key}` },
+    headers: await planeHeaders(cfg),
   });
   const value = res.status === 404 ? null : ((await res.json()) as FlagResponse);
   flagCache.set(featureId, { value, expiresAt: Date.now() + TTL_MS });
   return value;
 }
 
-async function fetchEntitlements(cfg: { url: string; key: string }, email: string): Promise<EntitlementResponse> {
+async function fetchEntitlements(cfg: PlaneConfig, email: string): Promise<EntitlementResponse> {
   const cached = entCache.get(email);
   if (cached && Date.now() < cached.expiresAt) return cached.value;
   const res = await fetch(`${cfg.url}/entitlements/${encodeURIComponent(email)}`, {
-    headers: { Authorization: `Bearer ${cfg.key}` },
+    headers: await planeHeaders(cfg),
   });
   const value = (await res.json()) as EntitlementResponse;
   entCache.set(email, { value, expiresAt: Date.now() + TTL_MS });
@@ -69,8 +87,8 @@ async function fetchEntitlements(cfg: { url: string; key: string }, email: strin
  * Is `email` entitled to `featureId`? Returns true when no control plane is configured
  * (self-host), applies BE's exact precedence when it is, and fails CLOSED on any plane error.
  */
-export async function checkFeature(secrets: Secrets, featureId: string, email: string): Promise<boolean> {
-  const cfg = await planeConfig(secrets);
+export async function checkFeature(platform: Platform, featureId: string, email: string): Promise<boolean> {
+  const cfg = await planeConfig(platform.secrets, platform.identity);
   if (!cfg) return true; // self-host / unconfigured → open
   try {
     const [flag, ent] = await Promise.all([fetchFlag(cfg, featureId), fetchEntitlements(cfg, email)]);
