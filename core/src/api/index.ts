@@ -52,7 +52,7 @@ export function buildApi(platform: Platform, cfg: ApiConfig = {}): Hono<Vars> {
   // AI features (nutrition/activity estimation) are gated by the shared entitlements plane —
   // same model as BalanceEngine's byo_ai_engines gate. Open when no plane is configured (self-host).
   const requireAI: MiddlewareHandler<Vars> = async (c, next) => {
-    if (!(await checkFeature(platform.secrets, FEATURES.AI, c.get("email")))) {
+    if (!(await checkFeature(platform, FEATURES.AI, c.get("email")))) {
       return c.json({ error: "Feature not available", feature: FEATURES.AI }, 403);
     }
     await next();
