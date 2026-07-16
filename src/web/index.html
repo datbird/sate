@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#16a34a" />
+    <title>Sate</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Sate</h1>
+      <span id="who"></span>
+    </header>
+
+    <section id="signin" class="card" hidden>
+      <p class="tagline">Understand every meal, without the manual logging.</p>
+      <button id="appleBtn" class="oauth apple">Sign in with Apple</button>
+      <button id="googleBtn" class="oauth google">Sign in with Google</button>
+      <details>
+        <summary>Sign in with email</summary>
+        <form id="signinForm">
+          <input id="email" type="email" placeholder="email" autocomplete="email" />
+          <input id="password" type="password" placeholder="password" autocomplete="current-password" />
+          <button>Sign in</button>
+        </form>
+      </details>
+      <p id="authErr" class="err"></p>
+    </section>
+
+    <main id="app" hidden>
+      <form id="logForm">
+        <input id="food" placeholder="What did you eat? (e.g. two eggs and toast)" autocomplete="off" />
+        <button>Log</button>
+      </form>
+      <p id="logStatus" class="muted"></p>
+      <div id="stats" class="stats"></div>
+      <ul id="entries"></ul>
+      <button id="logoutBtn" class="ghost">Sign out</button>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,47 @@
+:root {
+  --green: #16a34a;
+  --bg: #f7f8f7;
+  --card: #fff;
+  --ink: #1a2b22;
+  --muted: #6b7d73;
+  --line: #e3e8e4;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1512; --card: #17201b; --ink: #e7efe9; --muted: #8fa295; --line: #26332b; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.5 -apple-system, system-ui, sans-serif; }
+header { display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px calc(14px + env(safe-area-inset-top)); background: var(--green); color: #fff; }
+header h1 { margin: 0; font-size: 22px; letter-spacing: .5px; }
+#who { font-size: 13px; opacity: .9; }
+.card, main { max-width: 640px; margin: 18px auto; padding: 0 18px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
+.tagline { color: var(--muted); margin-top: 0; }
+input { width: 100%; min-width: 0; padding: 12px; margin: 6px 0; font-size: 16px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); }
+button { padding: 12px 16px; font-size: 16px; border: 0; border-radius: 10px;
+  background: var(--green); color: #fff; font-weight: 600; cursor: pointer; }
+button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.oauth { width: 100%; margin: 6px 0; }
+.oauth.google { background: #1a73e8; }
+.oauth.apple { background: #000; }
+details { margin-top: 10px; }
+summary { color: var(--muted); cursor: pointer; }
+.err { color: #c0392b; min-height: 1.2em; }
+#logForm { display: flex; gap: 8px; }
+#logForm input { margin: 0; }
+#logForm button { flex: none; }
+.muted { color: var(--muted); }
+.stats { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px; margin: 12px 0; }
+ul { list-style: none; padding: 0; margin: 0; }
+li { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 12px 14px; background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; margin-bottom: 8px; }
+li.activity { border-left: 3px solid #1a73e8; }
+li.food { border-left: 3px solid var(--green); }
+.k { color: var(--muted); white-space: nowrap; display: flex; align-items: center; gap: 8px; }
+.del { background: transparent; color: var(--muted); padding: 2px 8px; font-size: 14px; }
+#logoutBtn { width: 100%; margin-top: 18px; }
