@@ -4,8 +4,10 @@
 // data goes through the DataStore port instead of PocketBase collections).
 
 import { Hono } from "hono";
+import type { MiddlewareHandler } from "hono";
 import type { Platform } from "../ports";
 import { estimateNutrition, estimateActivity, type ProviderName } from "../ai/index";
+import { checkFeature, FEATURES } from "../entitlements/index";
 import type { Entry, Macros } from "../schema";
 
 export interface ApiConfig {
@@ -46,6 +48,17 @@ export function buildApi(platform: Platform, cfg: ApiConfig = {}): Hono<Vars> {
   });
 
   app.get("/api/me", (c) => c.json({ uid: c.get("uid"), email: c.get("email") }));
+
+  // AI features (nutrition/activity estimation) are gated by the shared entitlements plane —
+  // same model as BalanceEngine's byo_ai_engines gate. Open when no plane is configured (self-host).
+  const requireAI: MiddlewareHandler<Vars> = async (c, next) => {
+    if (!(await checkFeature(platform.secrets, FEATURES.AI, c.get("email")))) {
+      return c.json({ error: "Feature not available", feature: FEATURES.AI }, 403);
+    }
+    await next();
+  };
+  app.use("/api/entries/food", requireAI);
+  app.use("/api/entries/activity", requireAI);
 
   // Log food by text → AI nutrition estimate → entry.
   app.post("/api/entries/food", async (c) => {
