@@ -48,7 +48,10 @@ export interface DataStore {
 }
 
 export interface DataStoreProvider {
+  /** Per-user data (cloud → users/{uid}/{collection}; self-host → filtered by user column). */
   forUser(uid: string): DataStore;
+  /** Instance-scoped, non-user collections: AI usage/limits/prices, provider config, KB, settings. */
+  instance(): DataStore;
 }
 
 // ---- Auth ---------------------------------------------------------------
