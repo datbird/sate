@@ -1,0 +1,19 @@
+{
+  "name": "@sate/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sate shared core — platform-agnostic domain logic, AI, schemas, and ports. Vendored into `sate` (self-host) and `sate-cloud` via git subtree; synced exactly. Depends only on interfaces (ports), never on Firestore/Firebase/SQLite/PocketBase.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ports": "./src/ports/index.ts",
+    "./schema": "./src/schema/index.ts",
+    "./domain/nutrition": "./src/domain/nutrition.ts"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
