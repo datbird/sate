@@ -261,6 +261,30 @@ async function generateCheckinFor(
   return created;
 }
 
+// Fan-out generation for the cron: evaluate each opted-in user's profile and create a check-in when
+// worthwhile. `users` is enumerated by the edition (cloud = a Firestore collection-group query over
+// profiles; self-host = the local profiles collection). Respects the instance-wide toggle + the
+// per-user opt-in; a per-user failure never aborts the batch. This is v1's daily-cron body.
+export async function runCheckins(
+  platform: Platform,
+  users: { uid: string; profile: ProfileDoc }[],
+): Promise<{ evaluated: number; created: number }> {
+  if (!(await checkinsEnabled(platform))) return { evaluated: 0, created: 0 };
+  let evaluated = 0;
+  let created = 0;
+  for (const { uid, profile } of users) {
+    if (!uid || !profile || !profile.checkin_enabled) continue;
+    evaluated++;
+    try {
+      const ci = await generateCheckinFor(platform, uid, profile, false);
+      if (ci) created++;
+    } catch {
+      /* one user's failure shouldn't abort the fleet-wide run */
+    }
+  }
+  return { evaluated, created };
+}
+
 // ---- routes -------------------------------------------------------------
 export async function registerCheckins(app: App, deps: RouteDeps): Promise<void> {
   const { platform, requireAI } = deps;
