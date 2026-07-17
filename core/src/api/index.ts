@@ -2,38 +2,38 @@
 // self-host (SQLite/local) platforms mount this exact app; only the adapters differ. Ported from
 // the PocketBase pb_hooks/api.js diary routes (the auth model is now a verified bearer token, and
 // data goes through the DataStore port instead of PocketBase collections).
+//
+// This file is the ROUTER: it stands up the Hono app, the bearer-token auth middleware (which sets
+// uid+email on the context for every /api/* route), and the shared requireAI entitlement gate — then
+// delegates the actual routes to the per-domain modules (profile/entries/foods/weight/coach/checkins),
+// each of which exports register<Name>(app, deps). The register bodies add their routes synchronously,
+// so buildApi stays a synchronous factory (adapters mount it as `app.route("/", buildApi(platform))`).
 
 import { Hono } from "hono";
-import type { MiddlewareHandler } from "hono";
 import type { Platform } from "../ports";
-import { estimateNutrition, estimateActivity, type ProviderName } from "../ai/index";
+import type { ProviderName } from "../ai/index";
 import { checkFeature, FEATURES } from "../entitlements/index";
-import type { Entry, Macros } from "../schema";
+import type { App, AppVars, RouteDeps } from "./helpers";
+import { registerProfile } from "./profile";
+import { registerEntries } from "./entries";
+import { registerFoods } from "./foods";
+import { registerWeight } from "./weight";
+import { registerCoach } from "./coach";
+import { registerCheckins } from "./checkins";
 
 export interface ApiConfig {
+  // TODO(phase2): v1 routed each function to a per-user/per-function provider+model. Phase 1 resolves
+  // the default provider/model from the instance `settings` collection (see ai/index resolveDefaultModel),
+  // so these hints are accepted for call-site compatibility but no longer steer routing.
   aiProvider?: ProviderName;
   aiModel?: string;
 }
 
-type Vars = { Variables: { uid: string; email: string } };
+export function buildApi(platform: Platform, _cfg: ApiConfig = {}): App {
+  const app = new Hono<AppVars>();
 
-// tzOffsetMin follows JS Date.getTimezoneOffset(): minutes to ADD to local time to get UTC
-// (positive west of UTC). Bucket an ISO instant into the user's LOCAL calendar day.
-function localDay(iso: string, tzOffsetMin: number): string {
-  const t = Date.parse(iso) - tzOffsetMin * 60000;
-  return new Date(t).toISOString().slice(0, 10);
-}
-
-function macrosOf(t: { protein: number; carbs: number; fat: number; fiber: number; sugar: number; sodium: number; sat_fat: number }): Macros {
-  return { protein: t.protein, carbs: t.carbs, fat: t.fat, fiber: t.fiber, sugar: t.sugar, sodium: t.sodium, sat_fat: t.sat_fat };
-}
-
-export function buildApi(platform: Platform, cfg: ApiConfig = {}): Hono<Vars> {
-  const app = new Hono<Vars>();
-  const provider: ProviderName = cfg.aiProvider ?? "google";
-  const model = cfg.aiModel ?? "gemini-2.5-flash";
-
-  // Auth: every /api/* route requires a verified bearer token → user identity.
+  // Auth: every /api/* route requires a verified bearer token → user identity. Public routes (e.g.
+  // /auth-config, registered by registerProfile) live OUTSIDE the /api/* prefix and are not gated.
   app.use("/api/*", async (c, next) => {
     const h = c.req.header("Authorization") ?? "";
     if (!h.startsWith("Bearer ")) return c.json({ error: "unauthorized" }, 401);
@@ -47,124 +47,28 @@ export function buildApi(platform: Platform, cfg: ApiConfig = {}): Hono<Vars> {
     await next();
   });
 
-  app.get("/api/me", (c) => c.json({ uid: c.get("uid"), email: c.get("email") }));
-
-  // AI features (nutrition/activity estimation) are gated by the shared entitlements plane —
-  // same model as BalanceEngine's byo_ai_engines gate. Open when no plane is configured (self-host).
-  const requireAI: MiddlewareHandler<Vars> = async (c, next) => {
+  // AI features (nutrition/activity estimation, coach, web lookups, check-in generation) are gated by
+  // the shared entitlements plane — same model as BalanceEngine's byo_ai_engines gate. Open when no
+  // plane is configured (self-host). Each domain module mounts this per-route on its AI-backed handlers.
+  const requireAI: RouteDeps["requireAI"] = async (c, next) => {
     if (!(await checkFeature(platform, FEATURES.AI, c.get("email")))) {
       return c.json({ error: "Feature not available", feature: FEATURES.AI }, 403);
     }
     await next();
   };
-  app.use("/api/entries/food", requireAI);
-  app.use("/api/entries/activity", requireAI);
 
-  // Log food by text → AI nutrition estimate → entry.
-  app.post("/api/entries/food", async (c) => {
-    const uid = c.get("uid");
-    const b = (await c.req.json().catch(() => ({}))) as { text?: string; logged_at?: string; tz_offset_min?: number };
-    const text = (b.text || "").trim();
-    if (!text) return c.json({ error: "text required" }, 400);
-    const est = await estimateNutrition(platform, { provider, model, text });
-    const logged_at = b.logged_at || new Date().toISOString();
-    const tz = b.tz_offset_min ?? 0;
-    const entry = await platform.data.forUser(uid).create<Entry>("entries", {
-      user: uid,
-      kind: "food",
-      description: text,
-      kcal: est.total.kcal,
-      macros: macrosOf(est.total),
-      items: est.items.map((it) => ({
-        name: it.name,
-        kcal: it.kcal,
-        qty: it.qty,
-        macros: macrosOf(it),
-      })),
-      source: "ai",
-      logged_at,
-      tz_offset_min: tz,
-      day: localDay(logged_at, tz),
-    });
-    return c.json(entry);
-  });
+  const deps: RouteDeps = { platform, requireAI };
 
-  // Log activity by text → AI burn estimate → entry (kcal = burn, excluded from intake).
-  app.post("/api/entries/activity", async (c) => {
-    const uid = c.get("uid");
-    const b = (await c.req.json().catch(() => ({}))) as { text?: string; logged_at?: string; tz_offset_min?: number };
-    const text = (b.text || "").trim();
-    if (!text) return c.json({ error: "text required" }, 400);
-    const est = await estimateActivity(platform, { provider, model, text });
-    const logged_at = b.logged_at || new Date().toISOString();
-    const tz = b.tz_offset_min ?? 0;
-    const entry = await platform.data.forUser(uid).create<Entry>("entries", {
-      user: uid,
-      kind: "activity",
-      description: text,
-      kcal: est.total.kcal_burned,
-      duration_min: est.total.duration_min,
-      source: "ai",
-      logged_at,
-      tz_offset_min: tz,
-      day: localDay(logged_at, tz),
-    });
-    return c.json(entry);
-  });
-
-  // List entries — a specific local day (?day=YYYY-MM-DD) or the most recent overall.
-  app.get("/api/entries", async (c) => {
-    const uid = c.get("uid");
-    const day = c.req.query("day");
-    const limit = Number(c.req.query("limit") || 100);
-    const store = platform.data.forUser(uid);
-    const spec = day
-      ? { where: [{ field: "day", op: "==" as const, value: day }], limit }
-      : { orderBy: [{ field: "logged_at", dir: "desc" as const }], limit };
-    const { items } = await store.list<Entry>("entries", spec);
-    items.sort((a, b) => (a.logged_at < b.logged_at ? 1 : -1)); // newest first
-    return c.json({ entries: items });
-  });
-
-  // Day stats: food intake totals + activity burn + net.
-  app.get("/api/stats", async (c) => {
-    const uid = c.get("uid");
-    const tz = Number(c.req.query("tz") || 0);
-    const day = c.req.query("day") || localDay(new Date().toISOString(), tz);
-    const { items } = await platform.data.forUser(uid).list<Entry>("entries", {
-      where: [{ field: "day", op: "==", value: day }],
-      limit: 500,
-    });
-    const intake = { kcal: 0, protein: 0, carbs: 0, fat: 0 };
-    let burn = 0;
-    for (const e of items) {
-      if (e.kind === "activity") {
-        burn += e.kcal || 0;
-      } else {
-        intake.kcal += e.kcal || 0;
-        intake.protein += e.macros?.protein || 0;
-        intake.carbs += e.macros?.carbs || 0;
-        intake.fat += e.macros?.fat || 0;
-      }
-    }
-    return c.json({ day, intake, burn, net: intake.kcal - burn, count: items.length });
-  });
-
-  // Manual edit (partial fields; id/user immutable).
-  app.patch("/api/entries/:id", async (c) => {
-    const uid = c.get("uid");
-    const patch = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    delete patch.id;
-    delete patch.user;
-    const entry = await platform.data.forUser(uid).update<Entry>("entries", c.req.param("id"), patch as Partial<Entry>);
-    return c.json(entry);
-  });
-
-  app.delete("/api/entries/:id", async (c) => {
-    const uid = c.get("uid");
-    await platform.data.forUser(uid).delete("entries", c.req.param("id"));
-    return c.json({ ok: true });
-  });
+  // Mount every domain's routes. The register bodies add their routes synchronously (all awaits are
+  // inside handler closures), so calling them here — after the auth middleware is in place — leaves the
+  // app fully wired by the time buildApi returns. Ordering only matters relative to the auth middleware,
+  // which is already registered above; the domains are mutually exclusive on their paths.
+  void registerProfile(app, deps); // /auth-config (public), /api/me, /api/goals, /api/stats
+  void registerEntries(app, deps); // /api/log/*, /api/entries, /api/feed, PATCH/DELETE /api/entries/:id, /api/activities/search
+  void registerFoods(app, deps); // /api/foods/search, /search-online, /web-candidate, /accept, /manual
+  void registerWeight(app, deps); // /api/weight, /api/weight/log, /sync, /goals (GET/POST/DELETE)
+  void registerCoach(app, deps); // /api/plan/compute, /api/nutritionist, /api/second-opinion, /api/day/summary
+  void registerCheckins(app, deps); // /api/checkins/*, /api/checkins/run, /api/health/sync
 
   return app;
 }
