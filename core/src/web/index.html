@@ -5,39 +5,145 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#16a34a" />
     <title>Sate</title>
+    <meta name="description" content="Understand every meal, without the manual logging." />
+    <!-- Apply the saved theme before first paint so there is no flash of the wrong theme. -->
+    <script>try{var t=localStorage.getItem('sate-theme');if(t&&t!=='system')document.documentElement.dataset.theme=t;}catch(e){}</script>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <header>
-      <h1>Sate</h1>
-      <span id="who"></span>
+    <!-- ============================================================= TOP BAR -->
+    <header class="topbar" id="topbar" hidden>
+      <div class="brand"><span id="brandName">Sate</span></div>
+
+      <!-- Header tabs (wide screens). Same [data-view] contract as the bottom bar. -->
+      <nav class="tabs">
+        <button data-view="home" class="active" type="button">Home</button>
+        <button data-view="coach" type="button">Coach</button>
+        <button data-view="history" type="button">History</button>
+      </nav>
+
+      <!-- Account menu -->
+      <div class="usermenu">
+        <button class="who" id="userBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Account">
+          <span class="avatar" id="avatar" aria-hidden="true"></span>
+          <span class="who-email" id="who"></span><span class="caret">▾</span>
+        </button>
+        <div class="menu" id="userMenu" hidden>
+          <div class="menu-email" id="menuEmail"></div>
+          <div class="menu-label">Appearance</div>
+          <div class="seg" id="themeSeg">
+            <button type="button" data-theme-choice="system">System</button>
+            <button type="button" data-theme-choice="light">Light</button>
+            <button type="button" data-theme-choice="dark">Dark</button>
+          </div>
+          <button type="button" class="menu-item" data-open="goals">Goals &amp; tracking</button>
+          <button type="button" class="menu-item" data-open="upgrade" id="menuUpgrade">Upgrade</button>
+          <button type="button" class="menu-item" id="signoutBtn">Sign out</button>
+        </div>
+      </div>
     </header>
 
-    <section id="signin" class="card" hidden>
-      <p class="tagline">Understand every meal, without the manual logging.</p>
-      <button id="appleBtn" class="oauth apple">Sign in with Apple</button>
-      <button id="googleBtn" class="oauth google">Sign in with Google</button>
-      <details>
-        <summary>Sign in with email</summary>
-        <form id="signinForm">
-          <input id="email" type="email" placeholder="email" autocomplete="email" />
-          <input id="password" type="password" placeholder="password" autocomplete="current-password" />
-          <button>Sign in</button>
-        </form>
-      </details>
-      <p id="authErr" class="err"></p>
+    <!-- =============================================================== VIEWS -->
+    <main id="app" hidden>
+      <!-- HOME (fully implemented in views/home.js) -->
+      <section id="view-home" class="view">
+        <!-- scope filter drives both the stat card and the feed -->
+        <div class="seg scope" id="scope">
+          <button class="on" type="button" data-scope="all">All</button>
+          <button type="button" data-scope="nutrition">Nutrition</button>
+          <button type="button" data-scope="activity">Activity</button>
+          <button type="button" data-scope="weight">Weight</button>
+        </div>
+
+        <!-- stat card: range + chart toggle + body -->
+        <div class="statcard">
+          <div class="stathead">
+            <div class="range" id="range">
+              <button class="on" type="button" data-range="day">Day</button>
+              <button type="button" data-range="week">Week</button>
+              <button type="button" data-range="month">Month</button>
+              <button type="button" data-range="year">Year</button>
+            </div>
+            <div class="charttoggle" id="charts">
+              <button class="on" type="button" data-chart="ring" title="Ring" aria-label="Ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="8"/></svg></button>
+              <button type="button" data-chart="line" title="Trend" aria-label="Trend"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 3 6-8"/></svg></button>
+              <button type="button" data-chart="hybrid" title="Hybrid" aria-label="Hybrid"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="8" cy="9" r="4.5"/><path d="M3 19h18" stroke-linecap="round"/><path d="M14 19v-4M18 19v-7" stroke-linecap="round"/></svg></button>
+            </div>
+          </div>
+          <div id="statbody"></div>
+          <button class="link" type="button" data-open="goals">Set goals</button>
+        </div>
+
+        <!-- add -->
+        <button class="addbtn" id="addBtn" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          Add to log
+        </button>
+
+        <!-- day-grouped infinite feed -->
+        <h3 class="section" id="feedlbl">Log</h3>
+        <ul class="entries" id="feed"></ul>
+      </section>
+
+      <!-- COACH (owned by coach.js) -->
+      <section id="view-coach" class="view" hidden>
+        <div id="coachRoot" class="view-empty">Coach loads here.</div>
+      </section>
+
+      <!-- HISTORY (owned by history.js) -->
+      <section id="view-history" class="view" hidden>
+        <div id="historyRoot" class="view-empty">History loads here.</div>
+      </section>
+    </main>
+
+    <!-- ================================================= NATIVE-STYLE TAB BAR -->
+    <nav class="tabbar" id="tabbar" hidden>
+      <button data-view="home" class="active" type="button" aria-label="Home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>
+        <span>Home</span>
+      </button>
+      <button data-view="coach" type="button" aria-label="Coach">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-12.3 7.6L3 21l1.9-5.7A8.5 8.5 0 1 1 21 11.5z"/></svg>
+        <span>Coach</span>
+      </button>
+      <button data-view="history" type="button" aria-label="History">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+        <span>History</span>
+      </button>
+    </nav>
+
+    <!-- =============================================================== SIGN IN -->
+    <section id="signin" class="signin" hidden>
+      <div class="signin-card">
+        <h1 id="signinBrand">Sate</h1>
+        <p class="creed">Understand every meal, without the manual logging.</p>
+        <button id="appleBtn" class="oauth apple" type="button">
+          <svg viewBox="0 0 384 512" aria-hidden="true" fill="currentColor"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+          Sign in with Apple
+        </button>
+        <button id="googleBtn" class="oauth google" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M21.35 11.1H12v2.98h5.35c-.23 1.4-1.65 4.1-5.35 4.1-3.22 0-5.85-2.66-5.85-5.94S8.78 6.3 12 6.3c1.83 0 3.06.78 3.76 1.45l2.56-2.47C16.68 3.72 14.55 2.8 12 2.8 6.9 2.8 2.75 6.95 2.75 12S6.9 21.2 12 21.2c5.27 0 8.76-3.71 8.76-8.94 0-.6-.06-1.06-.16-1.16z"/></svg>
+          Sign in with Google
+        </button>
+        <details class="signin-email">
+          <summary>Sign in with email</summary>
+          <form id="signinForm">
+            <input id="email" type="email" placeholder="email" autocomplete="email" />
+            <input id="password" type="password" placeholder="password" autocomplete="current-password" />
+            <button class="primary" type="submit">Sign in</button>
+          </form>
+        </details>
+        <p id="authErr" class="signin-err" role="alert"></p>
+      </div>
     </section>
 
-    <main id="app" hidden>
-      <form id="logForm">
-        <input id="food" placeholder="What did you eat? (e.g. two eggs and toast)" autocomplete="off" />
-        <button>Log</button>
-      </form>
-      <p id="logStatus" class="muted"></p>
-      <div id="stats" class="stats"></div>
-      <ul id="entries"></ul>
-      <button id="logoutBtn" class="ghost">Sign out</button>
-    </main>
+    <!-- Overlay host: sheets & dialogs are appended here by lib.sheet()/dialog(). -->
+    <div id="overlay"></div>
+
+    <!-- Global activity + toast surfaces (driven by lib.js). -->
+    <div id="netbar" hidden></div>
+    <div id="working" hidden><span class="spinner"></span><span class="wlabel">Working…</span></div>
+    <div class="toast" id="toast" hidden></div>
 
     <script type="module" src="/app.js"></script>
   </body>

@@ -1,47 +1,874 @@
 :root {
-  --green: #16a34a;
-  --bg: #f7f8f7;
-  --card: #fff;
-  --ink: #1a2b22;
-  --muted: #6b7d73;
-  --line: #e3e8e4;
+  --bg: #f6f7f8;
+  --card: #ffffff;
+  --ink: #1a1d21;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --brand: #16a34a;
+  --activity: #2563eb;
+  --brand-ink: #ffffff;
+  --danger: #dc2626;
+  --radius: 14px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --hi: rgba(255, 255, 255, 0.5);
+  --kb: 0px; /* on-screen keyboard height, kept live by the visualViewport listener */
+  --sheet-max: 85dvh; /* px cap for bottom sheets = visible area above keyboard (JS overrides in px) */
+}
+:root[data-theme="dark"] {
+  --bg: #0f1113;
+  --card: #191c1f;
+  --ink: #e8eaed;
+  --muted: #9aa0a6;
+  --line: #2a2e33; --activity: #60a5fa;
+  --shadow: none;
+  --hi: rgba(255, 255, 255, 0.06);
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #0f1512; --card: #17201b; --ink: #e7efe9; --muted: #8fa295; --line: #26332b; }
+  :root:not([data-theme="light"]) {
+    --bg: #0f1113;
+    --card: #191c1f;
+    --ink: #e8eaed;
+    --muted: #9aa0a6;
+    --line: #2a2e33; --activity: #60a5fa;
+    --shadow: none;
+    --hi: rgba(255, 255, 255, 0.06);
+  }
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; background: var(--bg); color: var(--ink);
-  font: 16px/1.5 -apple-system, system-ui, sans-serif; }
-header { display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 18px calc(14px + env(safe-area-inset-top)); background: var(--green); color: #fff; }
-header h1 { margin: 0; font-size: 22px; letter-spacing: .5px; }
-#who { font-size: 13px; opacity: .9; }
-.card, main { max-width: 640px; margin: 18px auto; padding: 0 18px; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
-.tagline { color: var(--muted); margin-top: 0; }
-input { width: 100%; min-width: 0; padding: 12px; margin: 6px 0; font-size: 16px;
-  border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); }
-button { padding: 12px 16px; font-size: 16px; border: 0; border-radius: 10px;
-  background: var(--green); color: #fff; font-weight: 600; cursor: pointer; }
-button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
-.oauth { width: 100%; margin: 6px 0; }
-.oauth.google { background: #1a73e8; }
+html, body { margin: 0; }
+/* html carries the background too: with viewport-fit=cover the webview draws edge to edge, and
+   iOS paints the rubber-band overscroll area from <html>, not <body>. */
+html { background: var(--bg); }
+body {
+  font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100dvh;
+  padding-bottom: env(safe-area-inset-bottom);
+  /* Disable double-tap-to-zoom and the ~300ms tap delay it costs. Without this a WKWebView holds
+     each tap to watch for a second one, and a slightly-moving finger cancels the click entirely —
+     which is why buttons could feel dead. */
+  touch-action: manipulation;
+}
+button, a, input, textarea, select, label, .tabbar button { touch-action: manipulation; }
+button, a { -webkit-tap-highlight-color: transparent; }
+
+/* top bar */
+.topbar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 14px; padding-top: calc(6px + env(safe-area-inset-top));
+  background: var(--card); border-bottom: 1px solid var(--line);
+}
+.brand {
+  display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 20px;
+  padding: 4px 15px 4px 4px; border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 5%, var(--card));
+  border: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 var(--hi);
+}
+.brand img { border-radius: 50%; }
+/* ---- native-style bottom tab bar (phones) ------------------------------------------------ */
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  display: flex; justify-content: space-around; align-items: stretch;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-top: 1px solid var(--line);
+  /* clear the home indicator without a hardcoded height */
+  padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+}
+.tabbar button {
+  flex: 1 1 0; min-width: 0; min-height: 48px;   /* 48px = comfortable tap target */
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  border: 0; background: transparent; cursor: pointer;
+  color: var(--muted); font: inherit; font-size: 11px; font-weight: 600;
+  border-radius: 10px; padding: 4px 2px;
+  -webkit-tap-highlight-color: transparent;
+}
+.tabbar button svg { width: 23px; height: 23px; }
+.tabbar button.active { color: var(--brand); }
+.tabbar button.active svg { stroke-width: 2.2; }
+.tabbar[hidden] { display: none; }
+
+/* Phones get the bottom bar; only genuinely large screens keep the header tabs.
+   Width alone isn't enough: a phone in landscape is ~850px wide but only ~400px tall, so it must
+   still be treated as a phone. The two queries are exact complements — narrow OR short → bottom
+   bar; wide AND tall → header tabs — so exactly one applies at any size.
+   `.topbar .tabs` outranks the plain `.tabs` rule below, so these win regardless of source order. */
+@media (max-width: 719px), (max-height: 520px) {
+  .topbar .tabs { display: none; }
+  body { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+}
+@media (min-width: 720px) and (min-height: 521px) {
+  nav.tabbar { display: none; }
+}
+
+/* iOS zooms the page when a focused control's text is < 16px. Must cover phones in *either*
+   orientation, so it uses the same narrow-OR-short test as the nav — the old max-width:560px rule
+   missed landscape (a phone is ~850px wide then) and the page zoomed on every tap into a field. */
+@media (max-width: 719px), (max-height: 520px) {
+  input, select, textarea,
+  .fooded input, .prov input, .fn input, .fn select,
+  .uov-row select, .uov-row input, .prompt-ta, dialog input, #goalMode { font-size: 16px; }
+}
+
+.tabs { display: flex; gap: 4px; margin-left: auto; }
+.tabs button {
+  border: 0; background: transparent; color: var(--muted);
+  font-weight: 600; padding: 6px 10px; border-radius: 8px; cursor: pointer;
+}
+.tabs button.active { color: var(--brand); background: color-mix(in srgb, var(--brand) 12%, transparent); }
+/* Hugs the right edge on its own: the header tabs used to do this with margin-left:auto, but
+   they're hidden on phones now, which left the account button stranded next to the brand. */
+.usermenu { position: relative; margin-left: auto; }
+.who { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; color: var(--muted); background: transparent; border: 0; cursor: pointer; max-width: 200px; padding: 4px 6px; border-radius: 999px; }
+.who .who-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who .caret { font-size: 9px; opacity: .8; }
+.who:hover { background: color-mix(in srgb, var(--muted) 16%, transparent); }
+.avatar {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--brand) 18%, transparent);
+  color: var(--brand); font-weight: 700; font-size: 13px; line-height: 1;
+  text-transform: uppercase; user-select: none;
+}
+/* Anchored to the right edge, and never wider than the viewport. */
+.menu { position: absolute; right: 0; left: auto; top: calc(100% + 8px); background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 34px rgba(0,0,0,.28); padding: 6px; min-width: 214px; max-width: min(280px, calc(100vw - 20px)); z-index: 30; }
+.menu-email { font-size: 12px; color: var(--muted); padding: 6px 8px; word-break: break-all; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.menu-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 6px 8px 5px; }
+.seg { display: flex; gap: 4px; padding: 0 4px 4px; }
+.seg button { flex: 1; border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 8px; padding: 7px 4px; font: inherit; font-size: 12px; cursor: pointer; }
+.seg button.active { color: var(--brand); border-color: var(--brand); background: color-mix(in srgb, var(--brand) 12%, transparent); }
+.menu-item { display: block; padding: 9px 8px; margin-top: 4px; color: var(--ink); text-decoration: none; border-radius: 8px; font-size: 13px; border-top: 1px solid var(--line); }
+button.menu-item { width: 100%; text-align: left; background: transparent; border: 0; border-top: 1px solid var(--line); font: inherit; cursor: pointer; }
+.menu-item:hover { background: var(--bg); }
+
+main { max-width: 620px; margin: 0 auto; padding: 16px 14px 40px; }
+.view { animation: fade .2s ease; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* ring card */
+.ring-card {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 18px; display: flex; align-items: center; gap: 18px;
+  flex-wrap: wrap;
+}
+.ring {
+  --pct: 0; width: 96px; height: 96px; border-radius: 50%;
+  background: conic-gradient(var(--rc, var(--brand)) calc(var(--pct) * 1%), var(--line) 0);
+  display: grid; place-items: center; flex: 0 0 auto;
+}
+.ring-inner {
+  width: 76px; height: 76px; border-radius: 50%; background: var(--card);
+  display: grid; place-items: center; text-align: center;
+}
+.ring-inner strong { font-size: 22px; }
+.ring-inner small { color: var(--muted); font-size: 11px; }
+.macros { display: flex; gap: 14px; flex: 1; flex-wrap: wrap; }
+.macro { font-size: 13px; }
+.macro b { display: block; font-size: 17px; }
+.macro span { color: var(--muted); }
+.modecap { flex-basis: 100%; text-align: center; color: var(--muted); font-size: 11.5px; letter-spacing: .01em; }
+.link { border: 0; background: transparent; color: var(--brand); cursor: pointer; font-weight: 600; padding: 4px; }
+
+/* composer */
+.composer { display: flex; gap: 8px; margin: 16px 0 8px; }
+.composer input[type=text] {
+  flex: 1; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--card); color: var(--ink); font: inherit;
+}
+.icon-btn { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 12px; width: 46px; font-size: 20px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.icon-btn:hover { border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); color: var(--brand); }
+.icon-btn svg { display: block; }
+.primary {
+  border: 0; background: var(--brand); color: var(--brand-ink); font-weight: 700;
+  padding: 0 18px; border-radius: 12px; cursor: pointer; min-height: 46px;
+}
+.primary:disabled { opacity: .55; cursor: default; }
+.chatline { min-height: 20px; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.chatline .chatmsg { color: var(--ink); }
+.chatline .chatwarn { color: #b45309; margin-top: 6px; font-size: 12.5px; }
+.chatline .websearch { margin-top: 8px; }
+
+.creed { text-align: center; color: var(--muted); font-size: 12.5px; letter-spacing: .02em; margin: 0 0 14px; }
+.section { margin: 22px 0 8px; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.hint { color: var(--muted); font-size: 13px; margin: -2px 0 12px; }
+.muted { color: var(--muted); font-weight: 400; }
+
+/* entries */
+.entries, .users { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.entry {
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+  padding: 12px 14px; display: flex; align-items: flex-start; gap: 10px;
+}
+.entry .body { flex: 1; }
+.entry .title { font-weight: 600; }
+.entry .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.entry .kcal { font-weight: 700; white-space: nowrap; }
+.entry .del { border: 0; background: transparent; color: var(--danger); cursor: pointer; font-size: 16px; }
+.badge { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; }
+
+/* rows / forms */
+.row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.row.end { justify-content: flex-end; margin-top: 8px; }
+input[type=date], select, .prov input, .fn input {
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); font: inherit;
+}
+.summary { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; box-shadow: var(--shadow); }
+
+/* admin cards */
+.prov, .fn {
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+  padding: 14px; margin-bottom: 10px;
+}
+.prov h4, .fn h4 { margin: 0 0 10px; text-transform: capitalize; }
+.prov .grid, .fn .grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+/* Let the 1fr column actually shrink: a <select>'s default min-width:auto (its longest option,
+   which iOS enforces hard) otherwise overflows the track and shoves the "on"/Save column off-screen. */
+.prov .grid > *, .fn .grid > * { min-width: 0; }
+.prov input, .fn input, .fn select, .prov select, .model-cell select { width: 100%; min-width: 0; }
+.switch { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.keyhint { font-size: 12px; color: var(--muted); }
+
+.users .u { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
+.uemail { min-width: 0; word-break: break-word; }
+.urow-right { display: flex; align-items: center; gap: 10px; }
+.badge.lock { color: var(--brand); border-color: color-mix(in srgb, var(--brand) 40%, var(--line)); }
+.badge.adminb { color: var(--brand); }
+.uoverrides { flex-basis: 100%; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.uov-row { display: grid; grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: center; }
+.uov-label { font-size: 12px; color: var(--muted); }
+.uov-row select, .uov-row input { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; }
+.uov-row input:disabled { opacity: .5; }
+.primary.small { min-height: 34px; padding: 0 14px; font-size: 13px; align-self: flex-end; }
+
+/* Shared provider+model picker: a 2-col grid that shrinks (see the min-width:0 note above). */
+.mp { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 8px; align-items: center; }
+.mp > * { min-width: 0; }
+.mp select { width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; }
+.mp .muted { font-size: 12px; }
+
+/* AI global defaults panel */
+#aiGlobals { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.gdef-row { display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 10px; align-items: center; }
+.gdef-label { font-size: 12px; color: var(--muted); }
+
+/* Collapsible AI function cards */
+.fncard { padding: 0; overflow: hidden; }
+.fnhead { width: 100%; display: flex; align-items: center; gap: 8px; padding: 12px 14px; background: none; border: 0; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.fnchevron { flex: 0 0 auto; color: var(--muted); font-size: 12px; width: 12px; }
+.fntitle { flex: 1 1 auto; min-width: 0; font-weight: 600; }
+.fnsummary { flex: 0 0 auto; font-size: 12px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fnenabled { flex: 0 0 auto; }
+.fnbody { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 6px; }
+.mp-lbl { font-size: 12px; color: var(--muted); margin-top: 4px; }
+/* [hidden] must beat the display:flex above/below on these collapsibles (author rule vs UA rule). */
+.fnbody[hidden], .uoverrides[hidden], .ufns-body[hidden], .ufn-body[hidden] { display: none; }
+.row.between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.badge.warn { color: var(--warn, #c47f00); border-color: color-mix(in srgb, var(--warn, #c47f00) 40%, var(--line)); }
+
+/* User per-function override tree (nested, collapsed) */
+.ufns { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.ufns-head, .ufn-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 9px 11px; background: var(--bg); border: 0; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.ufns-body { padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+.ufn { border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.ufn-head { background: var(--card); }
+.ufn-title { flex: 1 1 auto; min-width: 0; }
+.ufn-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+/* One override line: label on top, full-width provider+model picker below. */
+.uov-line { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.uov-line:last-child { margin-bottom: 0; }
+.uov-line > .mp { width: 100%; }
+
+/* instance card */
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 14px; margin-bottom: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); margin-bottom: 10px; min-width: 0; }
+.field input { padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; width: 100%; }
+.grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.grid4 > * { min-width: 0; }
+@media (max-width: 480px) { .grid4 { grid-template-columns: repeat(2, 1fr); } }
+.meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* food database */
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: center; }
+.grid2 > * { min-width: 0; }
+.foods { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; max-height: 340px; overflow-y: auto; }
+.food { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; box-shadow: var(--shadow); }
+.food .fbody { flex: 1; min-width: 0; }
+.food .fname { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.food .fsub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.food .fkcal { font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.food .fx { border: 0; background: transparent; color: var(--muted); font-size: 15px; cursor: pointer; padding: 2px 4px; line-height: 1; }
+.food .fx:hover { color: var(--ink); }
+.food .fx.danger:hover { color: var(--danger); }
+.fbadge { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; color: var(--muted); font-weight: 600; }
+.fbadge.seed, .fbadge.user { color: var(--brand); border-color: color-mix(in srgb, var(--brand) 40%, var(--line)); }
+.fbadge.ai { color: #b45309; border-color: color-mix(in srgb, #b45309 40%, var(--line)); }
+.fbadge.warn { color: #b45309; border-color: color-mix(in srgb, #b45309 40%, var(--line)); }
+.fbadge.web { color: #2563eb; border-color: color-mix(in srgb, #2563eb 40%, var(--line)); }
+.fbadge.off { color: #7c3aed; border-color: color-mix(in srgb, #7c3aed 40%, var(--line)); }
+
+/* barcode scanner overlay */
+/* Sign-in overlay (AUTH_MODE=apple). Same trap as .scanwrap: an explicit `display` beats the
+   hidden attribute's UA default, so [hidden] must be restated. */
+.authwrap[hidden] { display: none; }
+.authwrap { position: fixed; inset: 0; z-index: 60; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.authbox { text-align: center; max-width: 340px; width: 100%; }
+.authbox img { border-radius: 18px; }
+.authbox h1 { margin: 14px 0 6px; font-size: 1.6rem; }
+.authcreed { color: var(--muted); margin: 0 0 26px; line-height: 1.5; }
+.apple-btn {
+  width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  background: #000; color: #fff; border: 0; border-radius: 10px;
+  font-size: 16px; font-weight: 500; padding: 13px 16px; cursor: pointer;
+  min-height: 48px; /* iOS tap target */
+}
+.apple-btn:disabled { opacity: .55; cursor: default; }
+:root[data-theme="dark"] .apple-btn { background: #fff; color: #000; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .apple-btn { background: #fff; color: #000; } }
+.authnote { margin-top: 16px; color: var(--muted); font-size: .86rem; min-height: 1.2em; }
+.authnote.err { color: #dc2626; }
+
+.scanwrap[hidden] { display: none; }  /* the hidden attr must beat the display:flex below */
+.scanwrap { position: fixed; inset: 0; background: rgba(0,0,0,.72); z-index: 40; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.scanbox { background: var(--card); border: 1px solid var(--line); border-radius: 16px; width: min(94vw, 420px); overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+.scanhead { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--line); font-weight: 600; }
+#reader { width: 100%; }
+#reader video { width: 100% !important; display: block; }
+.scanstatus { padding: 12px 14px; font-size: 13px; color: var(--muted); text-align: center; min-height: 20px; }
+
+/* nutrition sources */
+.sources { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.source { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; box-shadow: var(--shadow); }
+.source.off { opacity: .55; }
+.source .fbody { flex: 1; min-width: 0; }
+.source .fsub a { color: var(--brand); text-decoration: none; }
+.source .fsub a:hover { text-decoration: underline; }
+
+/* editable AI prompts */
+.prompt { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; box-shadow: var(--shadow); margin-bottom: 10px; }
+.prompt-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.prompt-ta { width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; line-height: 1.45; padding: 10px 12px; resize: vertical; min-height: 96px; }
+.fooded { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); }
+.fooded h4 { margin: 0 0 10px; font-size: 14px; }
+.fooded input[type="text"], .fooded input[type="number"] { padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; width: 100%; }
+
+/* dialog */
+dialog { border: 0; border-radius: var(--radius); padding: 20px; background: var(--card); color: var(--ink); box-shadow: 0 10px 40px rgba(0,0,0,.3); width: min(92vw, 360px);
+  /* Never exceed the screen: cap to the (dynamic) viewport minus safe areas and scroll inside. */
+  max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 28px);
+  overflow-y: auto; overscroll-behavior: contain; }
+dialog::backdrop { background: rgba(0,0,0,.4); }
+dialog h3 { margin: 0 0 14px; }
+dialog label { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+/* goals & tracking dialog */
+#goalsForm > label:first-of-type { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+#goalMode { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; }
+#goalModeHint { font-size: 12px; margin: 2px 0 12px; }
+.goalgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-bottom: 14px; }
+.goalgrid label { margin-bottom: 0; }
+.goalgrid input { width: 82px; }
+.checkrow { display: flex; flex-direction: row; justify-content: flex-start; align-items: flex-start; gap: 10px; margin-bottom: 14px; cursor: pointer; }
+.checkrow input { width: auto; margin-top: 3px; flex: 0 0 auto; }
+.checkrow span { display: flex; flex-direction: column; gap: 2px; font-weight: 600; }
+.checkrow small { font-weight: 400; font-size: 12px; color: var(--muted); }
+.healthrow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.healthinfo { display: flex; flex-direction: column; gap: 2px; }
+.healthinfo small { font-size: 12px; color: var(--muted); }
+.healthactions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: 0 0 auto; }
+.healthactions .primary { padding: 7px 12px; font-size: 13px; }
+/* Interval picker wraps to its own full-width line under the status/actions. Guard hidden
+   explicitly per the scanner-modal trap (an explicit display would beat the hidden attr). */
+.healthsyncopts { flex: 1 0 100%; margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--line); }
+.healthsyncopts[hidden] { display: none; }
+.healthintlbl { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; font-size: 13px; font-weight: 600; }
+.healthintlbl select { width: auto; flex: 0 0 auto; font-size: 13px; padding: 6px 8px; }
+
+/* Admin food quick-add (photo / AI+web / barcode) */
+.foodadd { display: flex; gap: 8px; margin: 6px 0 12px; }
+.foodadd .method { flex: 1; }
+
+/* Weight tab */
+.wcur { font-size: 30px; font-weight: 800; text-align: center; margin: 4px 0 10px; }
+.wcur .wunit { font-size: 16px; font-weight: 600; color: var(--muted); }
+.wgoals { margin: 10px 0; }
+.wgoal { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.wgoal b { color: var(--brand); }
+.ontrack { color: #16a34a; font-weight: 600; }
+.behind { color: #dc2626; font-weight: 600; }
+.wsrc { font-size: 13px; color: var(--muted); margin: 8px 0; }
+.wlog { display: flex; gap: 8px; margin: 12px 0 6px; }
+.wlog input { flex: 1; min-width: 0; }
+.coachlink { display: block; margin-top: 8px; }
+
+/* Nutrition coach chat */
+.coachlog { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow-y: auto; padding: 4px 2px 10px; }
+.cmsg { max-width: 88%; padding: 9px 12px; border-radius: 14px; font-size: 14px; line-height: 1.45; white-space: pre-wrap; }
+.cmsg.me { align-self: flex-end; background: var(--brand); color: var(--brand-ink); border-bottom-right-radius: 4px; }
+.cmsg.coach { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.cmsg.second { align-self: flex-start; background: color-mix(in srgb, var(--brand) 8%, var(--bg)); border: 1px dashed color-mix(in srgb, var(--brand) 45%, var(--line)); border-bottom-left-radius: 4px; }
+.cmsg-actions { align-self: flex-start; padding: 2px 2px 4px; }
+.second-tag { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--brand); font-weight: 700; margin-bottom: 4px; }
+/* Second-opinion card in the entry edit sheet */
+.second-card { margin-top: 8px; padding: 10px 12px; border: 1px dashed color-mix(in srgb, var(--brand) 45%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--brand) 6%, var(--bg)); display: flex; flex-direction: column; gap: 6px; }
+.second-cmp { font-size: 15px; }
+.second-macros { font-size: 12px; color: var(--muted); margin-left: 6px; }
+.second-note { font-size: 12px; }
+.second-card .primary.small { align-self: flex-start; }
+.coachplan { align-self: flex-start; }
+.coachbar { display: flex; gap: 8px; padding-top: 8px; align-items: center; }
+.coachbar input { flex: 1; min-width: 0; }
+.cmsg-img { display: block; margin-top: 8px; max-width: 220px; width: 100%; border-radius: 10px; }
+
+/* Coach tab — a viewport-locked chat: the view is pinned between the header (--coach-top) and the
+   bottom tab bar (--coach-bottom, set in JS), the log fills the middle and scrolls, and messages sit
+   at the BOTTOM (rising up as they arrive), with the composer fixed just below. */
+#view-coach:not([hidden]) {
+  position: fixed; left: 0; right: 0;
+  top: var(--coach-top, 56px); bottom: var(--coach-bottom, 0px);
+  max-width: 620px; margin: 0 auto; padding: 6px 14px 0;
+  box-sizing: border-box; display: flex; flex-direction: column;
+}
+.coachtab { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: 8px; }
+.tablog { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; gap: 8px; padding: 4px 2px 6px; }
+/* Pin content to the bottom; when it overflows, the auto-margin collapses so scrolling still works. */
+.tablog > :first-child { margin-top: auto; }
+.coachcompose { flex: 0 0 auto; background: var(--bg); padding: 6px 0 calc(6px + env(safe-area-inset-bottom)); }
+.coachpreview { position: relative; width: max-content; margin: 4px 2px 8px; }
+.coachpreview img { display: block; max-height: 120px; max-width: 60%; border-radius: 10px; border: 1px solid var(--line); }
+.coachpreview .cpx { position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink); font-size: 15px; line-height: 1; cursor: pointer; }
+/* Check-in waiting → a dot on the Coach tab (header tabs + bottom bar). */
+.tabs button.has-badge, .tabbar button.has-badge { position: relative; }
+.tabs button.has-badge::after, .tabbar button.has-badge::after {
+  content: ""; position: absolute; top: 3px; right: 6px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--brand); border: 1px solid var(--card);
+}
+/* Admin feature toggles: checkbox with wrapping description. */
+.featline { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; color: var(--ink); font-size: 13px; line-height: 1.4; }
+.featline input { margin-top: 2px; flex: 0 0 auto; }
+/* Collapsible admin sections — each h3.section toggles its content (collapsed by default). */
+.sect-h { cursor: pointer; user-select: none; -webkit-user-select: none; display: flex; align-items: center; gap: 7px; }
+.sect-chev { flex: 0 0 auto; color: var(--muted); font-size: .72em; }
+.sect-body[hidden] { display: none; }
+.sect-body { margin: 0 0 6px; }
+
+/* Backup & sync snapshot list */
+.snaprow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.snapmeta { min-width: 0; font-size: 13px; }
+.link.danger { color: #dc2626; }
+
+.iconbtn { flex: 0 0 auto; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--muted); cursor: pointer; }
+.iconbtn svg { width: 20px; height: 20px; }
+.iconbtn:active { background: var(--card); }
+
+/* Onboarding walkthrough */
+.onboard { position: fixed; inset: 0; z-index: 70; background: var(--bg); display: flex; overflow-y: auto;
+  padding: calc(env(safe-area-inset-top) + 16px) 20px calc(env(safe-area-inset-bottom) + 16px); }
+/* An explicit display beats the `hidden` attribute — guard it, or the (empty) overlay stays on
+   top after Finish (freeze) and covers the app on reopen (blank screen). */
+.onboard[hidden] { display: none; }
+/* margin:auto centers the card yet still lets tall content scroll (align-items:center would clip
+   the top under the notch when the content is taller than the screen). */
+.onboard-card { width: min(440px, 100%); margin: auto; background: var(--card); border: 1px solid var(--line);
+  border-radius: 20px; box-shadow: var(--shadow); padding: 26px 22px; }
+/* progress dots */
+.ob-progress { display: flex; gap: 6px; justify-content: center; margin-bottom: 18px; }
+.ob-progress i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); transition: width .2s, background .2s; }
+.ob-progress i.on { background: var(--brand); width: 22px; border-radius: 4px; }
+.onboard-body h2 { margin: 2px 0 6px; font-size: 23px; letter-spacing: -.02em; }
+.ob-sub { color: var(--muted); font-size: 14px; line-height: 1.45; margin: 0 0 18px; }
+.ob-logo { display: block; width: 78px; height: 78px; margin: 4px auto 16px; border-radius: 20px; }
+/* Every onboarding field gets the app's input theme (was falling back to the white iOS default). */
+.onboard input, .onboard select { width: 100%; min-width: 0; padding: 12px; border: 1px solid var(--line);
+  border-radius: 11px; background: var(--bg); color: var(--ink); font: inherit; font-size: 16px; }
+.onboard label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.ob-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ob-full { margin-top: 12px; }
+.ob-ht { display: flex; gap: 8px; }
+.ob-choices, .ob-methods { display: flex; flex-direction: column; gap: 10px; }
+.ob-choice, .ob-method { text-align: left; padding: 15px; border: 1.5px solid var(--line); border-radius: 14px; background: var(--bg); font-size: 15px; font-weight: 600; color: var(--ink); cursor: pointer; }
+.ob-choice { display: flex; flex-direction: column; gap: 2px; }
+.ob-choice small, .ob-method small { font-weight: 400; color: var(--muted); }
+.ob-choice.on, .ob-method.on { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, var(--bg)); }
+.ob-goalrow { display: flex; gap: 10px; margin-bottom: 12px; align-items: flex-end; }
+.ob-gf { flex: 1; display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; color: var(--muted); min-width: 0; }
+.ob-gf input[type=date]::-webkit-datetime-edit { color: var(--muted); }
+.ob-grm { flex: 0 0 auto; align-self: flex-end; padding: 0 2px 12px; }
+.ob-targets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; text-align: center; margin: 10px 0; }
+.ob-targets div { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 12px 4px; }
+.ob-targets b { display: block; font-size: 19px; color: var(--brand); }
+.ob-targets span { font-size: 11px; color: var(--muted); }
+.ob-warn { background: color-mix(in srgb, #f59e0b 14%, transparent); border: 1px solid #f59e0b; border-radius: 12px; padding: 11px 13px; font-size: 13px; line-height: 1.4; margin: 12px 0; }
+.ob-plan { white-space: pre-wrap; font-size: 14px; line-height: 1.55; background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 15px; max-height: 44vh; overflow-y: auto; }
+.ob-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 22px; }
+.ob-navr { display: flex; gap: 14px; align-items: center; }
+#obAddGoal { display: inline-block; margin-top: 2px; }
+
+/* Weight & goals section in the Goals dialog */
+.wgsection { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+.wglabel { font-weight: 700; margin-bottom: 8px; }
+.wgrow { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 14px; }
+
+/* Admin section tabs + panels */
+.admin-tabs { margin: 2px 0 16px; overflow-x: auto; }
+.admin-sect[hidden] { display: none; }
+.prov-hint { font-size: 11px; font-weight: 400; color: var(--muted); }
+.model-cell { display: block; min-width: 0; }
+.model-cell select { width: 100%; }
+.limitrow { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.limithead { font-weight: 700; margin-bottom: 8px; }
+.usagerow { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.usagerow .up { font-weight: 600; }
+.usagerow .um { font-size: 12px; color: var(--muted); }
+.usagerow.over .um { color: #dc2626; }
+.pricebox { margin-top: 12px; }
+.pricebox summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 0; }
+.pricerow { display: grid; grid-template-columns: 1fr 1.4fr 5em 5em auto; gap: 6px; align-items: center; padding: 4px 0; font-size: 12px; }
+.pricerow.head { color: var(--muted); font-weight: 600; }
+.pricerow .pm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pricerow input { font-size: 12px; padding: 5px 6px; min-width: 0; }
+
+/* Pull-to-refresh indicator (Home). Sits BELOW the sticky header (z-index 4 < 5) so it's hidden
+   behind it at rest and revealed into the gap as the page (main) slides down. JS drives the
+   transform/opacity; the page translation lives on <main>. */
+.ptr { position: fixed; top: 0; left: 50%; margin-left: -17px; z-index: 4;
+  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: var(--card); border: 1px solid var(--line);
+  box-shadow: 0 4px 16px rgba(0,0,0,.22); opacity: 0; transform: translateY(0); pointer-events: none;
+  transition: transform .22s ease, opacity .2s ease; }
+.ptr-spin { width: 18px; height: 18px; border-radius: 50%;
+  border: 2.5px solid color-mix(in srgb, var(--brand) 28%, transparent); border-top-color: var(--brand);
+  transition: transform .15s ease; }
+.ptr.ready .ptr-spin { transform: rotate(180deg); }
+.ptr.spin .ptr-spin { animation: ptrspin .7s linear infinite; }
+@keyframes ptrspin { to { transform: rotate(360deg); } }
+
+/* ---- activity / "thinking" indicators ---- */
+.spinner { width: 16px; height: 16px; border-radius: 50%; flex: none; display: inline-block; vertical-align: middle;
+  border: 2px solid color-mix(in srgb, var(--ink) 18%, transparent); border-top-color: var(--brand);
+  animation: ptrspin .7s linear infinite; }
+.spinner.big { width: 30px; height: 30px; border-width: 3px; }
+/* top network bar — an indeterminate sweep whenever any request is in flight */
+#netbar { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 60; overflow: hidden; pointer-events: none; background: color-mix(in srgb, var(--brand) 14%, transparent); }
+#netbar::before { content: ""; position: absolute; top: 0; height: 100%; width: 40%; border-radius: 2px; background: var(--brand); animation: netslide 1.1s ease-in-out infinite; }
+@keyframes netslide { 0% { left: -42%; } 100% { left: 100%; } }
+/* centered "working" pill — the obvious spinning indicator for AI/searches */
+#working { position: fixed; left: 50%; transform: translateX(-50%); z-index: 61;
+  top: calc(env(safe-area-inset-top) + 60px); display: inline-flex; align-items: center; gap: 10px;
+  background: var(--card); border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0,0,0,.22);
+  border-radius: 999px; padding: 10px 18px; font-size: 13.5px; font-weight: 600; color: var(--ink); max-width: 84vw; }
+#netbar[hidden], #working[hidden] { display: none; }
+/* in-panel loading row (search overlay, etc.) */
+.loadrow { display: flex; align-items: center; gap: 10px; padding: 16px 6px; color: var(--muted); font-size: 13.5px; }
+.loadrow.center { justify-content: center; flex-direction: column; text-align: center; gap: 12px; padding: 30px 6px; }
+/* animated typing dots for the coach "…" */
+.dots::after { content: "…"; animation: dots 1.2s steps(4, end) infinite; }
+@keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+
+/* Add-from-heart-rate picker */
+.hrmethodrow { margin-bottom: 14px; }
+.hrload { padding: 26px 8px; text-align: center; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.hrgraphwrap { margin: 6px 0 4px; }
+#hrSvg { width: 100%; height: 168px; display: block; touch-action: none; overflow: visible; }
+.hrline { stroke: var(--activity); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.hrband { fill: color-mix(in srgb, var(--activity) 16%, transparent); }
+.hrhandle { stroke: var(--activity); stroke-width: 2; }
+.hrgrip { fill: var(--activity); stroke: var(--card); stroke-width: 2; }
+.hrtick { fill: var(--muted); font-size: 9px; }
+.hrreadout { display: flex; flex-direction: column; gap: 2px; padding: 8px 2px 12px; }
+.hrreadout b { font-size: 18px; color: var(--activity); }
+.hrreadout span { font-size: 12px; color: var(--muted); }
+.hrname { width: 100%; margin-bottom: 12px; }
+.hrbody { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+.hrbodylbl { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.hrbodygrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.hrbodygrid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.hractions { gap: 10px; }
+.link.danger { color: var(--danger, #dc2626); }
+
+/* toast */
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px;
+  font-size: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.3); z-index: 20; max-width: 90vw;
+}
+
+/* ------------------------------- mobile ------------------------------- */
+@media (max-width: 560px) {
+  /* Header: shrink the lockup + tabs and collapse the account button to a caret pill
+     (the full email still shows inside the opened menu) so it all fits on a phone. */
+  .topbar { gap: 8px; padding-left: 10px; padding-right: 10px; }
+  .brand { font-size: 17px; padding: 3px 12px 3px 3px; gap: 7px; }
+  .brand img { width: 30px; height: 30px; }
+  .tabs { gap: 2px; }
+  .tabs button { padding: 6px 8px; font-size: 13px; }
+  /* Phones show the avatar alone — a bare caret pill read as an empty dot. */
+  .who { max-width: none; padding: 0; border: 0; }
+  .who .who-email, .who .caret { display: none; }
+  .avatar { width: 34px; height: 34px; font-size: 14px; }
+
+  /* Comfortable tap targets for inline row actions. */
+  .link { padding: 6px 8px; }
+  .food .fx, .entry .del { font-size: 18px; padding: 6px 9px; }
+
+  /* Per-user override rows breathe a little more. */
+  .uov-row { grid-template-columns: 56px minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+
+  /* Goals dialog: stack each goal label above its input so nothing overflows. */
+  .goalgrid label { flex-direction: column; align-items: stretch; gap: 4px; }
+  .goalgrid input { width: 100%; }
+}
+
+/* ============================ Home dashboard (v25) ============================ */
+
+/* scope + add-tab segmented controls (override the bordered .seg used by the theme picker) */
+.seg.scope { background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 11px; padding: 3px; gap: 2px; margin: 0 0 14px; }
+.seg.scope button { border: 0; background: transparent; color: var(--muted); font-weight: 600; font-size: 13px;
+  padding: 8px 6px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.seg.scope button.on { background: var(--card); color: var(--ink); box-shadow: var(--shadow); }
+.seg.scope button.on[data-scope="nutrition"], .seg.scope button.on[data-add="nutrition"] { color: var(--brand); }
+.seg.scope button.on[data-scope="activity"], .seg.scope button.on[data-add="activity"] { color: var(--activity); }
+.tico { width: 17px; height: 17px; }
+
+/* stat card */
+.statcard { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; }
+.stathead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.range { display: flex; gap: 4px; }
+.range button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; padding: 5px 9px; border-radius: 8px; cursor: pointer; }
+.range button.on { background: color-mix(in srgb, var(--brand) 14%, transparent); color: var(--brand); }
+.charttoggle { display: flex; gap: 2px; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 9px; padding: 2px; }
+.charttoggle button { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 5px; border-radius: 7px; display: grid; place-items: center; }
+.charttoggle button.on { background: var(--card); color: var(--ink); box-shadow: var(--shadow); }
+.charttoggle svg { width: 17px; height: 17px; display: block; }
+.statcard .link { margin-top: 12px; }
+
+/* ring inside the stat card (reuses .ring / .ring-inner) */
+.ringwrap { display: flex; align-items: center; gap: 18px; }
+.ringwrap .macros { display: flex; flex-wrap: wrap; gap: 12px 18px; flex: 1; }
+.kpis { display: flex; gap: 10px; flex: 1; }
+.kpi { flex: 1; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 11px; padding: 12px; text-align: center; }
+.kpi b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; color: var(--activity); }
+.kpi span { font-size: 11px; color: var(--muted); }
+.subline { margin-top: 14px; font-size: 12px; color: var(--muted); text-align: center; }
+.iico { width: 14px; height: 14px; vertical-align: -2px; }
+
+/* trend chart + sparkline */
+.chart svg { width: 100%; height: 150px; display: block; overflow: visible; }
+.avgrow { display: flex; justify-content: space-between; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.avgrow b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.spark { display: flex; align-items: flex-end; gap: 5px; height: 44px; margin-top: 14px; }
+.spark i { flex: 1; background: color-mix(in srgb, var(--brand) 55%, transparent); border-radius: 3px 3px 0 0; min-height: 4px; }
+.spark i.today { background: var(--brand); }
+
+/* add button */
+.addbtn { display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; margin: 14px 0;
+  background: var(--brand); color: var(--brand-ink); border: 0; border-radius: 13px; padding: 15px; font: inherit;
+  font-size: 16px; font-weight: 600; cursor: pointer; box-shadow: 0 6px 18px color-mix(in srgb, var(--brand) 32%, transparent); }
+.addbtn svg { width: 20px; height: 20px; }
+
+/* feed entries (new type-icon design; overrides the old .entry layout) */
+.entries { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 8px; }
+.entry { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 11px 13px; box-shadow: var(--shadow); cursor: pointer; width: 100%; text-align: left; font: inherit; }
+.entry.readonly { cursor: default; }
+/* Day separator in the infinite feed — a centered date pill flanked by solid rules. */
+.day-divider { display: flex; align-items: center; gap: 10px; margin: 22px 0 8px; }
+.day-divider:first-child { margin-top: 6px; }
+.day-divider span { font-size: 12.5px; font-weight: 800; letter-spacing: .02em; color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 4px 13px; border-radius: 999px; white-space: nowrap; }
+.day-divider::before, .day-divider::after { content: ""; flex: 1; height: 2px; background: var(--line); border-radius: 1px; }
+.ticon { width: 34px; height: 34px; border-radius: 9px; flex: none; display: grid; place-items: center; }
+.ticon.n { background: color-mix(in srgb, var(--brand) 15%, transparent); color: var(--brand); }
+.ticon.a { background: color-mix(in srgb, var(--activity) 15%, transparent); color: var(--activity); }
+.ticon svg { width: 19px; height: 19px; }
+.etext { flex: 1; min-width: 0; }
+.etext .t { display: block; font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.etext .s { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ekcal { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 14px; flex: none; }
+.ekcal.out { color: var(--activity); }
+.ekcal small { font-weight: 500; color: var(--muted); font-size: 11px; }
+.eactions { display: flex; align-items: center; gap: 1px; flex: none; margin-left: 2px; }
+.eact { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 7px; border-radius: 8px; display: inline-flex; -webkit-tap-highlight-color: transparent; }
+.eact svg { width: 17px; height: 17px; }
+.eact:active { background: var(--bg); }
+.eact.del { color: var(--danger, #dc2626); }
+.health { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 600;
+  color: #e0245e; background: color-mix(in srgb, #e0245e 12%, transparent); padding: 1px 6px; border-radius: 999px; }
+.health svg { width: 11px; height: 11px; }
+
+/* bottom-sheet overlays (compose + edit). [hidden] must beat the transform display. */
+.sheet-bg[hidden], .sheet[hidden] { display: none; }
+.sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 40; }
+/* While a sheet is open the body is pinned (top set inline to -scrollY) so the document can't
+   scroll — otherwise iOS drags the fixed sheet up when its input is focused. */
+body.sheet-open { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
+.sheet { position: fixed; left: 0; right: 0; bottom: var(--kb); max-width: 480px; margin: 0 auto; z-index: 41;
+  background: var(--card); border-radius: 20px 20px 0 0; padding: 8px 16px calc(20px + env(safe-area-inset-bottom));
+  max-height: var(--sheet-max);
+  overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  box-shadow: 0 -8px 40px rgba(0,0,0,.35); transition: bottom .18s ease, max-height .18s ease; }
+/* Search overlay: header + input stay put, only the results list scrolls (so the keyboard never
+   buries the field and you never have to scroll back up to the top). */
+.fssheet { display: flex; flex-direction: column; overflow: hidden; }
+.fssheet #fsBody { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.fssheet .search { flex: none; }
+.fsresults { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+/* Compose sheet: tabs + the input (and activity duration) stay pinned; only the results/methods
+   scroll — so the field you're typing in never scrolls out from under you. */
+.addsheet { display: flex; flex-direction: column; overflow: hidden; }
+.addsheet > .grab, .addsheet > .seg { flex: none; }
+.addsheet #addBody { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.addsheet #addBody > .search, .addsheet #addBody > .dur { flex: none; }
+.addscroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 6px auto 12px; }
+.sheet-x { position: absolute; top: 10px; right: 12px; z-index: 2; width: 32px; height: 32px; border-radius: 999px;
+  border: 1px solid var(--line); background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--muted);
+  font-size: 15px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.sheet-x:hover, .sheet-x:active { color: var(--ink); border-color: var(--brand); }
+.sheet h3 { margin: 2px 0 12px; font-size: 18px; }
+.search { display: flex; align-items: center; gap: 9px; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 12px; padding: 11px 13px; }
+.search input { border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 16px; width: 100%; outline: none; }
+.search svg { width: 18px; height: 18px; color: var(--muted); flex: none; }
+.methods { display: flex; gap: 9px; margin-top: 11px; }
+.method { flex: 1; background: color-mix(in srgb, var(--ink) 5%, transparent); border: 1px solid var(--line); border-radius: 12px;
+  padding: 13px 8px; display: flex; flex-direction: column; align-items: center; gap: 7px; cursor: pointer; color: var(--ink); font: inherit; }
+.method svg { width: 22px; height: 22px; color: var(--brand); }
+.method b { font-size: 12.5px; font-weight: 600; }
+.method span { font-size: 10.5px; color: var(--muted); text-align: center; }
+.reslist { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; }
+.grouplbl { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; margin: 8px 4px 4px; display: flex; align-items: center; gap: 6px; }
+.res { display: flex; align-items: center; gap: 11px; padding: 10px 8px; border-radius: 10px; cursor: pointer; background: transparent; border: 0; width: 100%; text-align: left; font: inherit; color: var(--ink); }
+.res:hover, .res:active { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.res .rt { flex: 1; }
+.res .rt b { font-weight: 600; font-size: 14px; display: block; }
+.res .rt span { font-size: 12px; color: var(--muted); }
+.res .add { color: var(--brand); font-size: 22px; font-weight: 400; }
+.res.act { border: 1px dashed color-mix(in srgb, var(--brand) 35%, var(--line)); margin-bottom: 2px; }
+.res.act .add { font-size: 18px; color: var(--muted); }
+.fsdetail h4 { margin: 8px 0 2px; font-size: 16px; }
+.kvs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; margin: 8px 0 4px; }
+.kv { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
+.kv span { color: var(--muted); }
+.aibtn { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 12px; justify-content: center;
+  border: 1px dashed color-mix(in srgb, var(--brand) 45%, var(--line)); background: transparent; color: var(--brand);
+  border-radius: 12px; padding: 12px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.aibtn svg { width: 18px; height: 18px; }
+.dur { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.dur input { width: 90px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; }
+.dur label { font-size: 13px; color: var(--muted); }
+
+/* edit sheet fields */
+.editrow { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+.editrow label { font-size: 13px; color: var(--muted); width: 90px; flex: none; }
+.editrow input { flex: 1; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; }
+.quickscale { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 12px; }
+.quickscale button { border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 999px; padding: 7px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.quickscale button:hover { border-color: var(--brand); color: var(--brand); }
+.sheet-actions { display: flex; gap: 8px; margin-top: 14px; }
+.sheet-actions .primary { flex: 1; }
+.mfield { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.mfield > span { font-size: 12px; color: var(--muted); }
+.mfield > span em { font-style: normal; opacity: .7; }
+.mfield input { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 16px; min-width: 0; }
+.manualgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; margin: 6px 0 4px; }
+.manualgrid .mfield { margin: 0; min-width: 0; }
+.danger-btn { background: transparent; border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--line)); color: var(--danger); border-radius: 10px; padding: 12px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+
+/* ============================================================================
+   SATE v2 — foundation additions on top of the ported v1 design system.
+   Everything above this line is the proven v1 stylesheet (shared components:
+   topbar, tabs, tabbar, seg, statcard, ring, entries/feed rows, sheets, forms,
+   buttons, onboarding, toast, spinner, netbar, dark/light vars). Below: the
+   Firebase sign-in card, the overlay host, and the two NEW screens
+   (edition register + upgrade/checkout) that v2 adds.
+   ============================================================================ */
+
+/* ---- Firebase sign-in card (replaces v1's apple-only .authwrap) ------------ */
+#signin.signin { max-width: 420px; margin: 8vh auto 0; padding: 0 18px; }
+#signin[hidden] { display: none; }
+.signin-card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 20px;
+  box-shadow: var(--shadow); padding: 28px 24px calc(24px + env(safe-area-inset-bottom));
+  text-align: center;
+}
+.signin-logo { width: 64px; height: 64px; border-radius: 18px; margin: 4px auto 14px; display: block; }
+.signin-card h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -.02em; }
+.signin-card .creed { margin: 0 0 20px; }
+.oauth {
+  width: 100%; margin: 8px 0; min-height: 48px; border: 0; border-radius: 12px;
+  font: inherit; font-weight: 700; font-size: 15px; cursor: pointer; color: #fff;
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+}
+.oauth svg { width: 18px; height: 18px; }
 .oauth.apple { background: #000; }
-details { margin-top: 10px; }
-summary { color: var(--muted); cursor: pointer; }
-.err { color: #c0392b; min-height: 1.2em; }
-#logForm { display: flex; gap: 8px; }
-#logForm input { margin: 0; }
-#logForm button { flex: none; }
-.muted { color: var(--muted); }
-.stats { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-  padding: 14px; margin: 12px 0; }
-ul { list-style: none; padding: 0; margin: 0; }
-li { display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  padding: 12px 14px; background: var(--card); border: 1px solid var(--line);
-  border-radius: 10px; margin-bottom: 8px; }
-li.activity { border-left: 3px solid #1a73e8; }
-li.food { border-left: 3px solid var(--green); }
-.k { color: var(--muted); white-space: nowrap; display: flex; align-items: center; gap: 8px; }
-.del { background: transparent; color: var(--muted); padding: 2px 8px; font-size: 14px; }
-#logoutBtn { width: 100%; margin-top: 18px; }
+.oauth.google { background: #1a73e8; }
+:root[data-theme="dark"] .oauth.apple { background: #fff; color: #000; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .oauth.apple { background: #fff; color: #000; } }
+.signin-email { margin-top: 12px; text-align: left; }
+.signin-email summary { color: var(--muted); cursor: pointer; font-size: 13px; text-align: center; list-style: none; }
+.signin-email summary::-webkit-details-marker { display: none; }
+.signin-email form { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.signin-email input {
+  width: 100%; min-width: 0; padding: 12px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 16px;
+}
+.signin-email .primary { width: 100%; }
+.signin-err { color: var(--danger); font-size: 13px; min-height: 1.2em; margin: 10px 0 0; }
+
+/* ---- overlay host: sheets/dialogs are appended here by lib.sheet() --------- */
+#overlay { position: relative; z-index: 40; }
+#overlay:empty { display: none; }
+
+/* ---- tab-view placeholders (Coach / History filled by other agents) -------- */
+.view-empty { color: var(--muted); text-align: center; padding: 48px 20px; font-size: 14px; }
+
+/* ---- generic chips (reused by register/upgrade + future views) ------------- */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  border-radius: 999px; padding: 6px 13px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.chip.on { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 12%, var(--bg)); color: var(--brand); }
+
+/* ---- NEW screen: edition register + upgrade/checkout ----------------------- */
+/* Both render inside the .onboard full-screen host (register) or a sheet (upgrade).
+   plan/edition cards share one look. */
+.plan-cards { display: flex; flex-direction: column; gap: 12px; margin: 16px 0; }
+.plan-card {
+  text-align: left; width: 100%; border: 1.5px solid var(--line); border-radius: 16px;
+  background: var(--bg); padding: 16px 18px; cursor: pointer; color: var(--ink);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.plan-card.on { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 8%, var(--bg)); }
+.plan-card .plan-name { font-weight: 800; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.plan-card .plan-price { font-weight: 700; color: var(--brand); font-size: 15px; }
+.plan-card .plan-desc { color: var(--muted); font-size: 13px; line-height: 1.4; }
+.plan-badge {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .04em; font-weight: 800;
+  color: var(--brand); border: 1px solid color-mix(in srgb, var(--brand) 45%, var(--line));
+  border-radius: 999px; padding: 2px 8px;
+}
+.trial-banner {
+  background: color-mix(in srgb, var(--brand) 10%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--brand) 40%, var(--line));
+  border-radius: 12px; padding: 11px 13px; font-size: 13px; color: var(--ink); margin: 12px 0;
+}
+
+/* ---- centered modal (lib.dialog / confirmDialog) --------------------------- */
+.modal-card {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 32px)); max-height: 86dvh; overflow-y: auto; z-index: 41;
+  background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.4); padding: 20px;
+}
+.modal-card h3 { margin: 0 0 10px; font-size: 18px; }
+.modal-body { font-size: 14px; }
+.sheet-body { display: block; }
+.primary.danger { background: var(--danger); }
+button.link.danger { color: var(--danger); }
