@@ -91,3 +91,136 @@ export async function estimateActivity(platform: Platform, inp: EstimateInput): 
   });
   return normalizeActivity(parseJSON(res.text));
 }
+
+// ---- default provider/model resolution (Phase 1) ------------------------
+// v1 resolved provider+model per function+user+role (fn_overrides → function_config → global default)
+// AND decrypted per-provider keys from the DB. Phase 1 uses ONE instance-wide default (from the
+// `settings` key/value collection, falling back to Google) and the Secrets port for the key (callAI
+// resolves `<provider>-api-key`). TODO(phase2): restore per-function pickModel + second-opinion role.
+const DEFAULT_PROVIDER: ProviderName = "google";
+const DEFAULT_MODEL = "gemini-2.5-flash";
+
+export async function resolveDefaultModel(
+  platform: Platform,
+  category: "ai" | "vision" = "ai",
+): Promise<{ provider: ProviderName; model: string }> {
+  let provider: ProviderName = DEFAULT_PROVIDER;
+  let model = DEFAULT_MODEL;
+  try {
+    const { items } = await platform.data
+      .instance()
+      .list<{ id: string; key: string; value: string }>("settings", { limit: 500 });
+    const s: Record<string, string> = {};
+    for (const r of items) s[r.key] = r.value;
+    const p = category === "vision" ? s.default_vision_provider : s.default_ai_provider;
+    const m = category === "vision" ? s.default_vision_model : s.default_ai_model;
+    if (p) provider = p as ProviderName;
+    if (m) model = m;
+  } catch {
+    /* no settings collection ⇒ built-in defaults */
+  }
+  return { provider, model };
+}
+
+// ---- daily_summary → a short friendly recap of a day's food entries -----
+// `ctx` is the caller-built grounding string (the day's entries + the user's goals/method).
+export async function dailySummary(platform: Platform, ctx: string): Promise<string> {
+  const { provider, model } = await resolveDefaultModel(platform, "ai");
+  const p = PROMPTS.daily_summary;
+  const res = await callAI(platform, {
+    provider,
+    model,
+    system: p.system,
+    jsonMode: p.jsonMode,
+    messages: [{ role: "user", text: ctx || "(no entries)" }],
+  });
+  return res.text;
+}
+
+// ---- web_lookup → web-grounded nutrition for a food not in the local DB --
+// `sources` is the optional "Preferred sources" hint block. Web search + forced-JSON can't be
+// combined, so jsonMode is off and the reply is parsed defensively.
+export async function webLookup(platform: Platform, query: string, sources?: string): Promise<NutritionResult> {
+  const { provider, model } = await resolveDefaultModel(platform, "ai");
+  const p = PROMPTS.web_lookup;
+  const userMsg = (sources ? sources + "\n\n" : "") + "Food/meal to research and estimate:\n" + query;
+  const res = await callAI(platform, {
+    provider,
+    model,
+    system: p.system,
+    jsonMode: false,
+    webSearch: true,
+    messages: [{ role: "user", text: userMsg }],
+  });
+  return normalizeNutrition(parseJSON(res.text));
+}
+
+// ---- nutritionist → the AI coach (plan | chat, optional photo) -----------
+export interface NutritionistInput {
+  mode: "plan" | "chat";
+  /** The deterministic-plan grounding block (nutrition.contextText). */
+  context: string;
+  /** Current user message (chat mode). Ignored in plan mode. */
+  message?: string;
+  /** Prior conversation turns (most-recent-last); the last 20 are replayed. */
+  history?: AIMessage[];
+  /** A menu/plate/product photo to discuss (NOT logged). */
+  image?: AIImage;
+  /** TODO(phase2): "second" selects the second-opinion model; Phase 1 always uses the default. */
+  role?: "primary" | "second";
+}
+
+export async function nutritionist(platform: Platform, inp: NutritionistInput): Promise<string> {
+  const { provider, model } = await resolveDefaultModel(platform, inp.image ? "vision" : "ai");
+  const p = PROMPTS.nutritionist;
+  const userMsg =
+    inp.mode === "chat"
+      ? (inp.message || "").trim() ||
+        (inp.image ? "What can you tell me about this?" : "How am I doing toward my goals?")
+      : "Give me my starting plan: the weekly rate and specific daily calorie + macro targets to reach " +
+        "my goal(s), flag anything unrealistic with a concrete realistic alternative, and 2-3 first steps.";
+  const messages: AIMessage[] = [
+    { role: "user", text: "CONTEXT (my current stats, goals, and recent intake):\n" + inp.context },
+    { role: "assistant", text: "Got it — I have your stats, goals, and recent intake in mind." },
+  ];
+  for (const h of (inp.history || []).slice(-20)) {
+    if (h && (h.role === "user" || h.role === "assistant") && typeof h.text === "string" && h.text.trim()) {
+      messages.push({ role: h.role, text: h.text });
+    }
+  }
+  messages.push({ role: "user", text: userMsg });
+  const res = await callAI(platform, {
+    provider,
+    model,
+    system: p.system,
+    jsonMode: false,
+    messages,
+    image: inp.image,
+  });
+  return res.text;
+}
+
+// ---- checkin → decide whether a proactive check-in is worthwhile ---------
+export interface CheckinDecision {
+  worthwhile: boolean;
+  topic: string;
+  message: string;
+}
+
+export async function checkinDecide(platform: Platform, ctx: string): Promise<CheckinDecision> {
+  const { provider, model } = await resolveDefaultModel(platform, "ai");
+  const p = PROMPTS.checkin;
+  const res = await callAI(platform, {
+    provider,
+    model,
+    system: p.system,
+    jsonMode: p.jsonMode,
+    messages: [{ role: "user", text: "CONTEXT:\n" + ctx }],
+  });
+  const obj = parseJSON(res.text) as Partial<CheckinDecision>;
+  return {
+    worthwhile: !!obj.worthwhile,
+    topic: String(obj.topic || ""),
+    message: String(obj.message || ""),
+  };
+}
