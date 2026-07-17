@@ -20,6 +20,7 @@ import { registerFoods } from "./foods";
 import { registerWeight } from "./weight";
 import { registerCoach } from "./coach";
 import { registerCheckins } from "./checkins";
+import { registerAccount } from "./account";
 
 export interface ApiConfig {
   // TODO(phase2): v1 routed each function to a per-user/per-function provider+model. Phase 1 resolves
@@ -69,6 +70,7 @@ export function buildApi(platform: Platform, _cfg: ApiConfig = {}): App {
   void registerWeight(app, deps); // /api/weight, /api/weight/log, /sync, /goals (GET/POST/DELETE)
   void registerCoach(app, deps); // /api/plan/compute, /api/nutritionist, /api/second-opinion, /api/day/summary
   void registerCheckins(app, deps); // /api/checkins/*, /api/checkins/run, /api/health/sync
+  void registerAccount(app, deps); // /api/register, /api/edition (hosted/self-host + trial provisioning)
 
   return app;
 }

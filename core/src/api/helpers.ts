@@ -86,6 +86,7 @@ export async function ensureProfile(platform: Platform, uid: string, email?: str
     checkin_freq: "daily",
     role: "user",
     onboarded: false,
+    edition: "", // not yet chosen — registration prompts hosted/self-host
   };
   if (s.default_goal_kcal) draft.goal_kcal = Number(s.default_goal_kcal) || 0;
   if (s.default_goal_protein) draft.goal_protein = Number(s.default_goal_protein) || 0;
