@@ -12,6 +12,7 @@ import {
   GOAL_METHODS, ACTIVITY_LEVELS,
   type Entry, type Profile, type GoalMethod, type ActivityLevel,
 } from "../schema";
+import { getEntitlements } from "../entitlements/index";
 
 // ---- local helpers the contract didn't provide ---------------------------
 
@@ -191,6 +192,9 @@ export async function registerProfile(app: App, deps: RouteDeps): Promise<void> 
         }
       }
     }
+    // Edition + effective entitlements (skus + expiring{sku→ISO}) so the client can render the
+    // hosted/self-host state and any active trial countdown. Reuses the 60s entitlement cache.
+    const ent = await getEntitlements(platform, email);
     return ok(c, {
       email,
       role,
@@ -198,6 +202,8 @@ export async function registerProfile(app: App, deps: RouteDeps): Promise<void> 
       auth_mode: s.auth_mode || "firebase",
       app_name: s.app_name || "Sate",
       ...profileView(profile),
+      edition: (profile as Profile & { edition?: string }).edition || "",
+      entitlements: { skus: ent.skus, expiring: ent.expiring },
       checkins_enabled: featureEnabled(s, "checkins_enabled"), // global admin toggle
       second_opinion_enabled: featureEnabled(s, "second_opinion_enabled"), // global admin toggle
       // TODO(phase2): provider-key-based setup detection (v1 setupDone also inspected `providers`).

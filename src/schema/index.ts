@@ -217,6 +217,9 @@ export const Profile = z.object({
   checkin_last_at: z.string().optional(), // cooldown anchor
   role: z.enum(["user", "admin"]).default("user"),
   onboarded: z.boolean().default(false),
+  // Edition the user registered/switched to. "" = not yet chosen (registration UI must prompt).
+  // hosted = cloud "just works" (AI via entitlement); selfhost = BYOAI self-host license.
+  edition: z.enum(["hosted", "selfhost", ""] as const).default(""),
   // TODO(phase2): per-user AI routing (fn_overrides + ov_ai/ov_vision provider/model + second-opinion)
   // lives here in v1. Phase 1 uses the instance default provider/model, so these are intentionally omitted.
 });

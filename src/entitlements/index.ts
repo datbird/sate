@@ -27,6 +27,7 @@ interface FlagResponse {
 interface EntitlementResponse {
   email: string;
   skus: string[];
+  expiring?: Record<string, string>; // sku → ISO expiry (active trials/subscriptions)
 }
 
 const TTL_MS = 60_000;
@@ -101,6 +102,55 @@ export async function checkFeature(platform: Platform, featureId: string, email:
     return true;
   } catch {
     return false; // fail closed
+  }
+}
+
+// ── Trials & entitlement status (hosted/self-host editions) ───────────────────────────────────
+// The plane holds a trial-only tier key for provisioning; it can call POST /trial (idempotent) but
+// NOT grant permanent skus. Config comes from Secrets (entitlements-trial-key), same url/identity.
+async function trialConfig(secrets: Secrets, identity?: Identity): Promise<PlaneConfig | null> {
+  const [url, key] = await Promise.all([
+    secrets.get("entitlements-api-url"),
+    secrets.get("entitlements-trial-key"),
+  ]);
+  if (!url || !key) return null;
+  return { url: url.replace(/\/$/, ""), key, identity };
+}
+
+/** SKU that gates each edition. hosted → AI included; selfhost → BYOAI license. */
+export const EDITION_SKU = { hosted: "sate_hosted", selfhost: "sate_selfhost" } as const;
+export type Edition = keyof typeof EDITION_SKU;
+
+/**
+ * Provision a time-boxed trial of `sku` for `email` (default 30 days). Idempotent server-side —
+ * one trial per email per sku, ever. No-op (ok:false) when no plane / no trial key is configured
+ * (self-host edition). Never throws.
+ */
+export async function provisionTrial(platform: Platform, email: string, sku: string, days = 30): Promise<{ ok: boolean; granted?: boolean; expires_at?: string; reason?: string }> {
+  const cfg = await trialConfig(platform.secrets, platform.identity);
+  if (!cfg) return { ok: false, reason: "no-plane" };
+  try {
+    const res = await fetch(`${cfg.url}/trial`, {
+      method: "POST",
+      headers: { ...(await planeHeaders(cfg)), "Content-Type": "application/json" },
+      body: JSON.stringify({ email, sku, days }),
+    });
+    if (!res.ok) return { ok: false, reason: `http-${res.status}` };
+    return (await res.json()) as { ok: boolean; granted?: boolean; expires_at?: string; reason?: string };
+  } catch {
+    return { ok: false, reason: "error" };
+  }
+}
+
+/** Effective entitlements for the UI: { skus, expiring{sku→ISO} }. Empty when unconfigured. */
+export async function getEntitlements(platform: Platform, email: string): Promise<{ skus: string[]; expiring: Record<string, string> }> {
+  const cfg = await planeConfig(platform.secrets, platform.identity);
+  if (!cfg) return { skus: [], expiring: {} };
+  try {
+    const ent = await fetchEntitlements(cfg, email);
+    return { skus: ent.skus || [], expiring: ent.expiring || {} };
+  } catch {
+    return { skus: [], expiring: {} };
   }
 }
 
