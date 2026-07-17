@@ -6,6 +6,10 @@
     <meta name="theme-color" content="#16a34a" />
     <title>Sate</title>
     <meta name="description" content="Understand every meal, without the manual logging." />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/icon-32.png?v2" sizes="32x32" type="image/png" />
+    <link rel="icon" href="/icons/icon-192.png?v2" sizes="192x192" type="image/png" />
+    <link rel="apple-touch-icon" href="/icons/icon-180.png?v2" />
     <!-- Apply the saved theme before first paint so there is no flash of the wrong theme. -->
     <script>try{var t=localStorage.getItem('sate-theme');if(t&&t!=='system')document.documentElement.dataset.theme=t;}catch(e){}</script>
     <link rel="stylesheet" href="/style.css" />
@@ -13,7 +17,7 @@
   <body>
     <!-- ============================================================= TOP BAR -->
     <header class="topbar" id="topbar" hidden>
-      <div class="brand"><span id="brandName">Sate</span></div>
+      <div class="brand"><img src="/icons/icon-192.png?v2" alt="" width="34" height="34" /><span id="brandName">Sate</span></div>
 
       <!-- Header tabs (wide screens). Same [data-view] contract as the bottom bar. -->
       <nav class="tabs">
@@ -115,6 +119,7 @@
     <!-- =============================================================== SIGN IN -->
     <section id="signin" class="signin" hidden>
       <div class="signin-card">
+        <img class="signin-logo" src="/icons/icon-192.png?v2" alt="" width="72" height="72" />
         <h1 id="signinBrand">Sate</h1>
         <p class="creed">Understand every meal, without the manual logging.</p>
         <button id="appleBtn" class="oauth apple" type="button">
