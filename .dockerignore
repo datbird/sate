@@ -13,3 +13,9 @@ pocketbase
 scripts/build-seed/
 mobile/
 *.md
+# self-host (server/) build artifacts + deps — the Dockerfile rebuilds them
+node_modules
+server/node_modules
+server/dist
+server/web
+core/node_modules
