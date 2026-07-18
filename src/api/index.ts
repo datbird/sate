@@ -21,6 +21,7 @@ import { registerWeight } from "./weight";
 import { registerCoach } from "./coach";
 import { registerCheckins } from "./checkins";
 import { registerAccount } from "./account";
+import { registerAdmin } from "./admin";
 
 export interface ApiConfig {
   // TODO(phase2): v1 routed each function to a per-user/per-function provider+model. Phase 1 resolves
@@ -87,6 +88,7 @@ export function buildApi(platform: Platform, cfg: ApiConfig = {}): App {
   void registerCoach(app, deps); // /api/plan/compute, /api/nutritionist, /api/second-opinion, /api/day/summary
   void registerCheckins(app, deps); // /api/checkins/*, /api/checkins/run, /api/health/sync
   void registerAccount(app, deps); // /api/register, /api/edition (hosted/self-host + trial provisioning)
+  void registerAdmin(app, deps); // /api/admin/* (admin-gated: env ADMIN_EMAILS or profile role==admin)
 
   return app;
 }
