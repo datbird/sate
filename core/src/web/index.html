@@ -42,6 +42,7 @@
           </div>
           <button type="button" class="menu-item" data-open="goals">Goals &amp; tracking</button>
           <button type="button" class="menu-item" data-open="upgrade" id="menuUpgrade">Upgrade</button>
+          <button type="button" class="menu-item" data-view="admin" id="menuAdmin" hidden>Admin</button>
           <button type="button" class="menu-item" id="signoutBtn">Sign out</button>
         </div>
       </div>
@@ -98,6 +99,9 @@
       <section id="view-history" class="view" hidden>
         <div id="historyRoot" class="view-empty">History loads here.</div>
       </section>
+
+      <!-- ADMIN (owned by views/admin.js — scaffold built at render time; operator only) -->
+      <section id="view-admin" class="view" hidden></section>
     </main>
 
     <!-- ================================================= NATIVE-STYLE TAB BAR -->

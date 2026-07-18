@@ -28,6 +28,7 @@ import "./views/goals.js";
 import "./views/onboarding.js";
 import "./views/register.js";
 import "./views/upgrade.js";
+import "./views/admin.js";
 
 // ---------------------------------------------------------------- auth state
 let auth = null;          // Firebase Auth instance (null in test mode)
@@ -166,6 +167,9 @@ function paintAccount(m) {
   // Hosted edition "just works" — show Upgrade only when the user is not on a paid hosted SKU.
   const up = $("#menuUpgrade");
   if (up) up.hidden = hasSku("sate_hosted");
+  // Admin console (operator only) — env-admin or profile role==admin, per /api/me.
+  const ad = $("#menuAdmin");
+  if (ad) ad.hidden = !(m.isAdmin || m.role === "admin");
 }
 
 function wireAccountMenu() {
