@@ -295,12 +295,20 @@ async function logPhoto(file) {
       fr.readAsDataURL(file);
     });
   } catch (_) { toast("Could not read that image."); return; }
-  busy("Analyzing photo…");
+  await logPhotoDataUrl(dataUrl, "Analyzing photo…");
+}
+
+// POST a data-URL image to the vision estimator and log it. Shared by the photo picker and the
+// barcode scanner's nutrition-label fallback — the vision prompt reads a Nutrition Facts panel's
+// per-serving values, so it works for any product no barcode database can find.
+async function logPhotoDataUrl(dataUrl, label) {
+  busy(label || "Analyzing photo…");
   try {
     const r = await api("/api/log/photo", { method: "POST", json: { image: dataUrl } });
     toast(r.note || `Logged ${r0(r.entry.kcal)} kcal from photo.`);
     afterLog();
-  } catch (e) { toast(e.message); }
+    return true;
+  } catch (e) { toast(e.message); return false; }
 }
 
 // ============================================================ Barcode scanner (web, html5-qrcode via CDN)
@@ -334,10 +342,17 @@ async function openScanner() {
   scanBusy = false;
   const reader = el("div", { id: "reader", style: { width: "100%", borderRadius: "12px", overflow: "hidden" } });
   const status = el("div", { class: "subline", style: { textAlign: "center", marginTop: "10px" }, text: "Starting camera…" });
+  // Always-available escape hatch: many products aren't in any barcode database, so let the user
+  // read the Nutrition Facts label directly (AI vision) — the camera's already on it.
+  const labelBtn = el("button", {
+    class: "link", type: "button", text: "Can't scan? Read the nutrition label →",
+    style: { display: "block", margin: "12px auto 0", fontWeight: "600" },
+    onClick: () => labelFallback(sc),
+  });
   const sc = sheet({
     title: "Scan a barcode",
     onClose: () => { void stopScanner(); },
-    body: (b) => { b.append(reader, status); },
+    body: (b) => { b.append(reader, status, labelBtn); },
   });
   try {
     scanner = new window.Html5Qrcode("reader", { verbose: false });
@@ -358,6 +373,28 @@ async function stopScanner() {
   scanner = null;
 }
 
+// Grab the current camera frame from the live scanner <video> (for the nutrition-label fallback).
+function captureReaderFrame() {
+  const v = document.querySelector("#reader video");
+  if (!v || !v.videoWidth) return null;
+  const cv = document.createElement("canvas");
+  cv.width = v.videoWidth;
+  cv.height = v.videoHeight;
+  try {
+    cv.getContext("2d").drawImage(v, 0, 0, cv.width, cv.height);
+    return cv.toDataURL("image/jpeg", 0.9);
+  } catch (_) { return null; }
+}
+
+// Barcode not in any database? Read the Nutrition Facts label the camera is already pointed at.
+async function labelFallback(sc) {
+  const frame = captureReaderFrame();
+  await stopScanner();
+  sc.close();
+  if (frame) await logPhotoDataUrl(frame, "Reading nutrition label…");
+  else pickPhoto(); // no live frame (e.g. native shell) → open the camera/file picker instead
+}
+
 async function onScan(decodedText, status, sc) {
   if (scanBusy) return;
   const raw = String(decodedText).trim();
@@ -372,7 +409,7 @@ async function onScan(decodedText, status, sc) {
       toast(`Logged ${esc(r.name)} — ${r0(r.entry.kcal)} kcal (via ${esc(r.found_via)}).`);
       afterLog();
     } catch (e) {
-      status.textContent = e.message + " — try again, or type it in.";
+      status.textContent = e.message + " Point the camera at the nutrition label and tap below.";
       scanBusy = false;
     }
   } else if (/^https?:\/\//i.test(raw)) {
