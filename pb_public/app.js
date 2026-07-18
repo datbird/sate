@@ -1060,12 +1060,20 @@ async function logPhoto(file) {
     fr.readAsDataURL(file);
   });
   closeAdd();
-  toast("Analyzing photo…");
+  await logPhotoDataUrl(dataUrl, "Analyzing photo…");
+}
+
+// POST a data-URL image to the vision estimator and log it. Shared by the photo picker and the
+// barcode scanner's nutrition-label fallback — the vision prompt reads a Nutrition Facts panel's
+// per-serving values, so it works for any product no barcode database can find.
+async function logPhotoDataUrl(dataUrl, label) {
+  toast(label || "Analyzing photo…");
   try {
     const r = await api("/log/photo", { method: "POST", body: JSON.stringify({ image: dataUrl }) });
     toast(r.note || `Logged ${fmt(r.entry.kcal)} kcal from photo.`);
     renderHome();
-  } catch (e) { toast(e.message); }
+    return true;
+  } catch (e) { toast(e.message); return false; }
 }
 $("#photoInput").addEventListener("change", (e) => { if (e.target.files[0]) logPhoto(e.target.files[0]); e.target.value = ""; });
 
@@ -1440,6 +1448,25 @@ async function closeScanner() {
   $("#scanwrap").hidden = true;
 }
 
+// Grab the current camera frame from the live scanner <video> (for the nutrition-label fallback).
+function captureReaderFrame() {
+  const v = document.querySelector("#reader video");
+  if (!v || !v.videoWidth) return null;
+  const cv = document.createElement("canvas");
+  cv.width = v.videoWidth; cv.height = v.videoHeight;
+  try { cv.getContext("2d").drawImage(v, 0, 0, cv.width, cv.height); return cv.toDataURL("image/jpeg", 0.9); }
+  catch (_) { return null; }
+}
+
+// Barcode not in any database? Read the Nutrition Facts label the camera is already pointed at.
+async function labelFallback() {
+  const frame = captureReaderFrame();
+  await closeScanner();
+  if (frame) await logPhotoDataUrl(frame, "Reading nutrition label…");
+  else $("#photoInput").click(); // no live frame (e.g. native) → open the camera/file picker
+}
+$("#scanLabel").addEventListener("click", labelFallback);
+
 // Pull a product barcode (GTIN) out of a scan: a plain UPC/EAN, or the GTIN embedded in a
 // GS1 Digital Link QR code (e.g. https://brand.example/01/00012345678905/10/LOT).
 function gtinFromScan(raw) {
@@ -1467,7 +1494,7 @@ async function onScan(decodedText) {
       toast(`Logged ${r.name} — ${fmt(r.entry.kcal)} kcal (via ${r.found_via}).`);
       renderHome();
     } catch (e) {
-      $("#scanStatus").textContent = e.message + " — try again, or type it in.";
+      $("#scanStatus").textContent = e.message + " Point the camera at the nutrition label and tap below.";
       scanBusy = false;
     }
   } else if (/^https?:\/\//i.test(raw)) {

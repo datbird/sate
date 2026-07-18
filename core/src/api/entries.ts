@@ -227,6 +227,46 @@ function normUpc(s: unknown): string {
   return String(s || "").replace(/^0+/, "");
 }
 
+// UPC-A check digit for an 11-digit body (mod-10, odd positions ×3).
+function upcACheck(b11: string): string {
+  let sum = 0;
+  for (let i = 0; i < 11; i++) sum += (i % 2 === 0 ? 3 : 1) * Number(b11[i] || 0);
+  return String((10 - (sum % 10)) % 10);
+}
+// Expand a compressed UPC-E barcode to its 12-digit UPC-A form (null if not UPC-E-shaped). Small
+// packages (bottles/cans) print UPC-E; product databases key on the expanded UPC-A, so a raw UPC-E
+// lookup misses. Accepts 8 (NS+6+check), 7 (NS+6), or 6 (bare data) digit inputs.
+function upcEtoA(e: string): string | null {
+  let s = String(e || "");
+  let ns = "0";
+  if (s.length === 8) { ns = s[0]; s = s.slice(1, 7); }
+  else if (s.length === 7) { ns = s[0]; s = s.slice(1); }
+  else if (s.length !== 6) return null;
+  if (!/^\d{6}$/.test(s) || (ns !== "0" && ns !== "1")) return null;
+  const d = s.split("");
+  const last = d[5];
+  let b: string;
+  if (last === "0" || last === "1" || last === "2") b = ns + d[0] + d[1] + last + "0000" + d[2] + d[3] + d[4];
+  else if (last === "3") b = ns + d[0] + d[1] + d[2] + "00000" + d[3] + d[4];
+  else if (last === "4") b = ns + d[0] + d[1] + d[2] + d[3] + "00000" + d[4];
+  else b = ns + d[0] + d[1] + d[2] + d[3] + d[4] + "0000" + last;
+  return b + upcACheck(b);
+}
+// Ordered, deduped barcode forms to try against each source. A scanner may emit UPC-E, UPC-A (12),
+// EAN-13 (13, leading 0), or GTIN-14; a database stores one canonical form, so trying the common
+// equivalents recovers matches a single-form lookup would miss.
+function barcodeVariants(code: string): string[] {
+  const out: string[] = [];
+  const push = (c: string) => { if (c && /^\d{6,14}$/.test(c) && out.indexOf(c) < 0) out.push(c); };
+  push(code);
+  const a = upcEtoA(code);
+  if (a) { push(a); push("0" + a); }
+  if (code.length === 12) push("0" + code);
+  if (code.length === 13 && code[0] === "0") push(code.slice(1));
+  if (code.length === 14 && code.slice(0, 2) === "00") push(code.slice(2));
+  return out;
+}
+
 async function fetchOpenFoodFacts(code: string): Promise<BarcodeFood | null> {
   const url =
     "https://world.openfoodfacts.org/api/v2/product/" + encodeURIComponent(code) +
@@ -564,43 +604,49 @@ function lookupCfg(s: Record<string, string>): LookupCfg {
 
 // Nutrition chain: OFF → USDA → Nutritionix → FatSecret. Prefer the first "complete" hit.
 async function barcodeLookupOnline(code: string, cfg: LookupCfg): Promise<{ food: BarcodeFood; via: string; src: string } | null> {
-  const chain: { src: string; via: string; fn: () => Promise<BarcodeFood | null> }[] = [
-    { src: "off", via: "Open Food Facts", fn: () => fetchOpenFoodFacts(code) },
-    { src: "usda", via: "USDA FoodData Central", fn: () => fetchUSDA(code, cfg.usdaKey) },
-    { src: "nutritionix", via: "Nutritionix", fn: () => fetchNutritionix(code, cfg.nixId, cfg.nixKey) },
-    { src: "fatsecret", via: "FatSecret", fn: () => fetchFatSecret(code, cfg.fsId, cfg.fsSecret) },
+  const variants = barcodeVariants(code);
+  const chain: { src: string; via: string; fn: (bc: string) => Promise<BarcodeFood | null> }[] = [
+    { src: "off", via: "Open Food Facts", fn: (bc) => fetchOpenFoodFacts(bc) },
+    { src: "usda", via: "USDA FoodData Central", fn: (bc) => fetchUSDA(bc, cfg.usdaKey) },
+    { src: "nutritionix", via: "Nutritionix", fn: (bc) => fetchNutritionix(bc, cfg.nixId, cfg.nixKey) },
+    { src: "fatsecret", via: "FatSecret", fn: (bc) => fetchFatSecret(bc, cfg.fsId, cfg.fsSecret) },
   ];
   let partial: { food: BarcodeFood; via: string; src: string } | null = null;
   for (const step of chain) {
-    let food: BarcodeFood | null = null;
-    try {
-      food = await step.fn();
-    } catch {
-      food = null;
+    for (const bc of variants) {
+      let food: BarcodeFood | null = null;
+      try {
+        food = await step.fn(bc);
+      } catch {
+        food = null;
+      }
+      if (!food) continue;
+      const complete = food.kcal > 0 && food.serving_g > 0;
+      if (complete) return { food, via: step.via, src: step.src };
+      if (!partial) partial = { food, via: step.via, src: step.src };
     }
-    if (!food) continue;
-    const complete = food.kcal > 0 && food.serving_g > 0;
-    if (complete) return { food, via: step.via, src: step.src };
-    if (!partial) partial = { food, via: step.via, src: step.src };
   }
   return partial;
 }
 
 // Identity chain: first source to name the product wins (UPCitemdb runs even unkeyed).
 async function barcodeIdentifyOnline(code: string, cfg: LookupCfg): Promise<{ name: string; brand: string; via: string; src: string } | null> {
-  const chain: { src: string; via: string; fn: () => Promise<BarcodeIdent | null> }[] = [
-    { src: "upcitemdb", via: "UPCitemdb", fn: () => fetchUpcItemDb(code, cfg.upcKey) },
-    { src: "go_upc", via: "Go-UPC", fn: () => fetchGoUpc(code, cfg.goUpcKey) },
-    { src: "barcode_lookup", via: "Barcode Lookup", fn: () => fetchBarcodeLookup(code, cfg.barcodeLookupKey) },
+  const variants = barcodeVariants(code);
+  const chain: { src: string; via: string; fn: (bc: string) => Promise<BarcodeIdent | null> }[] = [
+    { src: "upcitemdb", via: "UPCitemdb", fn: (bc) => fetchUpcItemDb(bc, cfg.upcKey) },
+    { src: "go_upc", via: "Go-UPC", fn: (bc) => fetchGoUpc(bc, cfg.goUpcKey) },
+    { src: "barcode_lookup", via: "Barcode Lookup", fn: (bc) => fetchBarcodeLookup(bc, cfg.barcodeLookupKey) },
   ];
   for (const step of chain) {
-    let id: BarcodeIdent | null = null;
-    try {
-      id = await step.fn();
-    } catch {
-      id = null;
+    for (const bc of variants) {
+      let id: BarcodeIdent | null = null;
+      try {
+        id = await step.fn(bc);
+      } catch {
+        id = null;
+      }
+      if (id && id.name) return { name: id.name, brand: id.brand, via: step.via, src: step.src };
     }
-    if (id && id.name) return { name: id.name, brand: id.brand, via: step.via, src: step.src };
   }
   return null;
 }
@@ -864,17 +910,12 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
     if (!code) return err(c, "no barcode provided", 400);
     const store = platform.data.forUser(uid);
 
-    // Local foods DB first (EAN-13 vs UPC-12 leading-zero tolerance).
+    // Local foods DB first — try every equivalent barcode form (UPC-E→UPC-A, UPC-12↔EAN-13).
     let food: Food | null = null;
-    try {
-      const { items } = await instance.list<Food>("foods", { where: [{ field: "barcode", op: "==", value: code }], limit: 1 });
-      food = items[0] ?? null;
-    } catch {
-      food = null;
-    }
-    if (!food && code.length === 12) {
+    for (const bc of barcodeVariants(code)) {
+      if (food) break;
       try {
-        const { items } = await instance.list<Food>("foods", { where: [{ field: "barcode", op: "==", value: "0" + code }], limit: 1 });
+        const { items } = await instance.list<Food>("foods", { where: [{ field: "barcode", op: "==", value: bc }], limit: 1 });
         food = items[0] ?? null;
       } catch {
         food = null;

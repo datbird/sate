@@ -760,6 +760,44 @@ function lookupCfg(app) {
 
 function normUpc(s) { return String(s || "").replace(/^0+/, ""); }
 
+// UPC-A check digit for an 11-digit body (mod-10, odd positions ×3).
+function upcACheck(b11) {
+  let sum = 0;
+  for (let i = 0; i < 11; i++) sum += (i % 2 === 0 ? 3 : 1) * Number(b11[i] || 0);
+  return String((10 - (sum % 10)) % 10);
+}
+// Expand a compressed UPC-E barcode to its 12-digit UPC-A form (null if not UPC-E-shaped). Small
+// packages (bottles/cans) print UPC-E; product databases key on the expanded UPC-A, so a raw UPC-E
+// lookup misses. Accepts 8 (NS+6+check), 7 (NS+6), or 6 (bare data) digit inputs.
+function upcEtoA(e) {
+  let s = String(e || ""), ns = "0";
+  if (s.length === 8) { ns = s[0]; s = s.slice(1, 7); }
+  else if (s.length === 7) { ns = s[0]; s = s.slice(1); }
+  else if (s.length !== 6) return null;
+  if (!/^\d{6}$/.test(s) || (ns !== "0" && ns !== "1")) return null;
+  const d = s.split(""), last = d[5];
+  let b;
+  if (last === "0" || last === "1" || last === "2") b = ns + d[0] + d[1] + last + "0000" + d[2] + d[3] + d[4];
+  else if (last === "3") b = ns + d[0] + d[1] + d[2] + "00000" + d[3] + d[4];
+  else if (last === "4") b = ns + d[0] + d[1] + d[2] + d[3] + "00000" + d[4];
+  else b = ns + d[0] + d[1] + d[2] + d[3] + d[4] + "0000" + last;
+  return b + upcACheck(b);
+}
+// Ordered, deduped barcode forms to try against each online source. A scanner may emit UPC-E,
+// UPC-A (12), EAN-13 (13, leading 0), or GTIN-14; a product database stores one canonical form,
+// so trying the common equivalents recovers matches a single-form lookup would miss.
+function barcodeVariants(code) {
+  const out = [];
+  const push = (c) => { if (c && /^\d{6,14}$/.test(c) && out.indexOf(c) < 0) out.push(c); };
+  push(code);
+  const a = upcEtoA(code);
+  if (a) { push(a); push("0" + a); }                               // UPC-E → UPC-A (+ EAN-13)
+  if (code.length === 12) push("0" + code);                        // UPC-A → EAN-13
+  if (code.length === 13 && code[0] === "0") push(code.slice(1));  // EAN-13 → UPC-A
+  if (code.length === 14 && code.slice(0, 2) === "00") push(code.slice(2)); // GTIN-14 → UPC-A
+  return out;
+}
+
 // USDA FoodData Central Branded search by UPC (free key or the shared DEMO_KEY; public domain).
 function fetchUSDA(code, apiKey) {
   const key = apiKey || "DEMO_KEY";
@@ -950,15 +988,18 @@ function fetchBarcodeLookup(code, key) {
 
 // Identity fallback chain — first source to name the product wins. UPCitemdb runs even unkeyed.
 function barcodeIdentifyOnline(app, code, cfg) {
+  const variants = barcodeVariants(code);
   const chain = [
-    { src: "upcitemdb", via: "UPCitemdb", fn: () => fetchUpcItemDb(code, cfg.upcKey) },
-    { src: "go_upc", via: "Go-UPC", fn: () => fetchGoUpc(code, cfg.goUpcKey) },
-    { src: "barcode_lookup", via: "Barcode Lookup", fn: () => fetchBarcodeLookup(code, cfg.barcodeLookupKey) },
+    { src: "upcitemdb", via: "UPCitemdb", fn: (bc) => fetchUpcItemDb(bc, cfg.upcKey) },
+    { src: "go_upc", via: "Go-UPC", fn: (bc) => fetchGoUpc(bc, cfg.goUpcKey) },
+    { src: "barcode_lookup", via: "Barcode Lookup", fn: (bc) => fetchBarcodeLookup(bc, cfg.barcodeLookupKey) },
   ];
   for (const step of chain) {
-    let id = null;
-    try { id = step.fn(); } catch (_) {}
-    if (id && id.name) return { name: id.name, brand: id.brand, via: step.via, src: step.src };
+    for (const bc of variants) {
+      let id = null;
+      try { id = step.fn(bc); } catch (_) {}
+      if (id && id.name) return { name: id.name, brand: id.brand, via: step.via, src: step.src };
+    }
   }
   return null;
 }
@@ -967,20 +1008,23 @@ function barcodeIdentifyOnline(app, code, cfg) {
 // first "complete" hit (has a real serving weight); otherwise keeps the first partial result.
 function barcodeLookupOnline(app, code) {
   const cfg = lookupCfg(app);
+  const variants = barcodeVariants(code);
   const chain = [
-    { src: "off", via: "Open Food Facts", fn: () => fetchOpenFoodFacts(code) },
-    { src: "usda", via: "USDA FoodData Central", fn: () => fetchUSDA(code, cfg.usdaKey) },
-    { src: "nutritionix", via: "Nutritionix", fn: () => fetchNutritionix(code, cfg.nixId, cfg.nixKey) },
-    { src: "fatsecret", via: "FatSecret", fn: () => fetchFatSecret(app, code, cfg.fsId, cfg.fsSecret) },
+    { src: "off", via: "Open Food Facts", fn: (bc) => fetchOpenFoodFacts(bc) },
+    { src: "usda", via: "USDA FoodData Central", fn: (bc) => fetchUSDA(bc, cfg.usdaKey) },
+    { src: "nutritionix", via: "Nutritionix", fn: (bc) => fetchNutritionix(bc, cfg.nixId, cfg.nixKey) },
+    { src: "fatsecret", via: "FatSecret", fn: (bc) => fetchFatSecret(app, bc, cfg.fsId, cfg.fsSecret) },
   ];
   let partial = null;
   for (const step of chain) {
-    let food = null;
-    try { food = step.fn(); } catch (_) {}
-    if (!food) continue;
-    const complete = food.kcal > 0 && food.serving_g > 0;
-    if (complete) return { food: food, via: step.via, src: step.src };
-    if (!partial) partial = { food: food, via: step.via, src: step.src };
+    for (const bc of variants) {
+      let food = null;
+      try { food = step.fn(bc); } catch (_) {}
+      if (!food) continue;
+      const complete = food.kcal > 0 && food.serving_g > 0;
+      if (complete) return { food: food, via: step.via, src: step.src };
+      if (!partial) partial = { food: food, via: step.via, src: step.src };
+    }
   }
   return partial;
 }
@@ -996,10 +1040,10 @@ function logBarcode(e) {
   if (!code) return e.json(400, { error: "no barcode provided" });
 
   let food = null;
-  try { food = app.findFirstRecordByFilter("foods", "barcode = {:c}", { c: code }); } catch (_) {}
-  // EAN-13 vs UPC-12 leading-zero mismatch
-  if (!food && code.length === 12) {
-    try { food = app.findFirstRecordByFilter("foods", "barcode = {:c}", { c: "0" + code }); } catch (_) {}
+  // Try every equivalent barcode form (UPC-E→UPC-A, UPC-12↔EAN-13) against the local DB.
+  for (const bc of barcodeVariants(code)) {
+    if (food) break;
+    try { food = app.findFirstRecordByFilter("foods", "barcode = {:c}", { c: bc }); } catch (_) {}
   }
 
   let item, via;
@@ -2635,8 +2679,7 @@ function adminFoodBarcode(e) {
     carbs: Math.round(num(o.carbs)), fat: Math.round(num(o.fat)),
   } });
   let food = null;
-  try { food = app.findFirstRecordByFilter("foods", "barcode = {:c}", { c: code }); } catch (_) {}
-  if (!food && code.length === 12) { try { food = app.findFirstRecordByFilter("foods", "barcode = {:c}", { c: "0" + code }); } catch (_) {} }
+  for (const bc of barcodeVariants(code)) { if (food) break; try { food = app.findFirstRecordByFilter("foods", "barcode = {:c}", { c: bc }); } catch (_) {} }
   if (food) return asFood({ name: food.getString("name"), brand: food.getString("brand"), serving_desc: food.getString("serving_desc"), serving_g: food.getFloat("serving_g"), kcal: food.getFloat("kcal"), protein: food.getFloat("protein"), carbs: food.getFloat("carbs"), fat: food.getFloat("fat") }, "database");
   let hit = null; try { hit = barcodeLookupOnline(app, code); } catch (_) {}
   if (hit && (hit.name || num(hit.kcal) > 0)) return asFood(hit, hit.source || "online");
