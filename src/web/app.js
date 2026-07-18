@@ -55,6 +55,15 @@ async function main() {
   catch (e) { console.error("failed to load /config", e); showSignIn(); return; }
   if (cfg && cfg.app_name) setBrand(cfg.app_name);
 
+  // Self-host proxy-auth: identity comes from the reverse-proxy (Cloudflare Access) email header, so
+  // there is no in-app login and no Firebase. Go straight into the app; api() calls carry no bearer —
+  // the proxy header authenticates them server-side (core's trustEmailHeader path).
+  if (cfg && cfg.mode === "proxy") {
+    try { await enterApp(); }
+    catch (e) { console.error("proxy enterApp failed", e); showSignIn(e && e.message); }
+    return;
+  }
+
   const [{ initializeApp }, authMod] = await Promise.all([
     import("https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js"),
     import("https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js"),

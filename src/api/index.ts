@@ -28,14 +28,30 @@ export interface ApiConfig {
   // so these hints are accepted for call-site compatibility but no longer steer routing.
   aiProvider?: ProviderName;
   aiModel?: string;
+  // Self-host trusts a proxy-injected email header (e.g. Cloudflare Access) for identity instead of a
+  // bearer token. When set AND present on the request, the header's email IS the identity (uid=email,
+  // emailVerified). The origin MUST be reachable only through the proxy — the self-host host enforces
+  // this with an origin-secret guard. Unset on cloud → bearer-token auth only (behavior unchanged).
+  trustEmailHeader?: string;
 }
 
-export function buildApi(platform: Platform, _cfg: ApiConfig = {}): App {
+export function buildApi(platform: Platform, cfg: ApiConfig = {}): App {
   const app = new Hono<AppVars>();
+  const trustHeader = cfg.trustEmailHeader ? cfg.trustEmailHeader.toLowerCase() : "";
 
-  // Auth: every /api/* route requires a verified bearer token → user identity. Public routes (e.g.
+  // Auth: every /api/* route resolves a user identity. Self-host (trustHeader set) reads the trusted
+  // proxy email header; otherwise a verified bearer token is required (cloud). Public routes (e.g.
   // /auth-config, registered by registerProfile) live OUTSIDE the /api/* prefix and are not gated.
   app.use("/api/*", async (c, next) => {
+    if (trustHeader) {
+      const email = (c.req.header(trustHeader) ?? "").trim().toLowerCase();
+      if (email) {
+        c.set("uid", email);
+        c.set("email", email);
+        await next();
+        return;
+      }
+    }
     const h = c.req.header("Authorization") ?? "";
     if (!h.startsWith("Bearer ")) return c.json({ error: "unauthorized" }, 401);
     try {
