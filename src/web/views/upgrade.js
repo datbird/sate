@@ -53,6 +53,18 @@ function daysLeft(iso) {
 }
 const aiEntitled = () => hasSku("sate_hosted");
 
+// Permanent (non-trial) access — the god / friends-and-family super-SKUs, or a real non-expiring
+// paid hosted grant. These users are fully entitled forever, so they must NEVER see a trial
+// countdown, a "trial ended — AI paused" nag, or an upgrade prompt. (hasSku already folds god/f&f
+// into every feature-gate SKU check; this is specifically about suppressing the trial/upgrade UI,
+// which keys off the sate_hosted *expiry* and so misfired for permanent holders who also carry a
+// registration trial grant.)
+function permanentAccess(m = me()) {
+  const skus = (m && m.entitlements && m.entitlements.skus) || [];
+  if (skus.includes("god") || skus.includes("friends_and_family")) return true;
+  return skus.includes("sate_hosted") && !hostedExpiry(m); // paid hosted with no expiry
+}
+
 // ============================================================ actions
 // Start Stripe checkout for a plan and hand off to the returned URL. safeUrl() keeps the redirect to
 // http(s) only (a hostile/misconfigured URL collapses to "#" and we surface an error instead).
@@ -99,8 +111,13 @@ function build(body, ctrl) {
   const entitled = aiEntitled();
   const exp = hostedExpiry(m);
 
-  // ---- status line: trial countdown, gated prompt, or active-plan note
-  if (!entitled) {
+  // ---- status line: full-access note, trial countdown, gated prompt, or active-plan note
+  if (permanentAccess(m)) {
+    body.appendChild(el("p", {
+      class: "hint", style: { margin: "0 0 12px" },
+      text: "You have full access — no plan needed.",
+    }));
+  } else if (!entitled) {
     body.appendChild(el("div", {
       class: "trial-banner", style: { borderColor: "var(--danger)", margin: "0 0 14px" },
       html: "<b>Your trial has ended.</b> AI features are paused until you upgrade — pick a plan below to turn them back on.",
@@ -178,6 +195,7 @@ function bannerState() {
   // This is the hosted SPA: only surface trial/gated state for the hosted edition. edition==="" is
   // handled by the register flow; self-host manages its own licensing.
   if (m.edition !== "hosted") return null;
+  if (permanentAccess(m)) return null; // god / family / paid-forever — no trial or upgrade nag
   const exp = hostedExpiry(m);
   const entitled = aiEntitled();
   if (entitled && exp) {
