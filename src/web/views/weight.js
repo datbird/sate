@@ -18,7 +18,7 @@
 
 "use strict";
 
-import { $, el, htmlToEl, esc, api, lineChart, RC, isNative, toast, refreshMe, registerView, feedRow, weightGoalSub } from "../lib.js";
+import { $, el, htmlToEl, esc, api, lineChart, RC, isNative, toast, refreshMe, registerView, feedRow, weightRingCard } from "../lib.js";
 
 // v1's exact conversion constant, so a value logged here round-trips to the same pounds the server
 // echoes back.
@@ -61,22 +61,21 @@ function drawStat(statbody, d) {
 
   statbody.innerHTML = "";
 
-  // Current weight headline.
-  statbody.appendChild(htmlToEl(
-    `<div class="wcur">${cur ? esc(cur) + ' <span class="wunit">lb</span>' : "No weight logged yet"}</div>`,
-  ));
+  // Hero: progress ring (start→goal journey, violet weight accent) with goal / to-go / pace tiles —
+  // the same ring-card language as the nutrition & activity cards. Falls back to a prompt if no
+  // weight is logged yet.
+  if (cur) {
+    statbody.appendChild(weightRingCard(cur, goal0));
+  } else {
+    statbody.appendChild(el("div", { class: "wcur", text: "No weight logged yet" }));
+  }
 
-  // Trend chart vs the first goal's target (lib.lineChart needs ≥2 points; otherwise nudge to log more).
+  // Trend chart, weight-accented (lib.lineChart needs ≥2 points; otherwise nudge to log more).
   if (pts.length > 1) {
-    statbody.appendChild(lineChart(pts, goal0 ? goal0.target_lb : 0, RC.nutrition));
+    statbody.appendChild(lineChart(pts, goal0 ? goal0.target_lb : 0, "var(--weight)"));
   } else {
     statbody.appendChild(el("div", { class: "subline", text: "Log a few weigh-ins to see your trend." }));
   }
-
-  // Primary weight goal, shown as ONE clean line (managed in Goals & tracking), matching the
-  // nutrition/activity tabs' goal subline rather than the old stacked list.
-  const goalSub = weightGoalSub((d.goals || [])[0]);
-  if (goalSub) statbody.appendChild(goalSub);
 
   // Manage-weight source prompt — Apple Health vs manual. NATIVE-only (web has no Health bridge, and
   // isNative() is always false on web, so this never shows there — matching v1).

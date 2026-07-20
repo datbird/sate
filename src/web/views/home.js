@@ -15,7 +15,7 @@
 
 import {
   $, $$, api, APP, me, registerView, openView, view, toast,
-  statRing, ringEl, lineChart, sparkBars, feedRow, dayDivider, inOutSub,
+  statRing, ringEl, lineChart, sparkBars, feedRow, dayDivider, inOutSub, weightTile,
   fmt, modeOf, METRIC, RC, localDayKey,
 } from "../lib.js";
 
@@ -86,15 +86,18 @@ function renderStats(s) {
     body.appendChild(htmlRow(`Avg intake <b>${fmt(s.avg_in_kcal)} kcal</b>`, `Goal <b>${fmt(goals.kcal)}</b>`));
     return;
   }
-  body.appendChild(statRing(s.in, goals, { days, netBurn: applyNet ? burnKcal : 0 }));
+  // In the All view, if the user opted weight in, add a weight stat tile to the ring card itself
+  // (matching the kcal/protein/fiber tiles) so weight reads as part of the combined stats.
+  const wTile = (HOME.scope === "all" && M.show_weight_in_feed && M.body_weight_kg)
+    ? weightTile(Math.round(M.body_weight_kg * 2.2046226))
+    : "";
+  body.appendChild(statRing(s.in, goals, { days, netBurn: applyNet ? burnKcal : 0, extraTiles: wTile }));
   if (HOME.chart === "hybrid" && nutSeries.length > 1) body.appendChild(sparkBars(nutSeries));
   if (applyNet) {
     const base = (goals.kcal || 0) * days, eff = base + burnKcal, left = eff - inKcal;
     body.appendChild(sub(`Budget ${fmt(base)} + ${fmt(burnKcal)} burned = ${fmt(eff)} · eaten ${fmt(inKcal)} → ${fmt(Math.abs(Math.round(left)))} ${left >= 0 ? "left" : "over"}`));
   } else if (HOME.scope === "all") {
-    // Fold current weight into the combined line only when the user opted weight into the All view.
-    const wLb = M.show_weight_in_feed && M.body_weight_kg ? Math.round(M.body_weight_kg * 2.2046226) : 0;
-    body.appendChild(inOutSub(inKcal, out.kcal, wLb));
+    body.appendChild(inOutSub(inKcal, out.kcal));
   } else {
     body.appendChild(sub(`${s.range === "day" ? "Today" : "This " + s.range} · ring tracks ${METRIC[modeOf().primary].label} vs goal`));
   }
