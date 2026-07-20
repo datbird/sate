@@ -179,7 +179,9 @@ export function open() {
     actions);
   form.addEventListener("submit", (e) => e.preventDefault());
 
-  const s = sheet({ title: "Goals & tracking", className: "addsheet", body: form });
+  // Default sheet (scrollable) — NOT "addsheet" (which is overflow:hidden for pinned-input sheets):
+  // this form is tall, so it must scroll instead of being clipped past the safe area.
+  const s = sheet({ title: "Goals & tracking", body: form });
 
   // ---- weight-goals list (GET/POST/DELETE /api/weight/goals), capped at 3
   async function loadWeightGoals() {
