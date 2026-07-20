@@ -73,8 +73,8 @@ function drawStat(statbody, d) {
     statbody.appendChild(el("div", { class: "subline", text: "Log a few weigh-ins to see your trend." }));
   }
 
-  // Goals with pace (to-go + on-track / behind).
-  statbody.appendChild(el("div", { class: "wgoals", html: goalsHtml(d.goals || []) }));
+  // (Weight goals are managed in Goals & tracking; the Weight tab just shows the current weight,
+  // the trend vs. the first goal, and the log — no goal list here.)
 
   // Manage-weight source prompt — Apple Health vs manual. NATIVE-only (web has no Health bridge, and
   // isNative() is always false on web, so this never shows there — matching v1).
@@ -95,20 +95,6 @@ function drawStat(statbody, d) {
   logRow.querySelector("#wLogBtn").addEventListener("click", () => logWeightManual(input));
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") logWeightManual(input); });
   statbody.appendChild(logRow);
-}
-
-// Goals list markup (identical to v1): "<target> lb by <date> · <to-go> lb to lose/gain <pace>".
-function goalsHtml(goals) {
-  const rows = goals.map((g) => {
-    const verb = g.to_go_lb >= 0 ? "to lose" : "to gain";
-    const pace = g.pace
-      ? (g.pace.on_track
-          ? '<span class="ontrack">on track</span>'
-          : `<span class="behind">${esc(Math.abs(g.pace.behind_lb))} lb behind</span>`)
-      : "";
-    return `<div class="wgoal"><b>${esc(g.target_lb)} lb</b> by ${esc(g.target_date)} · ${esc(Math.abs(g.to_go_lb))} lb ${verb} ${pace}</div>`;
-  });
-  return rows.join("") || '<div class="subline">No weight goal yet — set one in Goals &amp; tracking.</div>';
 }
 
 // ============================================================ weigh-in history (reverse-chronological)
