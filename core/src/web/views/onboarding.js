@@ -130,6 +130,7 @@ const OB_STEP = {
   health: () =>
     "<h2>Connect Apple Health</h2>" +
     '<p class="ob-sub">With your permission, Sate reads your <b>workouts</b> and <b>weight</b> from Apple Health — so exercise adds to your daily calorie budget and your weight trend fills in on its own. Sate only reads; it never writes to Health. You can change this anytime in Settings.</p>' +
+    '<p class="ob-msg" id="obHkMsg" hidden></p>' +
     '<div class="ob-nav"><button type="button" class="link" id="obHkSkip">Not now</button>' +
     '<button type="button" class="primary" id="obHkConnect">Connect Apple Health</button></div>',
   // Siri priming (native only). Voice logging ("Hey Siri, log a coffee in Sate") is coming soon — we
@@ -138,6 +139,7 @@ const OB_STEP = {
   siri: () =>
     "<h2>Enable Siri <span class=\"ob-soon\">Coming soon</span></h2>" +
     '<p class="ob-sub">Soon you’ll be able to log meals hands-free — “Hey Siri, log a coffee in Sate.” Turn on Siri now and it’ll be ready the moment voice logging arrives. You can change this anytime in Settings.</p>' +
+    '<p class="ob-msg" id="obSiriMsg" hidden></p>' +
     '<div class="ob-nav"><button type="button" class="link" id="obSiriSkip">Not now</button>' +
     '<button type="button" class="primary" id="obSiriEnable">Enable Siri</button></div>',
   stats: () =>
@@ -213,30 +215,16 @@ function obWire(s) {
 
   if (s === "health") {
     const skip = $("#obHkSkip"); if (skip) skip.onclick = () => { OB.source = "manual"; obGo(); };
-    const conn = $("#obHkConnect"); if (conn) conn.onclick = async () => {
-      conn.disabled = true; conn.textContent = "Requesting…";
-      // requestAuthorization resolves whether the user grants or denies (iOS hides read-denials for
-      // privacy), so we mark the source as health either way — a denied read just returns nothing.
-      try {
-        const HK = window.Capacitor && window.Capacitor.registerPlugin && window.Capacitor.registerPlugin("HealthKit");
-        if (HK) await HK.requestAuthorization();
-      } catch (_) { /* declined or unavailable — non-fatal */ }
-      OB.source = "health";
-      obGo();
-    };
+    const conn = $("#obHkConnect"); if (conn) conn.onclick = () => obPermission({
+      btn: conn, msg: $("#obHkMsg"), plugin: "HealthKit",
+      ok: "✓ Apple Health connected.", after: () => { OB.source = "health"; },
+    });
   }
   if (s === "siri") {
     const skip = $("#obSiriSkip"); if (skip) skip.onclick = () => obGo();
-    const en = $("#obSiriEnable"); if (en) en.onclick = async () => {
-      en.disabled = true; en.textContent = "Requesting…";
-      // No SiriKit intents are wired yet — this just requests the OS authorization so the permission
-      // is already granted when voice logging ships. Resolves on grant or denial; either way advance.
-      try {
-        const SP = window.Capacitor && window.Capacitor.registerPlugin && window.Capacitor.registerPlugin("Siri");
-        if (SP) await SP.requestAuthorization();
-      } catch (_) { /* declined or unavailable — non-fatal */ }
-      obGo();
-    };
+    const en = $("#obSiriEnable"); if (en) en.onclick = () => obPermission({
+      btn: en, msg: $("#obSiriMsg"), plugin: "Siri", ok: "✓ Siri enabled.",
+    });
   }
   if (s === "method") $$(".ob-method").forEach((b) => (b.onclick = () => { OB.method = b.dataset.m; obRender(); }));
   if (s === "checkin") {
@@ -267,6 +255,37 @@ function obCaptureGoals() {
 }
 const obHeightCm = () => Math.round((+OB.height_ft * 12 + (+OB.height_in || 0)) * 2.54);
 function obGo() { OB.i = Math.min(OB.steps.length - 1, OB.i + 1); obRender(); }
+
+// Shared native-permission runner for the Health/Siri steps. Calls the plugin's requestAuthorization,
+// then shows the outcome IN-SCREEN (toasts sit behind the z-index:70 onboarding overlay, so a silent
+// native failure looked like "nothing happened") and turns the button into Continue so the user reads
+// it before advancing. The OS permission sheet, if the native call reaches it, appears above all this.
+async function obPermission({ btn, msg, plugin, ok, after }) {
+  btn.disabled = true; btn.textContent = "Requesting…";
+  let text;
+  try {
+    // The remotely-loaded SPA doesn't bundle @capacitor/core, so window.Capacitor.registerPlugin is
+    // NOT injected here — but the native bridge DOES expose registered plugins via Capacitor.Plugins
+    // (the launcher reaches Preferences the same way). Prefer Plugins; fall back to registerPlugin if
+    // a future build does inject it.
+    const cap = window.Capacitor;
+    const P = (cap && cap.Plugins && cap.Plugins[plugin]) ||
+              (cap && typeof cap.registerPlugin === "function" ? cap.registerPlugin(plugin) : null);
+    if (!P || typeof P.requestAuthorization !== "function") {
+      text = "Native " + plugin + " plugin not reachable on this build.";
+    } else {
+      const r = await P.requestAuthorization();
+      // Siri exposes its status; a denial gets a gentle note. HealthKit hides read grants, so any
+      // non-error return is treated as connected.
+      text = (r && r.status === "denied")
+        ? (plugin === "Siri" ? "No problem — you can turn Siri on later in Settings." : "You can enable this later in Settings.")
+        : ok;
+    }
+  } catch (e) { text = plugin + " bridge error: " + (e && e.message ? e.message : String(e)); }
+  if (typeof after === "function") { try { after(); } catch (_) {} }
+  if (msg) { msg.textContent = text; msg.hidden = false; }
+  btn.disabled = false; btn.textContent = "Continue"; btn.onclick = () => obGo();
+}
 
 // ============================================================ step advance
 async function obNext(s) {
