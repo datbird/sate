@@ -161,10 +161,13 @@ async function goSelfHosted() {
 function wireSignIn(fb) {
   if (isNativeApp()) {
     $("#appleBtn").addEventListener("click", () => nativeAppleSignIn(fb).catch(showAuthErr));
-    // Google needs the Firebase Google provider + an iOS OAuth client, which aren't set up yet, so
-    // hide the button in the app rather than show a dead one. Apple + email/password remain.
+    // iOS Cloud is Apple-only (simplest, and Apple Guideline 4.8 requires Sign in with Apple anyway if
+    // any third-party login is offered). Hide Google AND email so the app has one clean identity path.
     const g = $("#googleBtn"); if (g) g.style.display = "none";
-    // Reveal the self-hosted escape only in the app (on the web there's no launcher to fall back to).
+    const em = $("#signinEmail"); if (em) em.style.display = "none";
+    // Show the first-run welcome intro, and reveal the self-hosted escape (no launcher to fall back to
+    // on the web, so it's native-only).
+    const w = $("#signinWelcome"); if (w) w.hidden = false;
     const sh = $("#selfHostBtn"); if (sh) { sh.hidden = false; sh.addEventListener("click", goSelfHosted); }
   } else {
     $("#appleBtn").addEventListener("click", () =>
