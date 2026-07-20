@@ -435,6 +435,16 @@ const ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 //   handlers: { onEdit(entry), onDelete(entry), onClick(entry) }
 //   Defaults: clicking the row (or Edit) → onEdit; Delete confirms then → onDelete.
 export function feedRow(en, handlers = {}) {
+  // Weight rows (weigh-ins) are read-only and share the feed-row look: scale icon, "Weigh-in" +
+  // time, and the value on the right. Used in the Weight tab and, opt-in, in the All feed.
+  if (en.kind === "weight") {
+    return el("div", { class: "entry readonly", html:
+      `<span class="ticon w">${TICON.w}</span>` +
+      `<span class="etext"><span class="t">Weigh-in</span>` +
+      `<span class="s">${esc(en.when || timeOf(en.logged_at))}${en.source === "health" ? " · Apple Health" : ""}</span></span>` +
+      `<span class="ekcal wgt">${esc(en.weight_lb)}<small> lb</small></span>`,
+    });
+  }
   const activity = en.kind === "activity";
   const items = (en.items || []).map((i) => i && i.name).filter(Boolean).join(", ");
   const title = en.description || items || (activity ? "Activity" : "Entry");

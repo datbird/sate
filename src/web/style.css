@@ -700,6 +700,7 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .etext .s { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ekcal { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 14px; flex: none; }
 .ekcal.out { color: var(--activity); }
+.ekcal.wgt { color: var(--weight); }
 .ekcal small { font-weight: 500; color: var(--muted); font-size: 11px; }
 .eactions { display: flex; align-items: center; gap: 1px; flex: none; margin-left: 2px; }
 .eact { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 7px; border-radius: 8px; display: inline-flex; -webkit-tap-highlight-color: transparent; }

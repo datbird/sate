@@ -98,6 +98,12 @@ export function open() {
     el("span", {}, "Add exercise calories to my budget",
       el("small", {}, "When you log a workout, its burn is added to that day's calorie goal.")));
 
+  // ---- show weigh-ins in the All feed (opt-in; default off — weight stays on its own tab)
+  const showWeightChk = el("input", { type: "checkbox", checked: M.show_weight_in_feed ? true : undefined });
+  const showWeightRow = el("label", { class: "checkrow" }, showWeightChk,
+    el("span", {}, "Show weigh-ins in the All feed",
+      el("small", {}, "Off by default — weigh-ins live on the Weight tab. Turn on to mix them into All.")));
+
   // ---- NATIVE-ONLY: heart-rate calorie method (gated — never rendered on web)
   let hrSel = null;
   let hrRow = null;
@@ -165,7 +171,7 @@ export function open() {
 
   // ---- assemble the form
   const form = el("form", { id: "goalsForm" },
-    modeLabel, modeHint, grid, netRow,
+    modeLabel, modeHint, grid, netRow, showWeightRow,
     hrRow || null,
     healthSection || null,
     weightSection,
@@ -242,6 +248,7 @@ export function open() {
     const payload = {
       track_mode: modeSel.value,
       net_exercise: netChk.checked,
+      show_weight_in_feed: showWeightChk.checked,
       goal_kcal: form.goal_kcal.value,
       goal_protein: form.goal_protein.value,
       goal_carbs: form.goal_carbs.value,

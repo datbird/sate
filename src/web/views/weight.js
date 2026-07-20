@@ -18,7 +18,7 @@
 
 "use strict";
 
-import { $, el, htmlToEl, esc, api, lineChart, RC, isNative, toast, refreshMe, registerView, WEIGHT_ICON } from "../lib.js";
+import { $, el, htmlToEl, esc, api, lineChart, RC, isNative, toast, refreshMe, registerView, feedRow } from "../lib.js";
 
 // v1's exact conversion constant, so a value logged here round-trips to the same pounds the server
 // echoes back.
@@ -121,11 +121,8 @@ function drawHistory(feed, d) {
   }
   rows.forEach((s) => {
     const dt = new Date(String(s.t).replace(" ", "T")).toLocaleDateString([], { month: "short", day: "numeric" });
-    feed.appendChild(htmlToEl(
-      `<div class="entry readonly"><span class="ticon w">${WEIGHT_ICON}</span>` +
-      `<span class="etext"><span class="t">${esc(s.weight_lb)} lb</span>` +
-      `<span class="s">${esc(dt)}</span></span></div>`,
-    ));
+    // Same feed-row look as nutrition/activity — the Weight tab shows the date (no day dividers here).
+    feed.appendChild(feedRow({ kind: "weight", logged_at: s.t, weight_lb: s.weight_lb, when: dt }));
   });
 }
 
