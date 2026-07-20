@@ -143,6 +143,9 @@
           </form>
         </details>
         <p id="authErr" class="signin-err" role="alert"></p>
+        <!-- Native app only: the app assumes the Cloud (sate.health) and lands here on Apple sign-in.
+             Self-hosters tap this to drop back to the launcher and enter their own instance address. -->
+        <button id="selfHostBtn" class="signin-selfhost" type="button" hidden>Self-Hosted Sate user →</button>
       </div>
     </section>
 
