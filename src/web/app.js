@@ -146,12 +146,26 @@ async function nativeAppleSignIn(fb) {
   await fb.signInWithCredential(auth, cred);
 }
 
+// Self-hosted escape (native only): the app defaults to the Cloud (sate.health), so a self-hoster
+// lands on this Cloud sign-in first. Tapping the link clears the saved instance in the native
+// Preferences store and returns to the app's local launcher in manual-entry mode (?connect=1), where
+// they type their own instance address. Preferences is the launcher's source of truth (see getHost).
+async function goSelfHosted() {
+  try {
+    const P = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences;
+    if (P) await P.remove({ key: "sate_host" });
+  } catch (_) {}
+  window.location.href = "capacitor://localhost/?connect=1";
+}
+
 function wireSignIn(fb) {
   if (isNativeApp()) {
     $("#appleBtn").addEventListener("click", () => nativeAppleSignIn(fb).catch(showAuthErr));
     // Google needs the Firebase Google provider + an iOS OAuth client, which aren't set up yet, so
     // hide the button in the app rather than show a dead one. Apple + email/password remain.
     const g = $("#googleBtn"); if (g) g.style.display = "none";
+    // Reveal the self-hosted escape only in the app (on the web there's no launcher to fall back to).
+    const sh = $("#selfHostBtn"); if (sh) { sh.hidden = false; sh.addEventListener("click", goSelfHosted); }
   } else {
     $("#appleBtn").addEventListener("click", () =>
       fb.signInWithPopup(auth, new fb.OAuthProvider("apple.com")).catch(showAuthErr));

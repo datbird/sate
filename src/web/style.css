@@ -820,6 +820,13 @@ body.sheet-open { position: fixed; left: 0; right: 0; width: 100%; overflow: hid
 }
 .signin-email .primary { width: 100%; }
 .signin-err { color: var(--danger); font-size: 13px; min-height: 1.2em; margin: 10px 0 0; }
+/* Native-app only "Self-Hosted Sate user" escape — a quiet link under the Cloud sign-in. */
+.signin-selfhost {
+  display: block; margin: 18px auto 0; padding: 8px 4px; background: none; border: 0;
+  color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.signin-selfhost:hover, .signin-selfhost:active { color: var(--brand); }
 
 /* ---- overlay host: sheets/dialogs are appended here by lib.sheet() --------- */
 #overlay { position: relative; z-index: 40; }
