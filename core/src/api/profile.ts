@@ -89,6 +89,7 @@ function profileView(p: Profile) {
     goals: goalsOf(p),
     track_mode: p.method || "calories",
     net_exercise: p.net_exercise !== false,
+    show_weight_in_feed: !!p.show_weight_in_feed,
     health_sync: !!p.health_sync,
     health_sync_interval:
       typeof p.health_sync_interval === "number" && p.health_sync_interval >= 0 ? p.health_sync_interval : 1440,
@@ -232,6 +233,7 @@ export async function registerProfile(app: App, deps: RouteDeps): Promise<void> 
       patch.method = String(mode) as GoalMethod;
     }
     if (b.net_exercise !== undefined) patch.net_exercise = !!b.net_exercise;
+    if (b.show_weight_in_feed !== undefined) patch.show_weight_in_feed = !!b.show_weight_in_feed;
     if (b.health_sync !== undefined) patch.health_sync = !!b.health_sync;
     if (b.health_sync_interval !== undefined) {
       const v = parseInt(String(b.health_sync_interval), 10);

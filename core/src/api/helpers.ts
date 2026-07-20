@@ -79,6 +79,7 @@ export async function ensureProfile(platform: Platform, uid: string, email?: str
     activity_level: "",
     method: "calories",
     net_exercise: true,
+    show_weight_in_feed: false,
     health_sync: false,
     health_sync_interval: 1440,
     hr_estimate_method: "formula",

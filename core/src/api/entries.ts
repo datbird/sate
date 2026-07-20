@@ -1222,15 +1222,44 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
     } catch {
       recs = [];
     }
-    const filtered = recs.filter(matches);
-    const page = filtered.slice(0, limit);
+    let items: (Entry & { weight_lb?: number })[] = recs.filter(matches);
+    const entriesCapped = recs.length >= scan;
+
+    // Opt-in (profile.show_weight_in_feed): surface weigh-ins in the All feed as read-only weight rows
+    // (kind:"weight"), merged by timestamp. Off by default → weight stays in its own tab.
+    let measCapped = false;
+    if (scope === "all") {
+      const profile = await ensureProfile(platform, uid, getEmail(c));
+      if (profile.show_weight_in_feed) {
+        const mwhere = before ? [{ field: "measured_at", op: "<" as const, value: before }] : [];
+        let meas: Measurement[] = [];
+        try {
+          ({ items: meas } = await store.list<Measurement>("measurements", {
+            where: mwhere,
+            orderBy: [{ field: "measured_at", dir: "desc" }],
+            limit: scan,
+          }));
+        } catch { meas = []; }
+        measCapped = meas.length >= scan;
+        const wItems = meas
+          .filter((m) => num(m.weight_kg) > 0)
+          .map((m) => ({
+            id: (m as { id?: string }).id,
+            kind: "weight",
+            logged_at: m.measured_at,
+            weight_lb: Math.round(num(m.weight_kg) * 2.2046226 * 10) / 10,
+            source: m.source || "manual",
+          }) as unknown as Entry & { weight_lb?: number });
+        items = items.concat(wItems).sort((a, b) => (String(a.logged_at) < String(b.logged_at) ? 1 : -1));
+      }
+    }
+
+    const page = items.slice(0, limit);
     let next: string | null = null;
-    if (filtered.length > limit) {
-      // More matching rows within this scan → resume just after the last one we returned.
-      next = page[page.length - 1]!.logged_at;
-    } else if (recs.length >= scan) {
-      // Scan hit its cap (older rows may still match) → resume past everything scanned.
-      next = recs[recs.length - 1]!.logged_at;
+    if (items.length > limit) {
+      next = page[page.length - 1]!.logged_at; // more within this scan → resume after the last returned
+    } else if ((entriesCapped || measCapped) && page.length) {
+      next = page[page.length - 1]!.logged_at; // a source hit its scan cap → keep paging past it
     }
     return ok(c, { entries: page, next });
   });
