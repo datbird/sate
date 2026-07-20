@@ -56,7 +56,9 @@ export function open(entry) {
     `<label class="mfield"><span>${esc(label)}${u ? ` <em>(${esc(u)})</em>` : ""}</span>` +
     `<input type="number" step="any" inputmode="decimal" data-mnum="${k}" value="${valOf(en, k)}"></label>`).join("");
 
-  const s = sheet({ title: en.description || "Edit entry", className: "addsheet" });
+  // Default sheet (scrollable) — not "addsheet" (overflow:hidden), so a tall edit form scrolls
+  // instead of being clipped past the top/bottom safe areas.
+  const s = sheet({ title: en.description || "Edit entry" });
 
   s.setBody((body) => {
     body.innerHTML =

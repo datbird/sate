@@ -719,7 +719,9 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 body.sheet-open { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
 .sheet { position: fixed; left: 0; right: 0; bottom: var(--kb); max-width: 480px; margin: 0 auto; z-index: 41;
   background: var(--card); border-radius: 20px 20px 0 0; padding: 8px 16px calc(20px + env(safe-area-inset-bottom));
-  max-height: var(--sheet-max);
+  /* Never let a sheet grow under the Dynamic Island / notch: the JS --sheet-max is ~full viewport
+     height (for keyboard lift), so cap it to leave the top safe-area inset clear. */
+  max-height: min(var(--sheet-max), calc(100dvh - env(safe-area-inset-top) - 12px));
   overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch;
   box-shadow: 0 -8px 40px rgba(0,0,0,.35); transition: bottom .18s ease, max-height .18s ease; }
 /* Search overlay: header + input stay put, only the results list scrolls (so the keyboard never
