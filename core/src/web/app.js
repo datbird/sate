@@ -70,7 +70,7 @@ async function main() {
     import("https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js"),
   ]);
   const { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut,
-          OAuthProvider, GoogleAuthProvider } = authMod;
+          signInWithCredential, OAuthProvider, GoogleAuthProvider } = authMod;
   auth = getAuth(initializeApp(cfg.firebase));
   fbSignOut = () => signOut(auth);
 
@@ -125,11 +125,39 @@ function showSignIn(errMsg) {
 }
 const showAuthErr = (e) => ($("#authErr").textContent = (e && e.message) || String(e));
 
+// Running inside the Capacitor native shell (iOS app)? Firebase's web signInWithPopup opens a popup
+// window, which a WKWebView can't host — and Google/Apple block OAuth in embedded webviews anyway —
+// so in the app we drive sign-in through the native @capacitor-firebase/authentication plugin (via
+// the generic Capacitor bridge; the plugin's JS wrapper isn't bundled in this remotely-loaded SPA).
+const isNativeApp = () =>
+  !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform());
+
+// Native Apple sign-in: the plugin (configured skipNativeAuth) runs the native Sign-in-with-Apple
+// flow and returns the Apple ID token + the raw nonce it used, WITHOUT touching native Firebase.
+// We complete the sign-in on the Firebase JS SDK with that credential, so onAuthStateChanged fires
+// and the rest of the app (which keys off the JS SDK) works unchanged.
+async function nativeAppleSignIn(fb) {
+  const FA = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication;
+  if (!FA) throw new Error("Native sign-in is unavailable in this app build.");
+  const res = await FA.signInWithApple({ skipNativeAuth: true });
+  const c = res && res.credential;
+  if (!c || !c.idToken) throw new Error("Apple sign-in was cancelled.");
+  const cred = new fb.OAuthProvider("apple.com").credential({ idToken: c.idToken, rawNonce: c.nonce });
+  await fb.signInWithCredential(auth, cred);
+}
+
 function wireSignIn(fb) {
-  $("#appleBtn").addEventListener("click", () =>
-    fb.signInWithPopup(auth, new fb.OAuthProvider("apple.com")).catch(showAuthErr));
-  $("#googleBtn").addEventListener("click", () =>
-    fb.signInWithPopup(auth, new fb.GoogleAuthProvider()).catch(showAuthErr));
+  if (isNativeApp()) {
+    $("#appleBtn").addEventListener("click", () => nativeAppleSignIn(fb).catch(showAuthErr));
+    // Google needs the Firebase Google provider + an iOS OAuth client, which aren't set up yet, so
+    // hide the button in the app rather than show a dead one. Apple + email/password remain.
+    const g = $("#googleBtn"); if (g) g.style.display = "none";
+  } else {
+    $("#appleBtn").addEventListener("click", () =>
+      fb.signInWithPopup(auth, new fb.OAuthProvider("apple.com")).catch(showAuthErr));
+    $("#googleBtn").addEventListener("click", () =>
+      fb.signInWithPopup(auth, new fb.GoogleAuthProvider()).catch(showAuthErr));
+  }
   $("#signinForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("#authErr").textContent = "";
