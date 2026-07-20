@@ -92,7 +92,9 @@ function renderStats(s) {
     const base = (goals.kcal || 0) * days, eff = base + burnKcal, left = eff - inKcal;
     body.appendChild(sub(`Budget ${fmt(base)} + ${fmt(burnKcal)} burned = ${fmt(eff)} · eaten ${fmt(inKcal)} → ${fmt(Math.abs(Math.round(left)))} ${left >= 0 ? "left" : "over"}`));
   } else if (HOME.scope === "all") {
-    body.appendChild(inOutSub(inKcal, out.kcal));
+    // Fold current weight into the combined line only when the user opted weight into the All view.
+    const wLb = M.show_weight_in_feed && M.body_weight_kg ? Math.round(M.body_weight_kg * 2.2046226) : 0;
+    body.appendChild(inOutSub(inKcal, out.kcal, wLb));
   } else {
     body.appendChild(sub(`${s.range === "day" ? "Today" : "This " + s.range} · ring tracks ${METRIC[modeOf().primary].label} vs goal`));
   }
