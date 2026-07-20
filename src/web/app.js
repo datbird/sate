@@ -74,7 +74,7 @@ async function main() {
   auth = getAuth(initializeApp(cfg.firebase));
   fbSignOut = () => signOut(auth);
 
-  wireSignIn({ signInWithEmailAndPassword, signInWithPopup, OAuthProvider, GoogleAuthProvider });
+  wireSignIn({ signInWithEmailAndPassword, signInWithPopup, signInWithCredential, OAuthProvider, GoogleAuthProvider });
 
   onAuthStateChanged(auth, async (user) => {
     if (user) {
