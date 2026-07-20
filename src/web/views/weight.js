@@ -164,10 +164,14 @@ async function weightSyncNow(silent) {
   } catch (e) { if (!silent) toast((e && e.message) || "Weight sync failed"); }
 }
 
-// The Capacitor HealthKit bridge, or null off-native. Gated so the web build never touches it.
+// The Capacitor HealthKit bridge, or null off-native. Gated so the web build never touches it. The
+// remotely-loaded SPA doesn't bundle @capacitor/core, so registerPlugin isn't injected — reach the
+// native plugin through Capacitor.Plugins (how the launcher reaches Preferences), with a fallback.
 function healthPlugin() {
-  if (!isNative() || !window.Capacitor || !window.Capacitor.registerPlugin) return null;
-  return window.Capacitor.registerPlugin("HealthKit");
+  const cap = window.Capacitor;
+  if (!isNative() || !cap) return null;
+  return (cap.Plugins && cap.Plugins.HealthKit) ||
+         (typeof cap.registerPlugin === "function" ? cap.registerPlugin("HealthKit") : null);
 }
 
 // ============================================================ register with the router
