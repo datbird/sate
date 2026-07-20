@@ -84,10 +84,12 @@ export function open() {
     warnings: [],
     _planned: false,
   };
-  // The check-in step only appears when check-ins are enabled instance-wide; the source step is
-  // native-only (web has no HealthKit bridge). Filter the nulls out of the ordered step list.
+  // The check-in step only appears when check-ins are enabled instance-wide; the Apple Health priming
+  // step is native-only (web has no HealthKit bridge) and comes right after welcome — informing the
+  // user before the OS permission prompt, straight after sign-in. Filter the nulls out.
   const checkinStep = M.checkins_enabled !== false ? "checkin" : null;
-  OB.steps = ["welcome", "stats", isNative() ? "source" : null, "goals", "method", "review", checkinStep, "plan"].filter(Boolean);
+  const nativeSteps = isNative() ? ["health", "siri"] : [];
+  OB.steps = ["welcome", ...nativeSteps, "stats", "goals", "method", "review", checkinStep, "plan"].filter(Boolean);
 
   host = el("div", { class: "onboard" },
     el("div", { class: "onboard-card" }, el("div", { class: "onboard-body", id: "onboardBody" })));
@@ -119,10 +121,25 @@ const OB_STEP = {
   welcome: () => {
     const app = (me() && me().app_name) || "Sate";
     return '<h2 style="text-align:center;margin-top:6px">Welcome to ' + esc(app) + "</h2>" +
-      '<p class="ob-sub" style="text-align:center">Let’s set up your stats and goals, then build a plan to reach them. Takes about a minute.</p>' +
+      '<p class="ob-sub" style="text-align:center">Log meals by photo or text — ' + esc(app) + '’s AI counts the calories and macros for you. Let’s connect Apple Health and set your goals, then build a plan. Takes about a minute.</p>' +
       '<div class="ob-nav"><button type="button" class="link" id="obDismiss">Skip setup</button>' +
       '<button type="button" class="primary" id="obNext">Get started</button></div>';
   },
+  // Apple Health priming (native only): explain what access buys BEFORE triggering the OS permission
+  // sheet, so the user grants it deliberately rather than dismissing a cold system prompt.
+  health: () =>
+    "<h2>Connect Apple Health</h2>" +
+    '<p class="ob-sub">With your permission, Sate reads your <b>workouts</b> and <b>weight</b> from Apple Health — so exercise adds to your daily calorie budget and your weight trend fills in on its own. Sate only reads; it never writes to Health. You can change this anytime in Settings.</p>' +
+    '<div class="ob-nav"><button type="button" class="link" id="obHkSkip">Not now</button>' +
+    '<button type="button" class="primary" id="obHkConnect">Connect Apple Health</button></div>',
+  // Siri priming (native only). Voice logging ("Hey Siri, log a coffee in Sate") is coming soon — we
+  // request the Siri permission now so it's ready when the feature ships. Requesting authorization
+  // shows the OS prompt even with no intents wired yet.
+  siri: () =>
+    "<h2>Enable Siri <span class=\"ob-soon\">Coming soon</span></h2>" +
+    '<p class="ob-sub">Soon you’ll be able to log meals hands-free — “Hey Siri, log a coffee in Sate.” Turn on Siri now and it’ll be ready the moment voice logging arrives. You can change this anytime in Settings.</p>' +
+    '<div class="ob-nav"><button type="button" class="link" id="obSiriSkip">Not now</button>' +
+    '<button type="button" class="primary" id="obSiriEnable">Enable Siri</button></div>',
   stats: () =>
     '<h2>About you</h2><p class="ob-sub">Used to personalize your coach and calculate your calorie needs.</p>' +
     `<label class="ob-full" style="margin-bottom:10px">Your name<input type="text" id="obName" placeholder="first name" value="${esc(OB.name)}"></label>` +
@@ -194,7 +211,33 @@ function obWire(s) {
   const skip = $("#obSkip"); if (skip) skip.onclick = () => { OB.goals = []; obGo(); };
   const dis = $("#obDismiss"); if (dis) dis.onclick = obDismiss;
 
-  if (s === "source") $$(".ob-choice").forEach((b) => (b.onclick = () => { OB.source = b.dataset.src; obRender(); }));
+  if (s === "health") {
+    const skip = $("#obHkSkip"); if (skip) skip.onclick = () => { OB.source = "manual"; obGo(); };
+    const conn = $("#obHkConnect"); if (conn) conn.onclick = async () => {
+      conn.disabled = true; conn.textContent = "Requesting…";
+      // requestAuthorization resolves whether the user grants or denies (iOS hides read-denials for
+      // privacy), so we mark the source as health either way — a denied read just returns nothing.
+      try {
+        const HK = window.Capacitor && window.Capacitor.registerPlugin && window.Capacitor.registerPlugin("HealthKit");
+        if (HK) await HK.requestAuthorization();
+      } catch (_) { /* declined or unavailable — non-fatal */ }
+      OB.source = "health";
+      obGo();
+    };
+  }
+  if (s === "siri") {
+    const skip = $("#obSiriSkip"); if (skip) skip.onclick = () => obGo();
+    const en = $("#obSiriEnable"); if (en) en.onclick = async () => {
+      en.disabled = true; en.textContent = "Requesting…";
+      // No SiriKit intents are wired yet — this just requests the OS authorization so the permission
+      // is already granted when voice logging ships. Resolves on grant or denial; either way advance.
+      try {
+        const SP = window.Capacitor && window.Capacitor.registerPlugin && window.Capacitor.registerPlugin("Siri");
+        if (SP) await SP.requestAuthorization();
+      } catch (_) { /* declined or unavailable — non-fatal */ }
+      obGo();
+    };
+  }
   if (s === "method") $$(".ob-method").forEach((b) => (b.onclick = () => { OB.method = b.dataset.m; obRender(); }));
   if (s === "checkin") {
     $$(".ob-choice[data-ci]").forEach((b) => (b.onclick = () => { OB.checkin_enabled = b.dataset.ci === "1"; obRender(); }));
