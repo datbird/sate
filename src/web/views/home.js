@@ -15,7 +15,7 @@
 
 import {
   $, $$, api, APP, me, registerView, openView, view, toast,
-  statRing, ringEl, lineChart, sparkBars, feedRow, dayDivider,
+  statRing, ringEl, lineChart, sparkBars, feedRow, dayDivider, inOutSub,
   fmt, modeOf, METRIC, RC, localDayKey,
 } from "../lib.js";
 
@@ -92,7 +92,7 @@ function renderStats(s) {
     const base = (goals.kcal || 0) * days, eff = base + burnKcal, left = eff - inKcal;
     body.appendChild(sub(`Budget ${fmt(base)} + ${fmt(burnKcal)} burned = ${fmt(eff)} · eaten ${fmt(inKcal)} → ${fmt(Math.abs(Math.round(left)))} ${left >= 0 ? "left" : "over"}`));
   } else if (HOME.scope === "all") {
-    body.appendChild(sub(`in ${fmt(inKcal)} kcal · out ${fmt(out.kcal)} cal · net ${fmt(inKcal - out.kcal)}`));
+    body.appendChild(inOutSub(inKcal, out.kcal));
   } else {
     body.appendChild(sub(`${s.range === "day" ? "Today" : "This " + s.range} · ring tracks ${METRIC[modeOf().primary].label} vs goal`));
   }

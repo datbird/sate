@@ -110,11 +110,11 @@ async function currentWeightKg(
     // Filter to rows that actually carry a weight (v1 latestMeasurement used `weight_kg > 0`), so a
     // newer height-only measurement doesn't mask the most recent real weight and force the profile scalar.
     const { items } = await store.list<Measurement>("measurements", {
-      where: [{ field: "weight_kg", op: ">", value: 0 }],
       orderBy: [{ field: "measured_at", dir: "desc" }],
-      limit: 1,
+      limit: 25,
     });
-    if (items[0] && num(items[0].weight_kg) > 0) return num(items[0].weight_kg);
+    const m = items.find((x) => num(x.weight_kg) > 0);
+    if (m) return num(m.weight_kg);
   } catch {
     /* no measurements ⇒ fall back to the profile weight */
   }

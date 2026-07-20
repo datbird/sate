@@ -77,11 +77,11 @@ function checkinGapHours(freq: CheckinFreq): number {
 async function currentWeightKg(store: DataStore, profile: Profile): Promise<number> {
   try {
     const { items } = await store.list<Measurement>("measurements", {
-      where: [{ field: "weight_kg", op: ">", value: 0 }],
       orderBy: [{ field: "measured_at", dir: "desc" }],
-      limit: 1,
+      limit: 25,
     });
-    if (items[0]?.weight_kg) return items[0].weight_kg;
+    const m = items.find((x) => Number(x.weight_kg) > 0);
+    if (m) return Number(m.weight_kg);
   } catch {
     /* fall through to profile */
   }

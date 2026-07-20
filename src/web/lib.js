@@ -410,7 +410,20 @@ export const RC = { nutrition: "var(--brand)", activity: "var(--activity)" };
 const TICON = {
   n: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v7a2 2 0 0 0 4 0V3"/><path d="M10 12v9"/><ellipse cx="16" cy="6.4" rx="2.2" ry="3.4"/><path d="M16 9.8V21"/></svg>',
   a: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4" r="1"/><path d="M4 17l5 1 .75-1.5"/><path d="M15 21v-4l-4-3 1-6"/><path d="M7 12V9l5-1 3 3 3 1"/></svg>',
+  // Weight: a bathroom-scale glyph (rounded platform + dial/needle) — the third log type's icon.
+  w: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 7.5l2.2 3.2"/><path d="M8 13a4 4 0 0 1 8 0"/></svg>',
 };
+// Weight log-type icon, exported for the Weight view (history rows + header) so it matches the feed.
+export const WEIGHT_ICON = TICON.w;
+
+// The All-scope stat subline with small inline icons (nutrition intake vs activity burn), mirroring
+// the Hosted app's "🍴 in X kcal · 🏃 out Y cal · net Z" line.
+export function inOutSub(inKcal, outKcal) {
+  return el("div", { class: "subline", html:
+    `<span class="iico" style="color:var(--brand)">${TICON.n}</span> in ${fmt(inKcal)} kcal · ` +
+    `<span class="iico" style="color:var(--activity)">${TICON.a}</span> out ${fmt(outKcal)} cal · ` +
+    `net ${fmt(Math.round(inKcal - outKcal))}` });
+}
 const HEART = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-7.5-4.9-10-9.3C.6 8.9 1.7 5.5 4.8 4.8 7 4.3 8.9 5.6 12 8.5c3.1-2.9 5-4.2 7.2-3.7 3.1.7 4.2 4.1 2.8 6.9C19.5 16.1 12 21 12 21z"/></svg>';
 const ICON_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
 const ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>';

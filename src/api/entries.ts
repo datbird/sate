@@ -112,12 +112,14 @@ async function readSettings(instance: DataStore): Promise<Record<string, string>
 // The latest known body weight (measurement first, then profile) — burn scales with it.
 async function currentWeightKg(store: DataStore, profile: Profile): Promise<number> {
   try {
+    // No `weight_kg > 0` in the query (Firestore forbids an inequality on one field with an orderBy on
+    // another); order by measured_at and pick the newest row that actually carries a weight.
     const { items } = await store.list<Measurement>("measurements", {
-      where: [{ field: "weight_kg", op: ">", value: 0 }],
       orderBy: [{ field: "measured_at", dir: "desc" }],
-      limit: 1,
+      limit: 25,
     });
-    if (items[0] && num(items[0].weight_kg) > 0) return num(items[0].weight_kg);
+    const m = items.find((x) => num(x.weight_kg) > 0);
+    if (m) return num(m.weight_kg);
   } catch {
     /* fall through to profile */
   }
@@ -1200,23 +1202,36 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
     const limit = Math.min(100, Math.max(10, parseInt(c.req.query("limit") || "", 10) || 40));
     const scope = String(c.req.query("scope") || "all");
     const before = String(c.req.query("before") || "");
+    // Scope is filtered in app code, NOT in the store query: Firestore can't combine a `kind` filter
+    // with the `logged_at` order/cursor without a composite index, and `kind != "activity"` is an
+    // invalid Firestore query (an inequality filter must be the first orderBy). So we order by
+    // logged_at only and filter by kind here. `wantActivity` null = All (no filter).
+    const wantActivity = scope === "activity" ? true : scope === "nutrition" ? false : null;
+    const matches = (r: Entry) => wantActivity === null || (r.kind === "activity") === wantActivity;
     const where: { field: string; op: "==" | "!=" | "<"; value: unknown }[] = [];
     if (before) where.push({ field: "logged_at", op: "<", value: before });
-    if (scope === "activity") where.push({ field: "kind", op: "==", value: "activity" });
-    else if (scope === "nutrition") where.push({ field: "kind", op: "!=", value: "activity" });
+    // When filtering, scan a wider window per page so a page can be filled; capped for safety.
+    const scan = wantActivity === null ? limit + 1 : Math.min(500, (limit + 1) * 5);
     let recs: Entry[] = [];
     try {
       ({ items: recs } = await store.list<Entry>("entries", {
         where,
         orderBy: [{ field: "logged_at", dir: "desc" }],
-        limit: limit + 1,
+        limit: scan,
       }));
     } catch {
       recs = [];
     }
-    const hasMore = recs.length > limit;
-    const page = hasMore ? recs.slice(0, limit) : recs;
-    const next = hasMore ? page[page.length - 1]!.logged_at : null;
+    const filtered = recs.filter(matches);
+    const page = filtered.slice(0, limit);
+    let next: string | null = null;
+    if (filtered.length > limit) {
+      // More matching rows within this scan → resume just after the last one we returned.
+      next = page[page.length - 1]!.logged_at;
+    } else if (recs.length >= scan) {
+      // Scan hit its cap (older rows may still match) → resume past everything scanned.
+      next = recs[recs.length - 1]!.logged_at;
+    }
     return ok(c, { entries: page, next });
   });
 
