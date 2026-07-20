@@ -417,12 +417,28 @@ const TICON = {
 export const WEIGHT_ICON = TICON.w;
 
 // The All-scope stat subline with small inline icons (nutrition intake vs activity burn), mirroring
-// the Hosted app's "🍴 in X kcal · 🏃 out Y cal · net Z" line.
-export function inOutSub(inKcal, outKcal) {
+// the Hosted app's "🍴 in X kcal · 🏃 out Y cal · net Z" line. When the user opts weight into the All
+// view, current weight is folded in with its icon so the combined stats read as one line.
+export function inOutSub(inKcal, outKcal, weightLb) {
+  const w = weightLb
+    ? ` · <span class="iico" style="color:var(--weight)">${TICON.w}</span> ${fmt(weightLb)} lb`
+    : "";
   return el("div", { class: "subline", html:
     `<span class="iico" style="color:var(--brand)">${TICON.n}</span> in ${fmt(inKcal)} kcal · ` +
     `<span class="iico" style="color:var(--activity)">${TICON.a}</span> out ${fmt(outKcal)} cal · ` +
-    `net ${fmt(Math.round(inKcal - outKcal))}` });
+    `net ${fmt(Math.round(inKcal - outKcal))}${w}` });
+}
+
+// A single weight-goal line for the Weight tab — matches the other tabs' subline style (one clean
+// goal, not a stacked list). g = { target_lb, target_date, to_go_lb, pace:{on_track,behind_lb} }.
+export function weightGoalSub(g) {
+  if (!g) return null;
+  const verb = g.to_go_lb >= 0 ? "to lose" : "to gain";
+  const pace = g.pace ? (g.pace.on_track ? "on track" : `${fmt(Math.abs(g.pace.behind_lb))} lb behind`) : "";
+  let dt = String(g.target_date || "");
+  try { dt = new Date(dt.replace(" ", "T")).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }); } catch { /* keep raw */ }
+  return el("div", { class: "subline", html:
+    `<span class="iico" style="color:var(--weight)">${TICON.w}</span> Goal <b>${fmt(g.target_lb)} lb</b> by ${dt} · ${fmt(Math.abs(g.to_go_lb))} lb ${verb}${pace ? " · " + pace : ""}` });
 }
 const HEART = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-7.5-4.9-10-9.3C.6 8.9 1.7 5.5 4.8 4.8 7 4.3 8.9 5.6 12 8.5c3.1-2.9 5-4.2 7.2-3.7 3.1.7 4.2 4.1 2.8 6.9C19.5 16.1 12 21 12 21z"/></svg>';
 const ICON_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';

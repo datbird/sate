@@ -18,7 +18,7 @@
 
 "use strict";
 
-import { $, el, htmlToEl, esc, api, lineChart, RC, isNative, toast, refreshMe, registerView, feedRow } from "../lib.js";
+import { $, el, htmlToEl, esc, api, lineChart, RC, isNative, toast, refreshMe, registerView, feedRow, weightGoalSub } from "../lib.js";
 
 // v1's exact conversion constant, so a value logged here round-trips to the same pounds the server
 // echoes back.
@@ -73,8 +73,10 @@ function drawStat(statbody, d) {
     statbody.appendChild(el("div", { class: "subline", text: "Log a few weigh-ins to see your trend." }));
   }
 
-  // (Weight goals are managed in Goals & tracking; the Weight tab just shows the current weight,
-  // the trend vs. the first goal, and the log — no goal list here.)
+  // Primary weight goal, shown as ONE clean line (managed in Goals & tracking), matching the
+  // nutrition/activity tabs' goal subline rather than the old stacked list.
+  const goalSub = weightGoalSub((d.goals || [])[0]);
+  if (goalSub) statbody.appendChild(goalSub);
 
   // Manage-weight source prompt — Apple Health vs manual. NATIVE-only (web has no Health bridge, and
   // isNative() is always false on web, so this never shows there — matching v1).
