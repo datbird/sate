@@ -523,7 +523,43 @@ export function statRing(totals, goals = {}, opts = {}) {
   return htmlToEl(
     `<div class="ring-card"><div class="ring" style="--pct:${pct.toFixed(1)};--rc:${rc}">` +
     `<div class="ring-inner"><strong>${fmt(val)}</strong><small>${esc(sub)}</small></div></div>` +
-    `<div class="macros">${macros}</div></div>`,
+    `<div class="macros">${macros}${opts.extraTiles || ""}</div></div>`,
+  );
+}
+
+// A weight stat tile (for the All ring card when weight is opted in) — matches the .macro tiles.
+export function weightTile(currentLb, goalLb) {
+  return `<div class="macro"><b style="color:var(--weight)">${fmt(currentLb)}</b><span>lb${goalLb ? " / " + fmt(goalLb) : " · weight"}</span></div>`;
+}
+
+// The Weight-tab hero: a progress ring around the current weight showing how far along the
+// start→goal journey you are (violet weight accent), with goal / to-go / pace tiles — the same
+// ring-card language as the nutrition & activity cards. `g` = primary goal (or null).
+export function weightRingCard(currentLb, g) {
+  const target = g ? fmt(g.target_lb) : 0;
+  const start = g ? (Number(g.start_lb) || 0) : 0;
+  let pct = 0;
+  if (g && g.target_lb && start && start !== g.target_lb) {
+    pct = Math.max(0, Math.min(100, ((start - currentLb) / (start - g.target_lb)) * 100));
+  }
+  const small = g && g.target_lb ? `lb · ${Math.round(pct)}% to goal` : "lb logged";
+  let tiles;
+  if (g) {
+    const verb = g.to_go_lb >= 0 ? "to lose" : "to gain";
+    const pace = g.pace
+      ? (g.pace.on_track ? '<span style="color:var(--brand)">On track</span>' : `<span style="color:var(--danger)">${fmt(Math.abs(g.pace.behind_lb))} lb behind</span>`)
+      : "—";
+    tiles =
+      `<div class="macro"><b>${target}</b><span>goal lb</span></div>` +
+      `<div class="macro"><b>${fmt(Math.abs(g.to_go_lb))}</b><span>lb ${verb}</span></div>` +
+      `<div class="macro"><b>${pace}</b><span>pace</span></div>`;
+  } else {
+    tiles = '<div class="macro"><b>—</b><span>set a goal in Goals &amp; tracking</span></div>';
+  }
+  return htmlToEl(
+    `<div class="ring-card"><div class="ring" style="--pct:${pct.toFixed(1)};--rc:var(--weight)">` +
+    `<div class="ring-inner"><strong>${fmt(currentLb)}</strong><small>${esc(small)}</small></div></div>` +
+    `<div class="macros">${tiles}</div></div>`,
   );
 }
 
