@@ -44,12 +44,13 @@ async function latestMeasurement(
   store: ReturnType<Platform["data"]["forUser"]>,
 ): Promise<Measurement | null> {
   try {
+    // No `weight_kg > 0` in the query: Firestore rejects an inequality on one field combined with an
+    // orderBy on another (measured_at). Order by measured_at and filter out zero-weight rows here.
     const { items } = await store.list<Measurement>("measurements", {
-      where: [{ field: "weight_kg", op: ">", value: 0 }],
       orderBy: [{ field: "measured_at", dir: "desc" }],
-      limit: 1,
+      limit: 25,
     });
-    return items[0] || null;
+    return items.find((m) => num(m.weight_kg) > 0) || null;
   } catch {
     return null;
   }
@@ -235,16 +236,17 @@ export async function registerWeight(app: App, deps: RouteDeps): Promise<void> {
     const win = periodWindow(range);
     let rows: Measurement[] = [];
     try {
+      // Only the measured_at range is in the query (a range + orderBy on the SAME field is valid in
+      // Firestore); the `weight_kg > 0` guard is applied app-side to avoid a second inequality field.
       const { items } = await store.list<Measurement>("measurements", {
         where: [
-          { field: "weight_kg", op: ">", value: 0 },
           { field: "measured_at", op: ">=", value: win.start },
           { field: "measured_at", op: "<", value: win.end },
         ],
         orderBy: [{ field: "measured_at", dir: "asc" }],
         limit: 2000,
       });
-      rows = items;
+      rows = items.filter((r) => num(r.weight_kg) > 0);
     } catch {
       rows = [];
     }
