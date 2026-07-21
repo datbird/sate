@@ -348,24 +348,32 @@ async function fetchOpenFoodFacts(code: string): Promise<BarcodeFood | null> {
 
 async function fetchUSDA(code: string, apiKey: string): Promise<BarcodeFood | null> {
   const key = apiKey || "DEMO_KEY";
-  const url =
-    "https://api.nal.usda.gov/fdc/v1/foods/search?api_key=" + encodeURIComponent(key) +
-    "&dataType=Branded&pageSize=10&query=" + encodeURIComponent(code);
-  let j: any;
-  try {
-    const res = await fetch(url, { signal: timeoutSignal() });
-    if (!res.ok) return null;
-    j = await res.json();
-  } catch {
-    return null;
-  }
-  const foods = (j && j.foods) || [];
+  // FDC stores GTINs inconsistently (12/13/14-digit, variably zero-padded) and its search returns a
+  // product ONLY when queried by its EXACT stored form — a bare UPC often returns nothing. So try the
+  // common paddings and match by leading-zeros-stripped equality (which identifies a GTIN regardless
+  // of padding). Stops at the first form that resolves.
+  const digits = code.replace(/\D/g, "");
+  if (!digits) return null;
+  const target = digits.replace(/^0+/, "") || "0";
+  const forms = [...new Set([digits.padStart(14, "0"), digits.padStart(12, "0"), target, digits])];
   let hit: any = null;
-  for (const f of foods) {
-    if (normUpc(f.gtinUpc) === normUpc(code)) {
-      hit = f;
-      break;
+  for (const q of forms) {
+    let j: any;
+    try {
+      const res = await fetch(
+        "https://api.nal.usda.gov/fdc/v1/foods/search?api_key=" + encodeURIComponent(key) +
+          "&dataType=Branded&pageSize=10&query=" + encodeURIComponent(q),
+        { signal: timeoutSignal() },
+      );
+      if (!res.ok) return null;
+      j = await res.json();
+    } catch {
+      return null;
     }
+    hit = ((j && j.foods) || []).find(
+      (f: any) => String(f.gtinUpc || "").replace(/\D/g, "").replace(/^0+/, "") === target,
+    ) || null;
+    if (hit) break;
   }
   if (!hit) return null;
   const sg = Number(hit.servingSize) || 0;

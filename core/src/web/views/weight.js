@@ -18,7 +18,7 @@
 
 "use strict";
 
-import { $, el, htmlToEl, esc, api, lineChart, RC, isNative, me, toast, refreshMe, registerView, feedRow, dayDivider, localDayKey, weightRingCard } from "../lib.js";
+import { $, el, htmlToEl, esc, api, lineChart, RC, isNative, me, toast, refreshMe, registerView, feedRow, dayDivider, localDayKey, weightRingCard, weighInEdit, weighInDelete } from "../lib.js";
 
 // v1's exact conversion constant, so a value logged here round-trips to the same pounds the server
 // echoes back.
@@ -131,7 +131,10 @@ function appendHistory(feed, rows) {
   rows.forEach((en) => {
     const key = localDayKey(en.logged_at);
     if (key !== WFEED.lastDay) { WFEED.lastDay = key; feed.appendChild(dayDivider(en.logged_at)); }
-    feed.appendChild(feedRow({ kind: "weight", logged_at: en.logged_at, weight_lb: en.weight_lb, source: en.source }));
+    feed.appendChild(feedRow(
+      { kind: "weight", id: en.id, logged_at: en.logged_at, weight_lb: en.weight_lb, source: en.source },
+      { onWeightEdit: (r) => weighInEdit(r, render), onWeightDelete: (r) => weighInDelete(r, render) },
+    ));
   });
 }
 
