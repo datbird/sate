@@ -572,6 +572,38 @@ export function weightRingCard(currentLb, g) {
   );
 }
 
+// Apple-Watch-style concentric progress rings, coloured with the three log-type accents. `rings` is
+// outer→inner: [{ pct: 0-1, color }]. Each ring has a faint full track + a rounded progress arc that
+// starts at 12 o'clock and sweeps clockwise. Handles 2 or 3 rings.
+export function tripleRing(rings) {
+  const S = 118, c = S / 2, sw = 9, gap = 3.5;
+  const radii = [c - sw / 2 - 2];
+  for (let i = 1; i < rings.length; i++) radii.push(radii[i - 1] - sw - gap);
+  let svg = `<svg class="trir" viewBox="0 0 ${S} ${S}" width="${S}" height="${S}" aria-hidden="true">`;
+  rings.forEach((r, i) => {
+    const rad = radii[i], C = 2 * Math.PI * rad;
+    const dash = (C * Math.max(0, Math.min(1, r.pct || 0))).toFixed(2);
+    svg += `<circle cx="${c}" cy="${c}" r="${rad.toFixed(2)}" fill="none" stroke="${r.color}" stroke-opacity=".16" stroke-width="${sw}"/>`;
+    svg += `<circle cx="${c}" cy="${c}" r="${rad.toFixed(2)}" fill="none" stroke="${r.color}" stroke-width="${sw}" stroke-linecap="round" stroke-dasharray="${dash} ${(C + 1).toFixed(2)}" transform="rotate(-90 ${c} ${c})"/>`;
+  });
+  return svg + "</svg>";
+}
+
+// The 3-ring hero card for the All view: the concentric rings + a legend row per metric (type icon in
+// its accent colour, label, value / goal). `items` outer→inner: [{ key:'n'|'a'|'w', color, label,
+// value, goal, unit, pct }].
+export function tripleRingCard(items) {
+  const svg = tripleRing(items.map((it) => ({ pct: it.pct, color: it.color })));
+  const legend = items.map((it) => {
+    const pctTxt = it.goal ? Math.round(Math.max(0, Math.min(1, it.pct || 0)) * 100) + "%" : "";
+    const goalTxt = it.goal ? ` <span class="trir-goal">/ ${fmt(it.goal)}${it.unit ? " " + esc(it.unit) : ""}</span>` : (it.unit ? ` <span class="trir-goal">${esc(it.unit)}</span>` : "");
+    return `<div class="trir-leg"><span class="trir-ico" style="color:${it.color}">${TICON[it.key] || ""}</span>` +
+      `<span class="trir-ll">${esc(it.label)}</span>` +
+      `<span class="trir-val"><b>${fmt(it.value)}</b>${goalTxt}${pctTxt ? `<small style="color:${it.color}">${pctTxt}</small>` : ""}</span></div>`;
+  }).join("");
+  return htmlToEl(`<div class="ring-card trir-card"><div class="trir-wrap">${svg}</div><div class="trir-legend">${legend}</div></div>`);
+}
+
 // A bare ring (single number + caption + percent), for activity/weight cards that aren't macro-based.
 export function ringEl(value, caption, pct, rc = RC.nutrition, extraHtml = "") {
   return htmlToEl(

@@ -171,6 +171,19 @@ main { max-width: 620px; margin: 0 auto; padding: 16px 14px 40px; }
 .macro { font-size: 13px; }
 .macro b { display: block; font-size: 17px; }
 .macro span { color: var(--muted); }
+/* 3-ring hero (All view): concentric activity-style rings + a per-metric legend. */
+.trir-card { gap: 16px; }
+.trir-wrap { flex: 0 0 auto; }
+.trir { display: block; }
+.trir-legend { display: flex; flex-direction: column; gap: 11px; flex: 1 1 130px; min-width: 0; }
+.trir-leg { display: flex; align-items: center; gap: 9px; }
+.trir-ico { display: inline-flex; width: 19px; height: 19px; flex: none; }
+.trir-ico svg { width: 19px; height: 19px; }
+.trir-ll { color: var(--muted); font-size: 13.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trir-val { flex: none; text-align: right; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.trir-val b { font-size: 16px; }
+.trir-goal { color: var(--muted); font-size: 12px; }
+.trir-val small { display: block; font-size: 10.5px; font-weight: 800; letter-spacing: .02em; }
 .modecap { flex-basis: 100%; text-align: center; color: var(--muted); font-size: 11.5px; letter-spacing: .01em; }
 .link { border: 0; background: transparent; color: var(--brand); cursor: pointer; font-weight: 600; padding: 4px; }
 
