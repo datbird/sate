@@ -1202,6 +1202,34 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
     const limit = Math.min(100, Math.max(10, parseInt(c.req.query("limit") || "", 10) || 40));
     const scope = String(c.req.query("scope") || "all");
     const before = String(c.req.query("before") || "");
+
+    // scope=weight → a weigh-ins-only cursor feed (the Weight tab's day-divided infinite scroll).
+    // Measurements only, ordered/paginated on measured_at, mapped to read-only weight rows.
+    if (scope === "weight") {
+      const mwhere = before ? [{ field: "measured_at", op: "<" as const, value: before }] : [];
+      let meas: Measurement[] = [];
+      try {
+        ({ items: meas } = await store.list<Measurement>("measurements", {
+          where: mwhere,
+          orderBy: [{ field: "measured_at", dir: "desc" }],
+          limit: limit + 1,
+        }));
+      } catch { meas = []; }
+      const capped = meas.length > limit;
+      const rows = meas
+        .filter((m) => num(m.weight_kg) > 0)
+        .map((m) => ({
+          id: (m as { id?: string }).id,
+          kind: "weight",
+          logged_at: m.measured_at,
+          weight_lb: Math.round(num(m.weight_kg) * 2.2046226 * 10) / 10,
+          source: m.source || "manual",
+        }));
+      const page = rows.slice(0, limit);
+      const next = (rows.length > limit || capped) && page.length ? page[page.length - 1]!.logged_at : null;
+      return ok(c, { entries: page, next });
+    }
+
     // Scope is filtered in app code, NOT in the store query: Firestore can't combine a `kind` filter
     // with the `logged_at` order/cursor without a composite index, and `kind != "activity"` is an
     // invalid Firestore query (an inequality filter must be the first orderBy). So we order by

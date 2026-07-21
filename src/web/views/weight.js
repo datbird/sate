@@ -18,7 +18,7 @@
 
 "use strict";
 
-import { $, el, htmlToEl, esc, api, lineChart, RC, isNative, me, toast, refreshMe, registerView, feedRow, weightRingCard } from "../lib.js";
+import { $, el, htmlToEl, esc, api, lineChart, RC, isNative, me, toast, refreshMe, registerView, feedRow, dayDivider, localDayKey, weightRingCard } from "../lib.js";
 
 // v1's exact conversion constant, so a value logged here round-trips to the same pounds the server
 // echoes back.
@@ -50,7 +50,7 @@ export async function render(ctx) {
   }
 
   drawStat(statbody, d);
-  drawHistory(feed, d);
+  loadHistory(feed, true); // day-divided infinite-scroll weigh-in history (independent of the range series)
 }
 
 // ============================================================ stat card (current + trend + goals + log)
@@ -98,18 +98,40 @@ function drawStat(statbody, d) {
   statbody.appendChild(logRow);
 }
 
-// ============================================================ weigh-in history (reverse-chronological)
-function drawHistory(feed, d) {
-  feed.innerHTML = "";
-  const rows = (d.series || []).slice().reverse().slice(0, 40);
-  if (!rows.length) {
-    feed.appendChild(el("li", { class: "hint", style: { color: "var(--muted)", fontSize: "13px", padding: "10px 2px" }, text: "No weigh-ins yet — log your weight above." }));
-    return;
-  }
-  rows.forEach((s) => {
-    const dt = new Date(String(s.t).replace(" ", "T")).toLocaleDateString([], { month: "short", day: "numeric" });
-    // Same feed-row look as nutrition/activity — the Weight tab shows the date (no day dividers here).
-    feed.appendChild(feedRow({ kind: "weight", logged_at: s.t, weight_lb: s.weight_lb, when: dt }));
+// ============================================================ weigh-in history (day-divided infinite scroll)
+// Mirrors Home's entry feed: cursor-paginated (GET /api/feed?scope=weight), grouped by local day with
+// a divider between days, and back-filled until the page fills so the window scroll can drive more.
+const WFEED = { cursor: null, done: false, loading: false, lastDay: null, seq: 0 };
+
+async function loadHistory(feedEl, reset) {
+  const feed = feedEl || (CTX && CTX.feed);
+  if (!feed || WFEED.loading) return;
+  if (reset) { WFEED.cursor = null; WFEED.done = false; WFEED.lastDay = null; WFEED.seq++; feed.innerHTML = ""; }
+  if (WFEED.done) return;
+  const seq = WFEED.seq;
+  WFEED.loading = true;
+  try {
+    const qs = "/api/feed?limit=40&scope=weight" + (WFEED.cursor ? "&before=" + encodeURIComponent(WFEED.cursor) : "");
+    const r = await api(qs);
+    if (seq !== WFEED.seq) return; // a reset happened mid-flight
+    appendHistory(feed, r.entries || []);
+    WFEED.cursor = r.next;
+    if (!r.next) WFEED.done = true;
+    if (reset && !feed.children.length) {
+      feed.innerHTML = '<li class="hint" style="color:var(--muted);font-size:13px;padding:10px 2px">No weigh-ins yet — log your weight above.</li>';
+      WFEED.done = true;
+    }
+  } catch (_) { /* keep whatever is already shown */ }
+  finally { if (seq === WFEED.seq) WFEED.loading = false; }
+  // Backfill until the page fills the screen so scrolling can begin.
+  if (!WFEED.done && document.body.offsetHeight <= window.innerHeight + 200) loadHistory(feed, false);
+}
+
+function appendHistory(feed, rows) {
+  rows.forEach((en) => {
+    const key = localDayKey(en.logged_at);
+    if (key !== WFEED.lastDay) { WFEED.lastDay = key; feed.appendChild(dayDivider(en.logged_at)); }
+    feed.appendChild(feedRow({ kind: "weight", logged_at: en.logged_at, weight_lb: en.weight_lb, source: en.source }));
   });
 }
 
@@ -170,6 +192,16 @@ function healthPlugin() {
   return (cap.Plugins && cap.Plugins.HealthKit) ||
          (typeof cap.registerPlugin === "function" ? cap.registerPlugin("HealthKit") : null);
 }
+
+// Infinite scroll for the weigh-in history. Home's own scroll listener bails on the Weight scope, so
+// we drive paging here — but only while the Weight segment is actually the active scope.
+window.addEventListener("scroll", () => {
+  const home = $("#view-home");
+  if (!home || home.hidden) return;
+  const onBtn = $("#scope button.on");
+  if (!onBtn || onBtn.dataset.scope !== "weight") return;
+  if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 500) loadHistory(null, false);
+}, { passive: true });
 
 // ============================================================ register with the router
 // Weight is delegated by Home (view('weight').render(ctx)) rather than opened as an overlay; it exposes
