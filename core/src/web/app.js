@@ -81,13 +81,35 @@ async function main() {
     if (user) {
       try {
         setToken(await user.getIdToken());
+        pushSiriAuthContext(user, cfg.firebase && cfg.firebase.apiKey);
         await enterApp();
       } catch (e) { console.error("sign-in → enterApp failed", e); showSignIn(e && e.message); }
     } else {
       setToken("");
+      clearSiriAuthContext();
       showSignIn();
     }
   });
+}
+
+// Native only (Cloud edition): hand the Siri App Intents the Firebase refresh token + web API key +
+// instance URL so "Hey Siri, …" can reach the API even when the app is closed. Best-effort — a no-op
+// on web or on a build without the plugin method. The intents exchange the refresh token for a fresh
+// ID token themselves, so this survives ID-token expiry between app launches.
+async function pushSiriAuthContext(user, apiKey) {
+  try {
+    const Siri = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Siri;
+    if (!Siri || typeof Siri.setAuthContext !== "function") return;
+    const refreshToken = user && user.refreshToken;
+    if (!refreshToken || !apiKey) return;
+    await Siri.setAuthContext({ refreshToken, apiKey, instanceUrl: location.origin });
+  } catch (_) { /* off-native / older build */ }
+}
+async function clearSiriAuthContext() {
+  try {
+    const Siri = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Siri;
+    if (Siri && typeof Siri.clearAuthContext === "function") await Siri.clearAuthContext();
+  } catch (_) { /* off-native / older build */ }
 }
 
 // Load shared state (/api/me) and reveal the app shell. Shared by the Firebase and test paths.

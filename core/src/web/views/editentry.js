@@ -76,6 +76,7 @@ export function open(entry) {
       `<div class="sheet-actions">` +
       `<button class="primary" id="ee-reest" style="flex:1">Re-estimate</button>` +
       `<button class="danger-btn" id="ee-delete" type="button">Delete</button></div>` +
+      `<div class="row" style="margin-top:8px"><button class="link" id="ee-refine" type="button">🔎 Refine harder — search the web for a more accurate estimate</button></div>` +
 
       (canSecond
         ? `<div class="row" style="margin-top:8px"><button class="link" id="ee-second" type="button">🔀 Get a second opinion</button></div><div id="ee-second-panel"></div>`
@@ -98,6 +99,15 @@ export function open(entry) {
       const text = $("#ee-text", body).value.trim();
       if (!text) { toast("Type a description first"); return; }
       applyEdit({ re_estimate: true, text });
+    });
+
+    // Refine harder → deeper, web-grounded AI re-estimate (slower, more accurate). Ideal for
+    // tightening up a quick best-guess like a Siri-logged item.
+    $("#ee-refine", body).addEventListener("click", () => {
+      const text = $("#ee-text", body).value.trim();
+      if (!text) { toast("Type a description first"); return; }
+      toast("Searching the web for a better estimate…");
+      applyEdit({ re_estimate: true, text, deep: true });
     });
 
     // Delete (mirrors v1's in-sheet Delete — direct, no extra confirm).
