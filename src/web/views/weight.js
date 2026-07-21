@@ -18,7 +18,7 @@
 
 "use strict";
 
-import { $, el, htmlToEl, esc, api, lineChart, RC, isNative, toast, refreshMe, registerView, feedRow, weightRingCard } from "../lib.js";
+import { $, el, htmlToEl, esc, api, lineChart, RC, isNative, me, toast, refreshMe, registerView, feedRow, weightRingCard } from "../lib.js";
 
 // v1's exact conversion constant, so a value logged here round-trips to the same pounds the server
 // echoes back.
@@ -118,12 +118,24 @@ function drawHistory(feed, d) {
 async function logWeightManual(input) {
   const v = Number(input && input.value);
   if (!(v > 0)) { toast("Enter a weight"); return; }
+  const kg = v / LB_PER_KG;
   try {
-    await api("/api/weight/log", { method: "POST", json: { weight_kg: v / LB_PER_KG } });
+    const r = await api("/api/weight/log", { method: "POST", json: { weight_kg: kg } });
     toast("Weight logged");
+    // Two-way (opt-in): also write this weigh-in back to Apple Health. Best-effort — a Health write
+    // failure must never break logging. The sample is tagged with the Sate id so import skips it.
+    if (isNative() && me() && me().health_write) writeWeightToHealth(kg, r && r.id);
     await refreshMe();       // body_weight_kg scalar changed (used by other views' HR estimate).
     render();                // repaint the same Home Weight nodes.
   } catch (e) { toast(e.message); }
+}
+
+// Fire-and-forget write-back to Apple Health for a manual weigh-in (native + opt-in only).
+async function writeWeightToHealth(kg, entryId) {
+  const HK = healthPlugin();
+  if (!HK || typeof HK.saveWeight !== "function") return;
+  try { await HK.saveWeight({ kg, entryId: entryId ? String(entryId) : undefined }); }
+  catch (_) { /* non-fatal: the weigh-in is already saved in Sate */ }
 }
 
 // Switch the manage-weight source (native prompt only). Health → kick off an import.

@@ -52,19 +52,25 @@ export function open() {
   }
 
   // ---- NATIVE-ONLY: Apple Health sync
-  let healthChk = null, healthIntSel = null, healthSection = null;
+  let healthChk = null, healthIntSel = null, healthWriteChk = null, healthSection = null;
   if (isNative()) {
     healthChk = el("input", { type: "checkbox", checked: !!M.health_sync || undefined });
     healthIntSel = el("select", {}, optionEls(HEALTH_INTERVALS, Number(M.health_sync_interval) || 0));
     const intLabel = el("label", { class: "healthintlbl", style: { marginTop: "10px" } }, "Sync frequency", healthIntSel);
     intLabel.hidden = !M.health_sync;
     healthChk.addEventListener("change", () => { intLabel.hidden = !healthChk.checked; });
+    // Two-way: write manual weigh-ins back to Apple Health (opt-in, default off). Loop-safe — samples
+    // Sate writes are tagged and skipped on import.
+    healthWriteChk = el("input", { type: "checkbox", checked: !!M.health_write || undefined });
     healthSection = el("div", { class: "wgsection" },
       el("div", { class: "wglabel" }, "Apple Health"),
       el("label", { class: "checkrow", style: { marginBottom: "0" } }, healthChk,
         el("span", {}, "Sync weight & workouts from Apple Health",
           el("small", {}, "Sate reads measurements and activity so you don't have to log them by hand."))),
-      intLabel);
+      intLabel,
+      el("label", { class: "checkrow", style: { marginBottom: "0", marginTop: "10px" } }, healthWriteChk,
+        el("span", {}, "Write my weigh-ins to Apple Health",
+          el("small", {}, "When you log a weight in Sate, also save it to Apple Health so it stays in sync with your other apps."))));
   }
 
   // ---- check-ins (only when the instance enables them)
@@ -103,6 +109,7 @@ export function open() {
     if (isNative() && healthChk) {
       payload.health_sync = healthChk.checked;
       if (healthIntSel) payload.health_sync_interval = Number(healthIntSel.value);
+      if (healthWriteChk) payload.health_write = healthWriteChk.checked;
     }
     if (ciChk) {
       payload.checkin_enabled = ciChk.checked;

@@ -95,6 +95,7 @@ function profileView(p: Profile) {
     health_sync_interval:
       typeof p.health_sync_interval === "number" && p.health_sync_interval >= 0 ? p.health_sync_interval : 1440,
     health_synced_at: p.health_synced_at || "",
+    health_write: !!p.health_write,
     hr_estimate_method: p.hr_estimate_method === "ai" ? "ai" : "formula",
     body_weight_kg: p.body_weight_kg || 0,
     body_age: Math.round(p.age || 0),
@@ -236,6 +237,7 @@ export async function registerProfile(app: App, deps: RouteDeps): Promise<void> 
     if (b.net_exercise !== undefined) patch.net_exercise = !!b.net_exercise;
     if (b.show_weight_in_feed !== undefined) patch.show_weight_in_feed = !!b.show_weight_in_feed;
     if (b.health_sync !== undefined) patch.health_sync = !!b.health_sync;
+    if (b.health_write !== undefined) patch.health_write = !!b.health_write;
     if (b.health_sync_interval !== undefined) {
       const v = parseInt(String(b.health_sync_interval), 10);
       if (!isNaN(v) && v >= 0) patch.health_sync_interval = v;
