@@ -78,6 +78,7 @@ function goalsOf(p: Profile) {
     carbs: p.goal_carbs || 0,
     fat: p.goal_fat || 0,
     sodium: p.goal_sodium || 0,
+    burn: p.goal_burn || 0,
   };
 }
 
@@ -223,7 +224,7 @@ export async function registerProfile(app: App, deps: RouteDeps): Promise<void> 
     const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
     const patch: Partial<Profile> & Record<string, unknown> = {};
 
-    for (const k of ["goal_kcal", "goal_protein", "goal_carbs", "goal_fat", "goal_sodium"] as const) {
+    for (const k of ["goal_kcal", "goal_protein", "goal_carbs", "goal_fat", "goal_sodium", "goal_burn"] as const) {
       const v = b[k];
       if (v !== undefined && v !== null && v !== "") patch[k] = Number(v) || 0;
     }
