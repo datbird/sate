@@ -117,10 +117,12 @@ type Range = "day" | "week" | "month" | "year";
 // Half-open [startDay, endDay) window of LOCAL calendar days ending today (inclusive), plus the
 // trend-series bucket granularity. Uses the stored `day` field (already the tz-aware local bucket),
 // so string comparison on YYYY-MM-DD gives the same window v1 computed from logged_at bounds.
-function rangeWindow(range: Range, tzOffsetMin: number) {
+function rangeWindow(range: Range, tzOffsetMin: number, anchorDay?: string) {
   const days = range === "day" ? 1 : range === "week" ? 7 : range === "month" ? 30 : 365;
   const bucket: "day" | "month" = range === "year" ? "month" : "day";
-  const today = dayKey(new Date().toISOString(), tzOffsetMin);
+  // `anchorDay` (YYYY-MM-DD) lets a caller anchor the window on a past day (e.g. Siri's "yesterday");
+  // absent → the local today. Only a valid ISO date is honoured.
+  const today = anchorDay && /^\d{4}-\d{2}-\d{2}$/.test(anchorDay) ? anchorDay : dayKey(new Date().toISOString(), tzOffsetMin);
   const anchor = Date.parse(today + "T00:00:00.000Z");
   const startDay = new Date(anchor - (days - 1) * 86400000).toISOString().slice(0, 10);
   const endDay = new Date(anchor + 86400000).toISOString().slice(0, 10); // exclusive
@@ -303,7 +305,7 @@ export async function registerProfile(app: App, deps: RouteDeps): Promise<void> 
     const raw = String(c.req.query("range") || "day");
     const range: Range = (["day", "week", "month", "year"] as const).includes(raw as Range) ? (raw as Range) : "day";
     const tz = Number(c.req.query("tz") || 0);
-    const w = rangeWindow(range, tz);
+    const w = rangeWindow(range, tz, c.req.query("date") || undefined);
 
     const recs = await fetchDayRange(platform, uid, w.startDay, w.endDay);
     const nutrition: Entry[] = [];

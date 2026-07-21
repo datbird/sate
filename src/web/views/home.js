@@ -16,7 +16,7 @@
 import {
   $, $$, api, APP, me, registerView, openView, view, toast,
   statRing, ringEl, lineChart, sparkBars, feedRow, dayDivider, tripleRingCard,
-  fmt, modeOf, METRIC, RC, localDayKey,
+  fmt, modeOf, METRIC, RC, localDayKey, weighInEdit, weighInDelete,
 } from "../lib.js";
 
 // View-local UI state (mirrors v1 HOME): which slice + window + chart the dashboard is showing.
@@ -172,6 +172,9 @@ function appendFeed(entries) {
     ul.appendChild(feedRow(en, {
       onEdit: (e) => openView("editentry", e),
       onDelete: (e) => deleteEntry(e.id),
+      // Weigh-ins in the All feed (opt-in) get the same swipe edit/delete as the Weight tab.
+      onWeightEdit: (r) => weighInEdit(r, render),
+      onWeightDelete: (r) => weighInDelete(r, render),
       // onClick defaults to onEdit inside feedRow.
     }));
   });

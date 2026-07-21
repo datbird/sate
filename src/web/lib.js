@@ -228,6 +228,18 @@ export function openView(name, args) {
 const _viewListeners = [];
 export function onViewChange(fn) { _viewListeners.push(fn); }
 
+// The active tab view — tracked so pull-to-refresh can re-render whatever's on screen.
+let _currentView = "home";
+export function currentView() { return _currentView; }
+// Re-run the active tab view's render (re-fetches its data). Used by pull-to-refresh.
+export async function refreshCurrentView() {
+  const v = VIEWS.get(_currentView);
+  const containerSel = (v && v.container) || ("#view-" + _currentView);
+  if (v && typeof v.render === "function") {
+    try { await v.render($(containerSel)); } catch (e) { console.error("[refresh]", _currentView, e); }
+  }
+}
+
 // The router. Header tabs + bottom tab bar share the [data-view] contract, so one showView drives
 // both. Only tab views (those with a `container`) participate; overlays are opened directly.
 export function showView(name) {
@@ -241,12 +253,57 @@ export function showView(name) {
   });
   if (v && typeof v.render === "function") {
     _rendered.add(name);
+    _currentView = name;
     try { v.render($(containerSel)); } catch (e) { console.error("[showView]", name, e); }
   }
   window.scrollTo(0, 0);
   _viewListeners.forEach((fn) => { try { fn(name); } catch (_) {} });
 }
 export const isRendered = (name) => _rendered.has(name);
+
+// Pull-to-refresh: at the top of the page, a downward drag past the threshold re-renders the active
+// view. Touch-only (harmless on desktop); skipped while a sheet/overlay is open or the app is hidden.
+export function initPullToRefresh(onRefresh) {
+  if (document.getElementById("ptrInd")) return; // once
+  const ind = document.createElement("div");
+  ind.id = "ptrInd";
+  ind.className = "ptr-ind";
+  ind.innerHTML = '<div class="ptr-spin"></div>';
+  document.body.appendChild(ind);
+
+  let startY = 0, pulling = false, dist = 0, busy = false;
+  const THRESH = 68;
+  const blocked = () => busy || $("#app")?.hidden || document.body.classList.contains("sheet-open");
+  const reset = () => { ind.style.transform = ""; ind.classList.remove("on", "ready", "spin"); dist = 0; };
+
+  window.addEventListener("touchstart", (e) => {
+    if (blocked() || window.scrollY > 0) { pulling = false; return; }
+    startY = e.touches[0].clientY; pulling = true; dist = 0;
+  }, { passive: true });
+
+  window.addEventListener("touchmove", (e) => {
+    if (!pulling) return;
+    if (window.scrollY > 0 || blocked()) { pulling = false; reset(); return; }
+    dist = e.touches[0].clientY - startY;
+    if (dist <= 0) { reset(); return; }
+    ind.classList.add("on");
+    ind.style.transform = `translateX(-50%) translateY(${Math.min(dist * 0.5, 84)}px)`;
+    ind.classList.toggle("ready", dist > THRESH);
+  }, { passive: true });
+
+  window.addEventListener("touchend", async () => {
+    if (!pulling) return;
+    pulling = false;
+    if (dist > THRESH && !blocked()) {
+      busy = true;
+      ind.classList.add("spin");
+      ind.style.transform = "translateX(-50%) translateY(56px)";
+      try { await onRefresh(); } catch (_) {}
+      busy = false;
+    }
+    reset();
+  }, { passive: true });
+}
 
 // ============================================================ overlay: bottom sheet / dialog
 // sheet(opts) mounts a keyboard-aware bottom sheet into #overlay and returns a controller.
@@ -460,51 +517,144 @@ const ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 //   handlers: { onEdit(entry), onDelete(entry), onClick(entry) }
 //   Defaults: clicking the row (or Edit) → onEdit; Delete confirms then → onDelete.
 export function feedRow(en, handlers = {}) {
-  // Weight rows (weigh-ins) are read-only and share the feed-row look: scale icon, "Weigh-in" +
-  // time, and the value on the right. Used in the Weight tab and, opt-in, in the All feed.
+  let mainHtml, actions = [], onTap = null;
   if (en.kind === "weight") {
-    return el("div", { class: "entry readonly", html:
+    mainHtml =
       `<span class="ticon w">${TICON.w}</span>` +
       `<span class="etext"><span class="t">Weigh-in</span>` +
       `<span class="s">${esc(en.when || timeOf(en.logged_at))}${en.source === "health" ? " · Apple Health" : ""}</span></span>` +
-      `<span class="ekcal wgt">${esc(en.weight_lb)}<small> lb</small></span>`,
-    });
+      `<span class="ekcal wgt">${esc(en.weight_lb)}<small> lb</small></span>`;
+    if (handlers.onWeightEdit) { actions.push({ cls: "swact-edit", icon: ICON_EDIT, label: "Edit", tap: () => handlers.onWeightEdit(en) }); onTap = () => handlers.onWeightEdit(en); }
+    if (handlers.onWeightDelete) actions.push({ cls: "swact-del", icon: ICON_TRASH, label: "Delete", tap: () => _confirmDelete(`Delete this weigh-in?`, () => handlers.onWeightDelete(en)) });
+  } else {
+    const activity = en.kind === "activity";
+    const items = (en.items || []).map((i) => i && i.name).filter(Boolean).join(", ");
+    const title = en.description || items || (activity ? "Activity" : "Entry");
+    const sub = activity
+      ? [timeOf(en.logged_at), en.duration_min ? Math.round(en.duration_min) + " min" : "", en.intensity, en.note].filter(Boolean).join(" · ")
+      : [timeOf(en.logged_at), items || en.source, en.note].filter(Boolean).join(" · ");
+    const kcalHtml = activity
+      ? `<span class="ekcal out">−${fmt(en.kcal)}<small> cal</small></span>`
+      : `<span class="ekcal">${fmt(en.kcal)}<small> kcal</small></span>`;
+    const badge = en.source === "health" ? `<span class="health" title="From Apple Health">${HEART}Health</span>` : "";
+    mainHtml =
+      `<span class="ticon ${activity ? "a" : "n"}">${activity ? TICON.a : TICON.n}</span>` +
+      `<span class="etext"><span class="t">${esc(title)}${badge}</span><span class="s">${esc(sub)}</span></span>` +
+      kcalHtml;
+    const edit = () => (handlers.onEdit ? handlers.onEdit(en) : openView("editentry", en));
+    actions.push({ cls: "swact-edit", icon: ICON_EDIT, label: "Edit", tap: edit });
+    actions.push({ cls: "swact-del", icon: ICON_TRASH, label: "Delete", tap: () => _confirmDelete(`Delete this ${activity ? "activity" : "food"} entry?`, () => handlers.onDelete && handlers.onDelete(en)) });
+    onTap = handlers.onClick ? () => handlers.onClick(en) : edit;
   }
-  const activity = en.kind === "activity";
-  const items = (en.items || []).map((i) => i && i.name).filter(Boolean).join(", ");
-  const title = en.description || items || (activity ? "Activity" : "Entry");
-  const sub = activity
-    ? [timeOf(en.logged_at), en.duration_min ? Math.round(en.duration_min) + " min" : "", en.intensity, en.note].filter(Boolean).join(" · ")
-    : [timeOf(en.logged_at), items || en.source, en.note].filter(Boolean).join(" · ");
-  const kcalHtml = activity
-    ? `<span class="ekcal out">−${fmt(en.kcal)}<small> cal</small></span>`
-    : `<span class="ekcal">${fmt(en.kcal)}<small> kcal</small></span>`;
-  const badge = en.source === "health" ? `<span class="health" title="From Apple Health">${HEART}Health</span>` : "";
+  return _swipeEntry(mainHtml, actions, onTap);
+}
 
-  const li = el("div", { class: "entry", html:
-    `<span class="ticon ${activity ? "a" : "n"}">${activity ? TICON.a : TICON.n}</span>` +
-    `<span class="etext"><span class="t">${esc(title)}${badge}</span><span class="s">${esc(sub)}</span></span>` +
-    kcalHtml +
-    `<span class="eactions">` +
-    `<button class="eact" type="button" data-edit title="Edit" aria-label="Edit">${ICON_EDIT}</button>` +
-    `<button class="eact del" type="button" data-del title="Delete" aria-label="Delete">${ICON_TRASH}</button>` +
-    `</span>`,
+async function _confirmDelete(msg, fn) {
+  if (await confirmDialog(msg, { confirmLabel: "Delete", danger: true })) fn();
+}
+
+// One-at-a-time swipe state: only the currently-open row is tracked (no leak on an infinite feed).
+let _openSwipeRow = null, _swipeScrollWired = false;
+
+// Build a feed row whose `.entry-main` slides left to reveal an `.entry-actions` strip (edit/delete).
+// `actions` = [{ cls, icon, label, tap }]. A plain tap (no drag) fires `onTap`; a tap on an open row
+// closes it. With no actions the row is read-only.
+function _swipeEntry(mainHtml, actions, onTap) {
+  const actionsEl = el("div", { class: "entry-actions" });
+  actions.forEach((a) => {
+    const btn = el("button", { class: "swact " + a.cls, type: "button", html: a.icon });
+    btn.setAttribute("aria-label", a.label);
+    btn.addEventListener("click", (ev) => { ev.stopPropagation(); collapse(); a.tap(); });
+    actionsEl.appendChild(btn);
   });
-  const edit = () => (handlers.onEdit ? handlers.onEdit(en) : openView("editentry", en));
-  li.querySelector("[data-edit]").addEventListener("click", (ev) => { ev.stopPropagation(); edit(); });
-  li.querySelector("[data-del]").addEventListener("click", async (ev) => {
-    ev.stopPropagation();
-    const okDel = await confirmDialog(`Delete this ${activity ? "activity" : "food"} entry?`, { confirmLabel: "Delete", danger: true });
-    if (!okDel) return;
-    if (handlers.onDelete) handlers.onDelete(en);
+  const main = el("div", { class: "entry-main", html: mainHtml });
+  const row = el("div", { class: actions.length ? "entry" : "entry readonly" }, actionsEl, main);
+  const W = actions.length * 58;
+  let open = false, moved = false;
+
+  const setX = (x, anim) => { main.style.transition = anim ? "transform .2s ease" : "none"; main.style.transform = `translateX(${x}px)`; };
+  const expand = () => { if (_openSwipeRow && _openSwipeRow !== row) _openSwipeRow._collapse(); open = true; _openSwipeRow = row; setX(-W, true); };
+  const collapse = () => { open = false; if (_openSwipeRow === row) _openSwipeRow = null; setX(0, true); };
+  row._collapse = collapse;
+
+  if (W > 0) {
+    let sx = 0, sy = 0, dragging = false, decided = false, horiz = false;
+    main.addEventListener("touchstart", (e) => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; dragging = true; decided = false; horiz = false; moved = false; }, { passive: true });
+    main.addEventListener("touchmove", (e) => {
+      if (!dragging) return;
+      const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
+      if (!decided) { if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return; decided = true; horiz = Math.abs(dx) > Math.abs(dy); }
+      if (!horiz) { dragging = false; return; } // vertical → let the feed scroll
+      moved = true;
+      const x = Math.max(-W - 16, Math.min(0, (open ? -W : 0) + dx));
+      setX(x, false);
+    }, { passive: true });
+    main.addEventListener("touchend", () => {
+      if (!dragging) return; dragging = false;
+      if (!horiz) return;
+      const m = main.style.transform.match(/-?\d+(\.\d+)?/);
+      ((m ? parseFloat(m[0]) : 0) < -W / 2) ? expand() : collapse();
+    }, { passive: true });
+    if (!_swipeScrollWired) { _swipeScrollWired = true; window.addEventListener("scroll", () => { if (_openSwipeRow) _openSwipeRow._collapse(); }, { passive: true }); }
+  }
+
+  main.addEventListener("click", () => {
+    if (moved) { moved = false; return; }
+    if (open) { collapse(); return; }
+    if (onTap) onTap();
   });
-  li.addEventListener("click", () => (handlers.onClick ? handlers.onClick(en) : edit()));
-  return li;
+  return row;
 }
 
 // A "Today"/"Yesterday"/date divider row for day-grouped feeds.
 export function dayDivider(iso) {
   return el("div", { class: "day-divider", html: `<span>${esc(dayLabel(iso))}</span>` });
+}
+
+// Shared weigh-in edit/delete (used by BOTH the Weight tab and the All feed). `row` = a weight feed
+// row ({ id, weight_lb, logged_at }); `onDone` repaints the caller's view after a change. Weights are
+// pounds on the wire → kg for the API.
+const _LB_PER_KG = 2.2046226;
+export async function weighInDelete(row, onDone) {
+  if (!row || !row.id) return;
+  try {
+    await api("/api/weight/" + row.id, { method: "DELETE" });
+    toast("Weigh-in deleted");
+    await refreshMe();
+    if (typeof onDone === "function") onDone();
+  } catch (e) { toast(e.message); }
+}
+export function weighInEdit(row, onDone) {
+  if (!row || !row.id) return;
+  const lbInput = el("input", { type: "number", step: "0.1", min: "0", inputmode: "decimal", value: row.weight_lb != null ? String(row.weight_lb) : "" });
+  const dateInput = el("input", { type: "date", value: String(row.logged_at || "").slice(0, 10) });
+  const saveBtn = el("button", { type: "button", class: "primary" }, "Save");
+  const delBtn = el("button", { type: "button", class: "danger-btn" }, "Delete");
+  const form = el("form", {},
+    el("label", { class: "field" }, "Weight (lb)", lbInput),
+    el("label", { class: "field" }, "Date", dateInput),
+    el("div", { class: "sheet-actions", style: { marginTop: "6px" } }, delBtn));
+  form.addEventListener("submit", (e) => e.preventDefault());
+  const s = sheet({ title: "Edit weigh-in", body: form, footer: saveBtn });
+  saveBtn.addEventListener("click", async () => {
+    const lb = parseFloat(lbInput.value);
+    if (!(lb > 0)) { toast("Enter a valid weight"); return; }
+    const payload = { weight_kg: lb / _LB_PER_KG };
+    const d = (dateInput.value || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) payload.measured_at = new Date(d + "T12:00:00").toISOString();
+    try {
+      await api("/api/weight/" + row.id, { method: "PATCH", json: payload });
+      toast("Weigh-in updated");
+      s.close();
+      await refreshMe();
+      if (typeof onDone === "function") onDone();
+    } catch (e) { toast(e.message); }
+  });
+  delBtn.addEventListener("click", async () => {
+    if (!(await confirmDialog("Delete this weigh-in?", { confirmLabel: "Delete", danger: true }))) return;
+    s.close();
+    weighInDelete(row, onDone);
+  });
 }
 
 // ============================================================ shared component: stat ring

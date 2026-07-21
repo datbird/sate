@@ -93,6 +93,7 @@ function renderNutritionTab(host) {
   const methods = el("div", { class: "methods" },
     methodBtn(ICON_BARCODE, "Barcode", "scan a package", () => openScanner()),
     methodBtn(ICON_CAMERA, "Photo AI", "snap your plate", () => pickPhoto()),
+    methodBtn(ICON_IMAGE, "From library", "photo or barcode", () => logFromLibraryImage()),
   );
   const aiBtn = el("button", {
     class: "aibtn",
@@ -285,6 +286,40 @@ function pickPhoto() {
   inp.click();
 }
 
+// "From library": pick a saved image and figure out what to do with it — try to decode a product
+// barcode first (→ barcode lookup); if there's no barcode, treat it as a plate/label for the vision
+// estimate. One button covers both the photo and barcode paths from an existing photo.
+async function logFromLibraryImage() {
+  const inp = el("input", { type: "file", accept: "image/*", style: { display: "none" } });
+  document.body.appendChild(inp);
+  inp.addEventListener("change", async () => {
+    const file = inp.files && inp.files[0];
+    inp.remove();
+    if (!file) return;
+    let gtin = null;
+    if (await ensureQrLib()) {
+      busy("Reading barcode…");
+      const holder = el("div", { id: "bcfile-reader", style: { display: "none" } });
+      document.body.appendChild(holder);
+      try {
+        const decoded = await new window.Html5Qrcode("bcfile-reader", { verbose: false }).scanFile(file, false);
+        gtin = gtinFromScan(String(decoded || "").trim());
+      } catch (_) { gtin = null; }
+      holder.remove();
+    }
+    if (gtin) {
+      try {
+        const r = await api("/api/log/barcode", { method: "POST", json: { barcode: gtin } });
+        toast(`Logged ${esc(r.name)} — ${r0(r.entry.kcal)} kcal (via ${esc(r.found_via)}).`);
+        afterLog();
+        return;
+      } catch (_) { /* no match in the barcode DB → fall through to the vision estimate */ }
+    }
+    await logPhoto(file);
+  });
+  inp.click();
+}
+
 async function logPhoto(file) {
   let dataUrl;
   try {
@@ -425,6 +460,7 @@ async function onScan(decodedText, status, sc) {
 // ============================================================ inline icons (match v1's compose markup)
 const ICON_BARCODE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 5v14M7 5v14M11 5v14M14 5v14M18 5v14M21 5v14"/></svg>';
 const ICON_CAMERA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="3"/><circle cx="12" cy="13.5" r="3.5"/><path d="M9 7l1.5-2h3L15 7"/></svg>';
+const ICON_IMAGE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M4 17l5-5 4 4 2-2 5 5"/></svg>';
 const iconList = () => el("span", { html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h7" stroke-linecap="round"/></svg>' }).firstElementChild;
 const iconSearch = () => el("span", { html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4" stroke-linecap="round"/></svg>' }).firstElementChild;
 const iconSpark = () => el("span", { html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/></svg>' }).firstElementChild;

@@ -317,4 +317,58 @@ export async function registerWeight(app: App, deps: RouteDeps): Promise<void> {
     await store.delete("weight_goals", id);
     return ok(c, { deleted: id });
   });
+
+  // Refresh the profile's current-weight scalar to the newest remaining measurement (0 if none).
+  async function syncWeightScalar(
+    store: ReturnType<Platform["data"]["forUser"]>,
+    profile: Profile,
+  ): Promise<void> {
+    const latest = await latestMeasurement(store);
+    const profileId = (profile as { id?: string }).id;
+    if (!profileId) return;
+    try {
+      await store.update<Profile>("profiles", profileId, { body_weight_kg: latest ? num(latest.weight_kg) : 0 });
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  // PATCH /api/weight/:id — edit a weigh-in's value and/or date. Owner-only.
+  app.patch("/api/weight/:id", async (c) => {
+    const uid = getUid(c);
+    const store = platform.data.forUser(uid);
+    const profile = await ensureProfile(platform, uid);
+    const id = c.req.param("id");
+    let rec: Measurement | null = null;
+    try { rec = await store.get<Measurement>("measurements", id); } catch { rec = null; }
+    if (!rec) return err(c, "not found", 404);
+    if (rec.user !== uid) return err(c, "forbidden", 403);
+    const b = (await c.req.json().catch(() => ({}))) as { weight_kg?: unknown; measured_at?: string };
+    const patch: Partial<Measurement> = {};
+    const kg = num(b.weight_kg);
+    if (kg > 0) patch.weight_kg = kg;
+    if (b.measured_at && !isNaN(Date.parse(String(b.measured_at)))) {
+      patch.measured_at = new Date(String(b.measured_at)).toISOString();
+    }
+    if (!Object.keys(patch).length) return err(c, "weight_kg or measured_at required", 400);
+    await store.update<Measurement>("measurements", id, patch);
+    await syncWeightScalar(store, profile);
+    return ok(c, { ok: true, id });
+  });
+
+  // DELETE /api/weight/:id — remove a weigh-in. Owner-only. (Registered after /goals/:id, and one
+  // path segment, so it never shadows the two-segment goals routes.)
+  app.delete("/api/weight/:id", async (c) => {
+    const uid = getUid(c);
+    const store = platform.data.forUser(uid);
+    const profile = await ensureProfile(platform, uid);
+    const id = c.req.param("id");
+    let rec: Measurement | null = null;
+    try { rec = await store.get<Measurement>("measurements", id); } catch { rec = null; }
+    if (!rec) return err(c, "not found", 404);
+    if (rec.user !== uid) return err(c, "forbidden", 403);
+    await store.delete("measurements", id);
+    await syncWeightScalar(store, profile);
+    return ok(c, { deleted: id });
+  });
 }

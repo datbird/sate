@@ -11,7 +11,7 @@
 
 import {
   $, $$, api, getJSON, setToken, setUnauthorizedHandler, setMe, setRefreshMe, APP, me,
-  showView, openView, view, toast, hasSku,
+  showView, openView, view, toast, hasSku, initPullToRefresh, refreshCurrentView,
 } from "./lib.js";
 
 // Import every view for its registration side effect. Each module calls registerView(...) at import
@@ -271,5 +271,8 @@ function wireTheme() {
   apply(saved);
   $$('#themeSeg [data-theme-choice]').forEach((b) => b.addEventListener("click", () => apply(b.dataset.themeChoice)));
 }
+
+// Pull-to-refresh: drag down at the top of any tab to re-fetch what's on screen.
+initPullToRefresh(refreshCurrentView);
 
 main();
