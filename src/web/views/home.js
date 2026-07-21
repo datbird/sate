@@ -15,12 +15,12 @@
 
 import {
   $, $$, api, APP, me, registerView, openView, view, toast,
-  statRing, ringEl, lineChart, sparkBars, feedRow, dayDivider, inOutSub, weightTile,
+  statRing, ringEl, lineChart, sparkBars, feedRow, dayDivider, tripleRingCard,
   fmt, modeOf, METRIC, RC, localDayKey,
 } from "../lib.js";
 
 // View-local UI state (mirrors v1 HOME): which slice + window + chart the dashboard is showing.
-const HOME = { scope: "all", range: "day", chart: "ring" };
+const HOME = { scope: "all", range: "day", chart: "ring", weight: null };
 
 // ============================================================ render entry point
 // Called by showView('home') on every show. Weight is its own data source (delegated); all other
@@ -36,9 +36,16 @@ async function render() {
     return;
   }
   if (charts) charts.style.visibility = "";
-  let stats;
-  try { stats = await api("/api/stats?range=" + HOME.range); }
-  catch (e) { toast(e.message); return; }
+  let stats, wp = null;
+  try {
+    // The All view's 3-ring hero needs weight too, so fetch it alongside stats (day window is enough
+    // for the current weight + primary goal). Other scopes skip it.
+    [stats, wp] = await Promise.all([
+      api("/api/stats?range=" + HOME.range),
+      HOME.scope === "all" ? api("/api/weight?range=day").catch(() => null) : Promise.resolve(null),
+    ]);
+  } catch (e) { toast(e.message); return; }
+  HOME.weight = wp;
   renderStats(stats);
   $("#feedlbl").textContent = "Log";
   loadFeed(true);
@@ -89,18 +96,40 @@ function renderStats(s) {
     body.appendChild(htmlRow(`Avg intake <b>${fmt(s.avg_in_kcal)} kcal</b>`, `Goal <b>${fmt(goals.kcal)}</b>`));
     return;
   }
-  // In the All view, if the user opted weight in, add a weight stat tile to the ring card itself
-  // (matching the kcal/protein/fiber tiles) so weight reads as part of the combined stats.
-  const wTile = (HOME.scope === "all" && M.show_weight_in_feed && M.body_weight_kg)
-    ? weightTile(Math.round(M.body_weight_kg * 2.2046226))
-    : "";
-  body.appendChild(statRing(s.in, goals, { days, netBurn: applyNet ? burnKcal : 0, extraTiles: wTile }));
+
+  // ---- All scope: the 3-ring hero (nutrition intake, activity burn, weight journey vs each goal).
+  if (HOME.scope === "all") {
+    const kcalGoal = (goals.kcal || 0) * days;
+    const items = [
+      { key: "n", color: "var(--brand)", label: "Nutrition", value: inKcal, goal: kcalGoal, unit: "kcal", pct: kcalGoal ? inKcal / kcalGoal : 0 },
+      { key: "a", color: "var(--activity)", label: "Activity", value: out.kcal, goal: burnGoal, unit: "cal", pct: burnGoal ? out.kcal / burnGoal : 0 },
+    ];
+    const wp = HOME.weight;
+    if (wp && (wp.current_lb || (wp.goals || []).length)) {
+      const g0 = (wp.goals || [])[0], cur = wp.current_lb || 0;
+      let wpct = 0;
+      if (g0 && g0.start_lb && g0.target_lb && g0.start_lb !== g0.target_lb) {
+        wpct = Math.max(0, Math.min(1, (g0.start_lb - cur) / (g0.start_lb - g0.target_lb)));
+      }
+      items.push({ key: "w", color: "var(--weight)", label: "Weight", value: cur, goal: g0 ? g0.target_lb : 0, unit: "lb", pct: wpct });
+    }
+    body.appendChild(tripleRingCard(items));
+    if (HOME.chart === "hybrid" && nutSeries.length > 1) body.appendChild(sparkBars(nutSeries));
+    if (applyNet) {
+      const base = (goals.kcal || 0) * days, eff = base + burnKcal, left = eff - inKcal;
+      body.appendChild(sub(`Budget ${fmt(base)} + ${fmt(burnKcal)} burned = ${fmt(eff)} · eaten ${fmt(inKcal)} → ${fmt(Math.abs(Math.round(left)))} ${left >= 0 ? "left" : "over"}`));
+    } else {
+      body.appendChild(sub(`net ${fmt(Math.round(inKcal - out.kcal))} kcal · ${s.range === "day" ? "today" : "this " + s.range}`));
+    }
+    return;
+  }
+
+  // ---- Nutrition scope: single mode-aware ring.
+  body.appendChild(statRing(s.in, goals, { days, netBurn: applyNet ? burnKcal : 0 }));
   if (HOME.chart === "hybrid" && nutSeries.length > 1) body.appendChild(sparkBars(nutSeries));
   if (applyNet) {
     const base = (goals.kcal || 0) * days, eff = base + burnKcal, left = eff - inKcal;
     body.appendChild(sub(`Budget ${fmt(base)} + ${fmt(burnKcal)} burned = ${fmt(eff)} · eaten ${fmt(inKcal)} → ${fmt(Math.abs(Math.round(left)))} ${left >= 0 ? "left" : "over"}`));
-  } else if (HOME.scope === "all") {
-    body.appendChild(inOutSub(inKcal, out.kcal, { burnGoal }));
   } else {
     body.appendChild(sub(`${s.range === "day" ? "Today" : "This " + s.range} · ring tracks ${METRIC[modeOf().primary].label} vs goal`));
   }
