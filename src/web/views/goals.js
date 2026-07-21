@@ -79,6 +79,11 @@ export function open() {
     goalField("Sodium (mg)", "goal_sodium", g.sodium),
   );
 
+  // ---- daily activity calorie-burn goal (drives the Activity ring + the All "out" target)
+  const burnField = el("label", { class: "field", style: { marginBottom: "14px" } },
+    "Daily calorie burn (activity)",
+    el("input", { type: "number", name: "goal_burn", min: "0", inputmode: "numeric", value: g.burn ? String(g.burn) : "" }));
+
   // (net-exercise, show-weight-in-All, Apple Health sync, heart-rate method, and check-ins now live
   // in the Settings sheet — this sheet is just the targets.)
 
@@ -103,7 +108,7 @@ export function open() {
   const saveBtn = el("button", { type: "button", class: "primary" }, "Save");
 
   // ---- assemble the form (targets only)
-  const form = el("form", { id: "goalsForm" }, modeLabel, modeHint, grid, weightSection);
+  const form = el("form", { id: "goalsForm" }, modeLabel, modeHint, grid, burnField, weightSection);
   form.addEventListener("submit", (e) => e.preventDefault());
 
   const s = sheet({ title: "Goals", body: form, footer: saveBtn });
@@ -179,6 +184,7 @@ export function open() {
       goal_carbs: form.goal_carbs.value,
       goal_fat: form.goal_fat.value,
       goal_sodium: form.goal_sodium.value,
+      goal_burn: form.goal_burn.value,
     };
     if (actSel.value) payload.activity_level = actSel.value;
     try {

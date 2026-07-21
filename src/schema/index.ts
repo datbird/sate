@@ -200,6 +200,7 @@ export const Profile = z.object({
   goal_carbs: z.number().optional(),
   goal_fat: z.number().optional(),
   goal_sodium: z.number().optional(),
+  goal_burn: z.number().optional(), // daily activity calorie-burn goal (Activity/All rings)
   net_exercise: z.boolean().default(true), // exercise burn adds to the daily budget
   show_weight_in_feed: z.boolean().default(false), // opt-in: surface weigh-ins in the All feed
   // Apple Health sync (native, opt-in).

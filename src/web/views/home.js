@@ -62,16 +62,19 @@ function renderStats(s) {
   body.innerHTML = "";
 
   // ---- Activity scope
+  const burnGoal = (goals.burn || 0) * days; // daily calorie-burn goal, scaled to the window
   if (HOME.scope === "activity") {
     if (HOME.chart === "line") {
-      body.appendChild(lineChart(actSeries, 0, RC.activity));
-      body.appendChild(htmlRow(`Avg burn <b>${fmt(s.avg_out_kcal)} cal</b>`, `Total <b>${fmt(out.kcal)}</b>`));
+      body.appendChild(lineChart(actSeries, goals.burn || 0, RC.activity));
+      body.appendChild(htmlRow(`Avg burn <b>${fmt(s.avg_out_kcal)} cal</b>`,
+        burnGoal ? `Goal <b>${fmt(goals.burn)}/day</b>` : `Total <b>${fmt(out.kcal)}</b>`));
       return;
     }
-    const pct = Math.min(100, Math.round((out.kcal / 500) * 100));
+    const pct = Math.min(100, Math.round((out.kcal / (burnGoal || 500 * days)) * 100));
+    const caption = burnGoal ? "of " + fmt(burnGoal) + " cal" : "cal burned";
     const extra = `<div class="kpis"><div class="kpi"><b>${fmt(out.minutes)}</b><span>active min</span></div>` +
       `<div class="kpi"><b>${fmt(out.workouts)}</b><span>workouts</span></div></div>`;
-    body.appendChild(ringEl(out.kcal, "cal burned", pct, RC.activity, extra));
+    body.appendChild(ringEl(out.kcal, caption, pct, RC.activity, extra));
     if (HOME.chart === "hybrid" && actSeries.length > 1) body.appendChild(sparkBars(actSeries));
     const netMsg = (M.net_exercise && s.net_exercise !== false)
       ? "Exercise calories are added to your daily budget."
@@ -97,7 +100,7 @@ function renderStats(s) {
     const base = (goals.kcal || 0) * days, eff = base + burnKcal, left = eff - inKcal;
     body.appendChild(sub(`Budget ${fmt(base)} + ${fmt(burnKcal)} burned = ${fmt(eff)} · eaten ${fmt(inKcal)} → ${fmt(Math.abs(Math.round(left)))} ${left >= 0 ? "left" : "over"}`));
   } else if (HOME.scope === "all") {
-    body.appendChild(inOutSub(inKcal, out.kcal));
+    body.appendChild(inOutSub(inKcal, out.kcal, { burnGoal }));
   } else {
     body.appendChild(sub(`${s.range === "day" ? "Today" : "This " + s.range} · ring tracks ${METRIC[modeOf().primary].label} vs goal`));
   }

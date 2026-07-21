@@ -427,13 +427,14 @@ export const WEIGHT_ICON = TICON.w;
 // The All-scope stat subline with small inline icons (nutrition intake vs activity burn), mirroring
 // the Hosted app's "🍴 in X kcal · 🏃 out Y cal · net Z" line. When the user opts weight into the All
 // view, current weight is folded in with its icon so the combined stats read as one line.
-export function inOutSub(inKcal, outKcal, weightLb) {
-  const w = weightLb
-    ? ` · <span class="iico" style="color:var(--weight)">${TICON.w}</span> ${fmt(weightLb)} lb`
+export function inOutSub(inKcal, outKcal, opts = {}) {
+  const w = opts.weightLb
+    ? ` · <span class="iico" style="color:var(--weight)">${TICON.w}</span> ${fmt(opts.weightLb)} lb`
     : "";
+  const outStr = opts.burnGoal ? `${fmt(outKcal)} / ${fmt(opts.burnGoal)}` : fmt(outKcal);
   return el("div", { class: "subline", html:
     `<span class="iico" style="color:var(--brand)">${TICON.n}</span> in ${fmt(inKcal)} kcal · ` +
-    `<span class="iico" style="color:var(--activity)">${TICON.a}</span> out ${fmt(outKcal)} cal · ` +
+    `<span class="iico" style="color:var(--activity)">${TICON.a}</span> out ${outStr} cal · ` +
     `net ${fmt(Math.round(inKcal - outKcal))}${w}` });
 }
 
