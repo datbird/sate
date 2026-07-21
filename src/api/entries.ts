@@ -134,10 +134,23 @@ async function estimateFoodText(
   platform: Platform,
   instance: DataStore,
   text: string,
+  opts: { deep?: boolean } = {},
 ): Promise<{ est: NutritionResult; provider: string; model: string; coverageOk: boolean }> {
   const g = await foodGrounding(platform, text);
   const { provider, model } = await resolveDefaultModel(platform, "ai");
-  const est = await estimateNutrition(platform, { provider, model, text, known: g.reference });
+  // Deep mode ("Refine harder"): pull live web references and estimate from those — slower but more
+  // accurate, for when a quick best-guess (e.g. a Siri log) needs tightening up. Falls back to the
+  // plain KB-grounded estimate if the web pass fails.
+  let est: NutritionResult;
+  if (opts.deep) {
+    try {
+      est = await webLookup(platform, text, await sourcesHint(instance));
+    } catch {
+      est = await estimateNutrition(platform, { provider, model, text, known: g.reference });
+    }
+  } else {
+    est = await estimateNutrition(platform, { provider, model, text, known: g.reference });
+  }
   try {
     await foodsKb.upsertItems(instance, est.items);
   } catch {
@@ -698,12 +711,12 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
   app.post("/api/log/text", requireAI, async (c) => {
     const uid = getUid(c);
     await ensureProfile(platform, uid, getEmail(c));
-    const b = (await c.req.json().catch(() => ({}))) as { text?: string; logged_at?: string; tz_offset_min?: number };
+    const b = (await c.req.json().catch(() => ({}))) as { text?: string; logged_at?: string; tz_offset_min?: number; deep?: boolean };
     const text = String(b.text || "").trim();
     if (!text) return err(c, "text is required", 400);
     const store = platform.data.forUser(uid);
     try {
-      const { est, provider, model, coverageOk } = await estimateFoodText(platform, instance, text);
+      const { est, provider, model, coverageOk } = await estimateFoodText(platform, instance, text, { deep: !!b.deep });
       const logged_at = b.logged_at ? new Date(b.logged_at).toISOString() : new Date().toISOString();
       const tz = num(b.tz_offset_min);
       const day = dayKey(logged_at, tz);
@@ -1332,7 +1345,7 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
           kcal = Math.round(t.kcal_burned);
           source = "activity_ai";
         } else {
-          const { est } = await estimateFoodText(platform, instance, text);
+          const { est } = await estimateFoodText(platform, instance, text, { deep: !!b.deep });
           description = text;
           items = foodItemsOf(est.items) as any[];
           kcal = num(est.total.kcal);
