@@ -270,6 +270,13 @@ export function sheet(opts = {}) {
   if (opts.title) root.appendChild(el("h3", { text: opts.title }));
   const bodyEl = el("div", { class: "sheet-body" });
   root.appendChild(bodyEl);
+  // Optional pinned footer: the body scrolls, this bar (e.g. a Save button) stays put at the bottom.
+  let footEl = null;
+  if (opts.footer !== undefined) {
+    root.classList.add("sheet-hasfoot");
+    footEl = el("div", { class: "sheet-foot" });
+    root.appendChild(footEl);
+  }
 
   const ctrl = {
     root, body: bodyEl,
@@ -290,6 +297,7 @@ export function sheet(opts = {}) {
   host.appendChild(bg);
   host.appendChild(root);
   if (opts.body !== undefined) ctrl.setBody(opts.body);
+  if (footEl) setContent(footEl, opts.footer);
   syncScrollLock();
   return ctrl;
 }

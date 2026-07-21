@@ -25,6 +25,7 @@ import "./views/foodsearch.js";
 import "./views/editentry.js";
 import "./views/weight.js";
 import "./views/goals.js";
+import "./views/settings.js";
 import "./views/onboarding.js";
 import "./views/register.js";
 import "./views/upgrade.js";
