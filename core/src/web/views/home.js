@@ -81,7 +81,7 @@ function renderStats(s) {
     const caption = burnGoal ? "of " + fmt(burnGoal) + " cal" : "cal burned";
     const extra = `<div class="kpis"><div class="kpi"><b>${fmt(out.minutes)}</b><span>active min</span></div>` +
       `<div class="kpi"><b>${fmt(out.workouts)}</b><span>workouts</span></div></div>`;
-    body.appendChild(ringEl(out.kcal, caption, pct, RC.activity, extra));
+    body.appendChild(ringEl(out.kcal, caption, pct, RC.activity, extra, "a"));
     if (HOME.chart === "hybrid" && actSeries.length > 1) body.appendChild(sparkBars(actSeries));
     const netMsg = (M.net_exercise && s.net_exercise !== false)
       ? "Exercise calories are added to your daily budget."

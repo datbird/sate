@@ -82,6 +82,7 @@ export async function ensureProfile(platform: Platform, uid: string, email?: str
     show_weight_in_feed: false,
     health_sync: false,
     health_sync_interval: 1440,
+    health_write: false,
     hr_estimate_method: "formula",
     checkin_enabled: false,
     checkin_freq: "daily",

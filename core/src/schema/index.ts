@@ -207,6 +207,7 @@ export const Profile = z.object({
   health_sync: z.boolean().default(false),
   health_synced_at: z.string().optional(),
   health_sync_interval: z.number().default(1440), // minutes between launch auto-syncs (0 = every launch)
+  health_write: z.boolean().default(false), // opt-in: write manual weigh-ins back to Apple Health
   // Body-weight source + last body-mass sync.
   weight_source: z.string().optional(), // ""|manual|health
   weight_synced_at: z.string().optional(),

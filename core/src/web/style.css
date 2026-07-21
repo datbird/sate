@@ -165,8 +165,10 @@ main { max-width: 620px; margin: 0 auto; padding: 16px 14px 40px; }
   width: 76px; height: 76px; border-radius: 50%; background: var(--card);
   display: grid; place-items: center; text-align: center;
 }
-.ring-inner strong { font-size: 22px; }
+.ring-inner strong { font-size: 22px; line-height: 1.05; }
 .ring-inner small { color: var(--muted); font-size: 11px; }
+.ring-inner .ring-ico { display: inline-flex; width: 16px; height: 16px; margin-bottom: 1px; opacity: .92; }
+.ring-inner .ring-ico svg { width: 16px; height: 16px; }
 .macros { display: flex; gap: 14px; flex: 1; flex-wrap: wrap; }
 .macro { font-size: 13px; }
 .macro b { display: block; font-size: 17px; }
@@ -179,6 +181,7 @@ main { max-width: 620px; margin: 0 auto; padding: 16px 14px 40px; }
 .trir-leg { display: flex; align-items: center; gap: 9px; }
 .trir-ico { display: inline-flex; width: 19px; height: 19px; flex: none; }
 .trir-ico svg { width: 19px; height: 19px; }
+.trir-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .trir-ll { color: var(--muted); font-size: 13.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .trir-val { flex: none; text-align: right; line-height: 1.15; font-variant-numeric: tabular-nums; }
 .trir-val b { font-size: 16px; }

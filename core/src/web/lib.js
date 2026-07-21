@@ -514,6 +514,13 @@ export function dayDivider(iso) {
 //     days=1 — scales per-day goals to the window (a week's sum vs a week's goal),
 //     netBurn=0 — exercise kcal added to the budget (only applied when the ring tracks kcal),
 //     rc — ring color (defaults RC.nutrition) }
+// Small type icon for the CENTER of a single-scope ring (nutrition/activity/weight), tinted with the
+// ring's accent. `key` is 'n'|'a'|'w'; returns "" when absent so callers can pass through unchanged.
+function ringCenterIcon(key, color) {
+  if (!key || !TICON[key]) return "";
+  return `<span class="ring-ico" style="color:${color}">${TICON[key]}</span>`;
+}
+
 export function statRing(totals, goals = {}, opts = {}) {
   const mode = opts.mode || modeOf();
   const days = opts.days || 1;
@@ -531,7 +538,7 @@ export function statRing(totals, goals = {}, opts = {}) {
   }).join("");
   return htmlToEl(
     `<div class="ring-card"><div class="ring" style="--pct:${pct.toFixed(1)};--rc:${rc}">` +
-    `<div class="ring-inner"><strong>${fmt(val)}</strong><small>${esc(sub)}</small></div></div>` +
+    `<div class="ring-inner">${ringCenterIcon(opts.iconKey || "n", rc)}<strong>${fmt(val)}</strong><small>${esc(sub)}</small></div></div>` +
     `<div class="macros">${macros}${opts.extraTiles || ""}</div></div>`,
   );
 }
@@ -567,33 +574,57 @@ export function weightRingCard(currentLb, g) {
   }
   return htmlToEl(
     `<div class="ring-card"><div class="ring" style="--pct:${pct.toFixed(1)};--rc:var(--weight)">` +
-    `<div class="ring-inner"><strong>${fmt(currentLb)}</strong><small>${esc(small)}</small></div></div>` +
+    `<div class="ring-inner">${ringCenterIcon("w", "var(--weight)")}<strong>${fmt(currentLb)}</strong><small>${esc(small)}</small></div></div>` +
     `<div class="macros">${tiles}</div></div>`,
   );
 }
 
-// Apple-Watch-style concentric progress rings, coloured with the three log-type accents. `rings` is
-// outer→inner: [{ pct: 0-1, color }]. Each ring has a faint full track + a rounded progress arc that
-// starts at 12 o'clock and sweeps clockwise. Handles 2 or 3 rings.
+// Apple-Watch-style hero: two fat concentric progress rings + a filled inner PIE, coloured with the
+// three log-type accents. `rings` outer→inner: [{ pct:0-1, color, key }]. Each ring/pie starts at
+// 12 o'clock and sweeps clockwise; a card-cut icon marker sits at each start, so the three type icons
+// stack vertically down the top. Same overall footprint as before, just fatter bands.
 export function tripleRing(rings) {
-  const S = 118, c = S / 2, sw = 9, gap = 3.5;
-  const radii = [c - sw / 2 - 2];
-  for (let i = 1; i < rings.length; i++) radii.push(radii[i - 1] - sw - gap);
+  const S = 118, c = S / 2, sw = 13, gap = 3;
+  const r1 = S / 2 - sw / 2 - 2;      // outer ring centerline
+  const r2 = r1 - sw - gap;           // middle ring centerline
+  const pieR = r2 - sw / 2 - gap;     // inner pie radius — fills the center up to inside the mid ring
+  const clamp = (p) => Math.max(0, Math.min(1, p || 0));
+  const arc = (rad, color, pct) => {
+    const C = 2 * Math.PI * rad, dash = (C * clamp(pct)).toFixed(2);
+    return `<circle cx="${c}" cy="${c}" r="${rad.toFixed(2)}" fill="none" stroke="${color}" stroke-opacity=".15" stroke-width="${sw}"/>` +
+      `<circle cx="${c}" cy="${c}" r="${rad.toFixed(2)}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-dasharray="${dash} ${(C + 1).toFixed(2)}" transform="rotate(-90 ${c} ${c})"/>`;
+  };
+  const pie = (rad, color, pct) => {
+    const p = clamp(pct);
+    const bg = `<circle cx="${c}" cy="${c}" r="${rad.toFixed(2)}" fill="${color}" fill-opacity=".15"/>`;
+    if (p <= 0) return bg;
+    if (p >= 0.999) return bg + `<circle cx="${c}" cy="${c}" r="${rad.toFixed(2)}" fill="${color}"/>`;
+    const a = -Math.PI / 2 + p * 2 * Math.PI;
+    const x = (c + rad * Math.cos(a)).toFixed(2), y = (c + rad * Math.sin(a)).toFixed(2), big = p > 0.5 ? 1 : 0;
+    return bg + `<path d="M${c} ${c} L${c} ${(c - rad).toFixed(2)} A${rad.toFixed(2)} ${rad.toFixed(2)} 0 ${big} 1 ${x} ${y} Z" fill="${color}"/>`;
+  };
+  const marker = (rad, color, key) => {
+    const y = c - rad, inner = (TICON[key] || "").replace(/<svg[^>]*>/, "").replace(/<\/svg>/, "");
+    return `<circle cx="${c}" cy="${y.toFixed(2)}" r="7.8" fill="var(--card)"/>` +
+      `<g transform="translate(${(c - 5.6).toFixed(2)} ${(y - 5.6).toFixed(2)}) scale(0.467)" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${inner}</g>`;
+  };
   let svg = `<svg class="trir" viewBox="0 0 ${S} ${S}" width="${S}" height="${S}" aria-hidden="true">`;
-  rings.forEach((r, i) => {
-    const rad = radii[i], C = 2 * Math.PI * rad;
-    const dash = (C * Math.max(0, Math.min(1, r.pct || 0))).toFixed(2);
-    svg += `<circle cx="${c}" cy="${c}" r="${rad.toFixed(2)}" fill="none" stroke="${r.color}" stroke-opacity=".16" stroke-width="${sw}"/>`;
-    svg += `<circle cx="${c}" cy="${c}" r="${rad.toFixed(2)}" fill="none" stroke="${r.color}" stroke-width="${sw}" stroke-linecap="round" stroke-dasharray="${dash} ${(C + 1).toFixed(2)}" transform="rotate(-90 ${c} ${c})"/>`;
-  });
+  if (rings[0]) svg += arc(r1, rings[0].color, rings[0].pct);
+  if (rings[1]) svg += arc(r2, rings[1].color, rings[1].pct);
+  if (rings[2]) svg += pie(pieR, rings[2].color, rings[2].pct);
+  // Icon markers on top, stacked down the 12 o'clock line (outer → mid → pie).
+  if (rings[0]) svg += marker(r1, rings[0].color, rings[0].key);
+  if (rings[1]) svg += marker(r2, rings[1].color, rings[1].key);
+  // The pie has no "ring start" to sit on; nudge its icon just inside the pie so the marker's top
+  // edge kisses the pie's top edge, clear of the activity marker above it.
+  if (rings[2]) svg += marker(pieR - 6, rings[2].color, rings[2].key);
   return svg + "</svg>";
 }
 
-// The 3-ring hero card for the All view: the concentric rings + a legend row per metric (type icon in
-// its accent colour, label, value / goal). `items` outer→inner: [{ key:'n'|'a'|'w', color, label,
-// value, goal, unit, pct }].
+// The 3-ring hero card for the All view: the rings/pie + a legend row per metric (colour dot, label,
+// value / goal, %). `items` outer→inner: [{ key:'n'|'a'|'w', color, label, value, goal, unit, pct }].
 export function tripleRingCard(items) {
-  const svg = tripleRing(items.map((it) => ({ pct: it.pct, color: it.color })));
+  const svg = tripleRing(items.map((it) => ({ pct: it.pct, color: it.color, key: it.key })));
   const legend = items.map((it) => {
     const pctTxt = it.goal ? Math.round(Math.max(0, Math.min(1, it.pct || 0)) * 100) + "%" : "";
     const goalTxt = it.goal ? ` <span class="trir-goal">/ ${fmt(it.goal)}${it.unit ? " " + esc(it.unit) : ""}</span>` : (it.unit ? ` <span class="trir-goal">${esc(it.unit)}</span>` : "");
@@ -605,10 +636,11 @@ export function tripleRingCard(items) {
 }
 
 // A bare ring (single number + caption + percent), for activity/weight cards that aren't macro-based.
-export function ringEl(value, caption, pct, rc = RC.nutrition, extraHtml = "") {
+// `iconKey` ('n'|'a'|'w') drops that type's icon into the ring center, tinted with the accent.
+export function ringEl(value, caption, pct, rc = RC.nutrition, extraHtml = "", iconKey = "") {
   return htmlToEl(
     `<div class="ring-card"><div class="ring" style="--pct:${Number(pct) || 0};--rc:${rc}">` +
-    `<div class="ring-inner"><strong>${fmt(value)}</strong><small>${esc(caption)}</small></div></div>` +
+    `<div class="ring-inner">${ringCenterIcon(iconKey, rc)}<strong>${fmt(value)}</strong><small>${esc(caption)}</small></div></div>` +
     (extraHtml || "") + `</div>`,
   );
 }
