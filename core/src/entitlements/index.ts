@@ -27,6 +27,7 @@ interface FlagResponse {
 interface EntitlementResponse {
   email: string;
   skus: string[];
+  permanent?: string[]; // non-expiring skus (permanent grants ∪ group skus); omitted by older planes
   expiring?: Record<string, string>; // sku → ISO expiry (active trials/subscriptions)
 }
 
@@ -150,14 +151,18 @@ export async function provisionTrial(platform: Platform, email: string, sku: str
 export async function getEntitlements(
   platform: Platform,
   email: string,
-): Promise<{ skus: string[]; expiring: Record<string, string>; ok: boolean }> {
+): Promise<{ skus: string[]; permanent: string[]; expiring: Record<string, string>; ok: boolean }> {
   const cfg = await planeConfig(platform.secrets, platform.identity);
-  if (!cfg) return { skus: [], expiring: {}, ok: false };
+  if (!cfg) return { skus: [], permanent: [], expiring: {}, ok: false };
   try {
     const ent = await fetchEntitlements(cfg, email);
-    return { skus: ent.skus || [], expiring: ent.expiring || {}, ok: true };
+    // `permanent` = non-expiring skus (direct permanent grants ∪ group skus). Authoritative for
+    // "no trial/upgrade nag": a sku can be in BOTH `skus` and `expiring` when a paid grant sits over
+    // a still-live trial for it, so the mere absence of an expiry is NOT proof of permanence. Older
+    // plane builds omit this field → fall back to [] and the client keeps its expiry-based heuristic.
+    return { skus: ent.skus || [], permanent: ent.permanent || [], expiring: ent.expiring || {}, ok: true };
   } catch {
-    return { skus: [], expiring: {}, ok: false };
+    return { skus: [], permanent: [], expiring: {}, ok: false };
   }
 }
 
