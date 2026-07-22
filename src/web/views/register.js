@@ -21,7 +21,7 @@
 
 import {
   $, $$, el, esc, api, toast, me, refreshMe, showView, openView,
-  registerView, permanentAccess, accessLabel,
+  registerView, permanentAccess, accessNote,
 } from "../lib.js";
 
 // The dynamically-created full-screen .onboard element (null when closed), the current pick, and the
@@ -64,7 +64,6 @@ function draw() {
   // "30-day free trial" is wrong and alarming — it reads as though their access is about to lapse.
   // Tell them what they have instead, and drop the trial pitch from the card and the CTA.
   const perm = permanentAccess();
-  const label = accessLabel();
 
   body.innerHTML =
     `<h2 style="text-align:center;margin-top:6px">Welcome to ${esc(app)}</h2>` +
@@ -80,9 +79,7 @@ function draw() {
         '<span class="plan-desc">For tinkerers: run your own Docker instance and bring your own AI provider keys. Full control — but you operate and maintain it.</span>' +
       '</button>' +
     '</div>' +
-    (hostedOn && perm
-      ? `<div class="trial-banner">✨ You’re on <b>${esc(label)}</b> — everything’s already unlocked, with no trial and no card. Enjoy!</div>`
-      : '') +
+    (hostedOn && perm ? `<div class="trial-banner">✨ ${accessNote()}</div>` : '') +
     (hostedOn && !perm
       ? '<div class="trial-banner">✨ Your 30-day free trial starts now — no card required. AI coaching, food search, and proactive check-ins all included.</div>'
       : '') +
