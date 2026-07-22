@@ -143,14 +143,21 @@ export async function provisionTrial(platform: Platform, email: string, sku: str
 }
 
 /** Effective entitlements for the UI: { skus, expiring{sku→ISO} }. Empty when unconfigured. */
-export async function getEntitlements(platform: Platform, email: string): Promise<{ skus: string[]; expiring: Record<string, string> }> {
+// `ok` distinguishes "this user genuinely holds nothing" from "we could not reach the plane". Both
+// return empty skus, and callers that make a GRANTING decision must not treat the second as the
+// first — an unreachable plane would otherwise look like a brand-new user and earn a trial the
+// account may not need. Read-only callers (feature gates, /api/me) can ignore it.
+export async function getEntitlements(
+  platform: Platform,
+  email: string,
+): Promise<{ skus: string[]; expiring: Record<string, string>; ok: boolean }> {
   const cfg = await planeConfig(platform.secrets, platform.identity);
-  if (!cfg) return { skus: [], expiring: {} };
+  if (!cfg) return { skus: [], expiring: {}, ok: false };
   try {
     const ent = await fetchEntitlements(cfg, email);
-    return { skus: ent.skus || [], expiring: ent.expiring || {} };
+    return { skus: ent.skus || [], expiring: ent.expiring || {}, ok: true };
   } catch {
-    return { skus: [], expiring: {} };
+    return { skus: [], expiring: {}, ok: false };
   }
 }
 

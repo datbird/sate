@@ -33,17 +33,29 @@ async function setEdition(platform: Platform, uid: string, email: string, editio
   // a non-expiring paid grant. Handing them a 30-day trial is worse than pointless: it writes an
   // `expiring.<sku>` date onto an account that never expires, which every trial-shaped piece of UI
   // then reads as "your access ends on…". That is what put a family member on a 30-day countdown.
-  const existing = email ? await getEntitlements(platform, email) : { skus: [], expiring: {} };
+  // `skus` is the plane's FOLDED set, so a sku inherited from a group (e.g. friends_and_family via
+  // the friendsnfamily group) counts here exactly like a direct grant — which is the common case for
+  // family members.
+  const existing = email
+    ? await getEntitlements(platform, email)
+    : { skus: [], expiring: {}, ok: false };
   const permanent =
     existing.skus.includes("god") ||
     existing.skus.includes("friends_and_family") ||
     (existing.skus.includes(EDITION_SKU[edition]) && !existing.expiring?.[EDITION_SKU[edition]]);
 
+  // If the plane could not be read we do NOT know whether this user already has permanent access, and
+  // an unreachable plane looks identical to a brand-new user. Granting on that guess is what puts a
+  // phantom expiry on a friends-and-family account, so hold off instead: the grant is recoverable
+  // (the plane's /trial is idempotent per email+sku and re-runs on the next edition change), whereas
+  // a wrong expiry date has to be cleaned out of the control plane by hand.
   const trial = !email
     ? { ok: false, reason: "no-email" }
     : permanent
       ? { ok: true, granted: false, reason: "permanent-access" }
-      : await provisionTrial(platform, email, EDITION_SKU[edition], 30);
+      : !existing.ok
+        ? { ok: false, granted: false, reason: "entitlements-unavailable" }
+        : await provisionTrial(platform, email, EDITION_SKU[edition], 30);
 
   // Re-read only when a grant actually happened, so the response reflects the new trial.
   const entitlements = email && trial.granted !== false ? await getEntitlements(platform, email) : existing;
