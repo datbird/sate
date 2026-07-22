@@ -89,62 +89,23 @@ const SCAFFOLD = `
     <div class="row end"><button class="primary" id="saveInstance">Save instance settings</button></div>
     <div class="meta" id="instanceMeta"></div>
   </div>
-  <h3 class="section">Database</h3>
-  <p class="hint">The raw PocketBase dashboard — collections, records, logs, backups, and server settings. Full database access; separate superuser login (kept out of this app). Behind Cloudflare Access.</p>
-  <div class="card">
-    <a class="menu-item dblink" href="/_/" target="_blank" rel="noopener">Open PocketBase dashboard ↗</a>
-  </div>
+  <!--
+    NO Database / Backup & Sync / Local file backups sections here — deliberately.
 
-  <h3 class="section">Backup &amp; Sync</h3>
-  <p class="hint">Push point-in-time snapshots of this instance's data to an <b>external</b> PocketBase or Firebase, and restore from one. This is off-box backup, not a live mirror. Credentials are encrypted at rest.</p>
-  <div class="card" id="backupCard">
-    <label class="field">Destination
-      <select id="bkType">
-        <option value="">— none —</option>
-        <option value="pocketbase">External PocketBase</option>
-        <option value="firebase">Firebase (Firestore)</option>
-      </select>
-    </label>
-    <div id="bkPb" hidden>
-      <label class="field">PocketBase URL <input type="text" id="bkPbUrl" placeholder="https://pb.example.com" /></label>
-      <label class="field">Superuser email <input type="email" id="bkPbEmail" autocomplete="off" /></label>
-      <label class="field">Superuser password <input type="password" id="bkPbPass" autocomplete="new-password" placeholder="leave blank to keep" /></label>
-    </div>
-    <div id="bkFb" hidden>
-      <label class="field">Firebase project id <input type="text" id="bkFbProject" /></label>
-      <label class="field">Web API key <input type="password" id="bkFbKey" autocomplete="off" placeholder="leave blank to keep" /></label>
-      <label class="field">Auth email <input type="email" id="bkFbEmail" autocomplete="off" /></label>
-      <label class="field">Auth password <input type="password" id="bkFbPass" autocomplete="new-password" placeholder="leave blank to keep" /></label>
-      <p class="hint">Uses a Firebase Auth user + Firestore. Snapshots write to a <code>sate_snapshots</code> collection; that user's rules must allow it. Each snapshot is capped at 1&nbsp;MB by Firestore.</p>
-    </div>
-    <label class="checkrow"><input type="checkbox" id="bkAuto"> <span>Nightly scheduled backup<small>A full snapshot is pushed once a day (03:30 UTC).</small></span></label>
-    <label class="checkrow"><input type="checkbox" id="bkLive"> <span>Live sync<small>Mirror every change to the destination continuously — the remote stays a near-live replica. Survives outages (changes queue and catch up).</small></span></label>
-    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:6px">
-      <button class="primary small" id="bkSave">Save</button>
-      <button class="link" id="bkTest">Test connection</button>
-      <button class="link" id="bkNow">Back up now</button>
-      <button class="link" id="bkRefresh">Refresh list</button>
-    </div>
-    <div class="meta" id="bkStatus"></div>
-    <div id="bkList"></div>
-    <div id="bkMirror" hidden style="margin-top:8px">
-      <button class="link danger" id="bkRestoreMirror">Restore from live mirror (latest state)</button>
-    </div>
-  </div>
+    They were ported from the PocketBase SPA (pb_public) along with the rest of this panel, but
+    their backend never came with them: core/src/api/admin.ts has no /admin/backup* routes, and
+    the whole subsystem is still PocketBase-shaped (pb_hooks/backup.js — superuser auth, a
+    sate_snapshots collection, app.createBackup() zips written to /pb/pb_data/backups).
 
-  <h3 class="section">Local file backups</h3>
-  <p class="hint">Write a full-database <b>.zip</b> to a path inside the container — nightly and/or on demand. Default is <code>/pb/pb_data/backups</code>, which is on your mounted appdata, so the zips appear on the host automatically.</p>
-  <div class="card" id="localBackupCard">
-    <label class="checkrow"><input type="checkbox" id="lbEnabled"> <span>Nightly local backup<small>A full-DB zip is written at 03:30 UTC.</small></span></label>
-    <label class="field">Backup directory (in container) <input type="text" id="lbDir" placeholder="/pb/pb_data/backups" /></label>
-    <label class="field">Keep last N <input type="number" id="lbKeep" min="1" max="365" placeholder="14" /></label>
-    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:6px">
-      <button class="primary small" id="lbSave">Save</button>
-      <button class="link" id="lbNow">Back up to file now</button>
-    </div>
-    <div class="meta" id="lbStatus"></div>
-    <div id="lbList"></div>
-  </div>
+    None of that maps onto the Cloud edition, which is the only consumer of this view today:
+    Firestore has no PocketBase dashboard to link to, and Cloud Run's filesystem is ephemeral so a
+    zip written "to the container" would vanish. Rendering them meant an admin saw three sections
+    that could not work, and loadAdmin() fired a 404 on /admin/backup on every open.
+
+    If Cloud ever wants a backup story it should be designed for its own stack (Firestore
+    scheduled exports / PITR, which are managed at the GCP level), not by porting these routes.
+    The Hosted edition keeps the working implementation in pb_hooks/backup.js + pb_public.
+  -->
 </div>
 
 <div class="admin-sect" data-group="ai">
@@ -356,7 +317,6 @@ async function loadAdmin() {
     loadAiLimits();
     loadAiUsage();
     loadAiPrices();
-    loadBackup();
   } catch (e) {
     toast("Couldn’t load admin: " + e.message);
   }
@@ -390,86 +350,6 @@ async function saveInstance() {
     document.title = payload.app_name + " — calorie chat";
     $("#brandName").textContent = payload.app_name;
     toast("Instance settings saved");
-  } catch (e) { toast(e.message); }
-}
-
-// ============================================================ external backup / sync
-function bkTypeToggle() {
-  const t = $("#bkType").value;
-  $("#bkPb").hidden = t !== "pocketbase";
-  $("#bkFb").hidden = t !== "firebase";
-}
-async function loadBackup() {
-  const card = $("#backupCard"); if (!card) return;
-  let c;
-  try { c = await adm("/backup"); } catch (e) { $("#bkStatus").textContent = e.message; return; }
-  $("#bkType").value = c.type || "";
-  $("#bkPbUrl").value = c.pb.url || ""; $("#bkPbEmail").value = c.pb.email || "";
-  $("#bkPbPass").placeholder = c.pb.password_set ? "•••••• (saved)" : "password";
-  $("#bkFbProject").value = c.fb.project || ""; $("#bkFbEmail").value = c.fb.email || "";
-  $("#bkFbKey").placeholder = c.fb.api_key_set ? "•••••• (saved)" : "web API key";
-  $("#bkFbPass").placeholder = c.fb.password_set ? "•••••• (saved)" : "password";
-  $("#bkAuto").checked = !!c.auto;
-  $("#bkLive").checked = !!c.sync_live;
-  bkTypeToggle();
-  const bits = [];
-  if (c.last_at) bits.push(`<span class="badge">last backup ${esc(c.last_at.slice(0, 16).replace("T", " "))} — ${esc(c.last_status || "")}</span>`);
-  if (c.sync_live) bits.push(`<span class="badge">live sync ${c.sync_queued ? "· " + c.sync_queued + " queued" : "· up to date"}${c.sync_last_at ? " · " + esc(c.sync_last_at.slice(11, 16)) : ""}</span>`);
-  $("#bkStatus").innerHTML = bits.length ? bits.join(" ") : '<span class="muted">No backup yet.</span>';
-  $("#bkMirror").hidden = !(c.type && c.sync_live);
-  if (c.type) renderBackupList();
-  else $("#bkList").innerHTML = "";
-  // Local file backups
-  const L = c.local || {};
-  if ($("#lbEnabled")) {
-    $("#lbEnabled").checked = !!L.enabled;
-    $("#lbDir").value = L.dir || "";
-    $("#lbKeep").value = L.keep || 14;
-    $("#lbStatus").innerHTML = L.last_at
-      ? `<span class="badge">last file backup ${esc(L.last_at.slice(0, 16).replace("T", " "))}</span>`
-      : '<span class="muted">No file backup yet.</span>';
-    const files = L.files || [];
-    $("#lbList").innerHTML = files.length
-      ? files.map((f) => `<div class="snaprow"><span class="snapmeta">${esc(f.name)} <span class="muted">${fmtBytes(f.size)}</span></span></div>`).join("")
-      : '<p class="muted" style="margin:8px 0">No backup files in that directory.</p>';
-  }
-}
-function fmtBytes(n) { n = +n || 0; return n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB"; }
-function backupPayload() {
-  return {
-    type: $("#bkType").value,
-    auto: $("#bkAuto").checked,
-    sync_live: $("#bkLive").checked,
-    pb: { url: $("#bkPbUrl").value.trim(), email: $("#bkPbEmail").value.trim(), password: $("#bkPbPass").value },
-    fb: { project: $("#bkFbProject").value.trim(), email: $("#bkFbEmail").value.trim(), api_key: $("#bkFbKey").value, password: $("#bkFbPass").value },
-    local: { enabled: $("#lbEnabled").checked, dir: $("#lbDir").value.trim(), keep: +$("#lbKeep").value || 14 },
-  };
-}
-async function renderBackupList() {
-  const wrap = $("#bkList"); wrap.innerHTML = '<p class="muted" style="margin:8px 0">Loading snapshots…</p>';
-  let snaps = [];
-  try { snaps = (await adm("/backup/list")).snapshots || []; }
-  catch (e) { wrap.innerHTML = `<p class="hint">${esc(e.message)}</p>`; return; }
-  if (!snaps.length) { wrap.innerHTML = '<p class="muted" style="margin:8px 0">No snapshots on the destination yet.</p>'; return; }
-  wrap.innerHTML = "";
-  snaps.forEach((s) => {
-    const btn = el("button", { class: "link danger", onClick: () => restoreSnapshot(s) }, "Restore");
-    const row = el("div", { class: "snaprow", html: `<span class="snapmeta"><b>${esc((s.created || "").slice(0, 16).replace("T", " "))}</b> <span class="muted">${esc(s.label || s.id)}</span></span>` });
-    row.appendChild(btn);
-    wrap.appendChild(row);
-  });
-}
-async function restoreSnapshot(s) {
-  const ok = await confirmDialog(
-    "This REPLACES this instance's data (entries, profiles, foods, settings…) with the snapshot. It cannot be undone.",
-    { title: "Restore from " + (s.created || s.id) + "?", confirmLabel: "Restore", danger: true });
-  if (!ok) return;
-  toast("Restoring…");
-  try {
-    const r = await adm("/backup/restore", { method: "POST", json: { id: s.id } });
-    const total = Object.values(r.restored || {}).reduce((a, n) => a + n, 0);
-    toast("Restored " + total + " records. Reloading…");
-    setTimeout(() => location.reload(), 1200);
   } catch (e) { toast(e.message); }
 }
 
@@ -1267,30 +1147,6 @@ function wireStatic(root) {
   // Users
   $("#addAdminBtn").addEventListener("click", addAdmin);
 
-  // Backup & sync
-  const t = $("#bkType");
-  if (t) {
-    t.addEventListener("change", bkTypeToggle);
-    $("#bkSave").onclick = async () => { try { await adm("/backup", { method: "PUT", json: backupPayload() }); toast("Saved"); loadBackup(); } catch (e) { toast(e.message); } };
-    $("#bkTest").onclick = async () => { toast("Testing…"); try { await adm("/backup", { method: "PUT", json: backupPayload() }); await adm("/backup/test", { method: "POST" }); toast("Connection OK ✓"); } catch (e) { toast(e.message); } };
-    $("#bkNow").onclick = async () => { toast("Backing up…"); try { const r = await adm("/backup/run", { method: "POST" }); toast("Backed up " + r.records + " records ✓"); loadBackup(); } catch (e) { toast(e.message); } };
-    $("#bkRefresh").onclick = renderBackupList;
-    if ($("#lbSave")) $("#lbSave").onclick = async () => { try { await adm("/backup", { method: "PUT", json: backupPayload() }); toast("Saved"); loadBackup(); } catch (e) { toast(e.message); } };
-    if ($("#lbNow")) $("#lbNow").onclick = async () => { toast("Writing backup file…"); try { const r = await adm("/backup/local-now", { method: "POST" }); toast("Wrote " + r.name); loadBackup(); } catch (e) { toast(e.message); } };
-    $("#bkRestoreMirror").onclick = async () => {
-      const ok = await confirmDialog(
-        "This REPLACES local data with the remote's current state. It cannot be undone.",
-        { title: "Rebuild from the live remote mirror?", confirmLabel: "Restore", danger: true });
-      if (!ok) return;
-      toast("Restoring from mirror…");
-      try {
-        const r = await adm("/backup/restore-mirror", { method: "POST" });
-        const total = Object.values(r.restored || {}).reduce((a, n) => a + n, 0);
-        toast("Restored " + total + " records. Reloading…");
-        setTimeout(() => location.reload(), 1200);
-      } catch (e) { toast(e.message); }
-    };
-  }
   void root;
 }
 
