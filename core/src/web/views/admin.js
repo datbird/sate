@@ -64,9 +64,23 @@ let AS = null;          // first-run setup wizard state
 let _built = false;     // scaffold built into #view-admin once
 
 // ============================================================ scaffold markup
-// The full #view-admin inner markup, ported verbatim from pb_public/index.html (§view-admin). Built
-// once into the view container; every id below is unique in the document so the populate functions
+// The full #view-admin inner markup, ported from pb_public/index.html (§view-admin). Built once
+// into the view container; every id below is unique in the document so the populate functions
 // (which query by id, v1-style) resolve correctly.
+//
+// DELIBERATELY ABSENT from the Instance tab: the Database, Backup & Sync, and Local file backups
+// sections. They came over with the original port, but their backend did not — core/src/api/admin.ts
+// has no /admin/backup* routes, and the whole subsystem is still PocketBase-shaped
+// (pb_hooks/backup.js: superuser auth, a sate_snapshots collection, app.createBackup() zips under
+// /pb/pb_data/backups). None of it maps onto the Cloud edition, this view's only consumer today —
+// there is no PocketBase dashboard to link to, and Cloud Run's filesystem is ephemeral, so a zip
+// written "to the container" disappears with the revision. Shipping them meant an admin saw three
+// sections that could not work while loadAdmin() 404'd on /admin/backup at every open.
+//
+// If Cloud ever wants backups, build them on Firestore's own scheduled exports / PITR rather than
+// porting these routes. The Hosted edition keeps the working implementation in pb_hooks/backup.js
+// and pb_public. (Kept as a JS comment, not an HTML one — anything inside SCAFFOLD ships to the
+// browser in the panel markup.)
 const SCAFFOLD = `
 <div class="seg admin-tabs" id="adminTabs">
   <button class="on" type="button" data-group="ai">AI</button>
@@ -89,23 +103,6 @@ const SCAFFOLD = `
     <div class="row end"><button class="primary" id="saveInstance">Save instance settings</button></div>
     <div class="meta" id="instanceMeta"></div>
   </div>
-  <!--
-    NO Database / Backup & Sync / Local file backups sections here — deliberately.
-
-    They were ported from the PocketBase SPA (pb_public) along with the rest of this panel, but
-    their backend never came with them: core/src/api/admin.ts has no /admin/backup* routes, and
-    the whole subsystem is still PocketBase-shaped (pb_hooks/backup.js — superuser auth, a
-    sate_snapshots collection, app.createBackup() zips written to /pb/pb_data/backups).
-
-    None of that maps onto the Cloud edition, which is the only consumer of this view today:
-    Firestore has no PocketBase dashboard to link to, and Cloud Run's filesystem is ephemeral so a
-    zip written "to the container" would vanish. Rendering them meant an admin saw three sections
-    that could not work, and loadAdmin() fired a 404 on /admin/backup on every open.
-
-    If Cloud ever wants a backup story it should be designed for its own stack (Firestore
-    scheduled exports / PITR, which are managed at the GCP level), not by porting these routes.
-    The Hosted edition keeps the working implementation in pb_hooks/backup.js + pb_public.
-  -->
 </div>
 
 <div class="admin-sect" data-group="ai">
