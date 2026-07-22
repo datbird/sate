@@ -26,6 +26,10 @@ RUN case "$TARGETARCH" in \
 
 COPY pb_migrations /pb/pb_migrations
 COPY pb_hooks /pb/pb_hooks
+# Runtime-agnostic modules shared with the Cloud edition (nutrition math, AI prompts, barcode
+# normalization). Authored as goja-safe CommonJS in core/ so both editions execute the same code;
+# pb_hooks requires them from ${__hooks}/shared/.
+COPY core/src/shared /pb/pb_hooks/shared
 COPY pb_public /pb/pb_public
 COPY docker-entrypoint.sh /pb/entrypoint.sh
 RUN chmod +x /pb/entrypoint.sh
