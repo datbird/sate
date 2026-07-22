@@ -38,11 +38,17 @@ async function setEdition(platform: Platform, uid: string, email: string, editio
   // family members.
   const existing = email
     ? await getEntitlements(platform, email)
-    : { skus: [], expiring: {}, ok: false };
+    : { skus: [] as string[], permanent: [] as string[], expiring: {} as Record<string, string>, ok: false };
+  // Permanent iff a super-SKU, or the plane lists the edition's SKU as permanent (authoritative —
+  // not "present in skus but with no expiry", which a live trial would satisfy). Falls back to the
+  // expiry heuristic only if the plane omits `permanent` (older build).
+  const editionSku = EDITION_SKU[edition];
   const permanent =
     existing.skus.includes("god") ||
     existing.skus.includes("friends_and_family") ||
-    (existing.skus.includes(EDITION_SKU[edition]) && !existing.expiring?.[EDITION_SKU[edition]]);
+    (Array.isArray(existing.permanent)
+      ? existing.permanent.includes(editionSku)
+      : existing.skus.includes(editionSku) && !existing.expiring?.[editionSku]);
 
   // If the plane could not be read we do NOT know whether this user already has permanent access, and
   // an unreachable plane looks identical to a brand-new user. Granting on that guess is what puts a

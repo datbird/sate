@@ -206,14 +206,18 @@ export function hostedExpiry(m = me()) {
 // paid hosted grant. These users are entitled forever, so they must NEVER be shown a trial offer, a
 // trial countdown, a "trial ended — AI paused" nag, or an upgrade prompt.
 //
-// Registration provisions a 30-day sate_hosted trial for anyone who picks the hosted edition, which
-// includes god/f&f holders — so any check that keys off the sate_hosted *expiry* alone misfires for
-// them. Gate FEATURES on hasSku() (already god/f&f-aware); gate anything trial- or money-shaped on
-// this. Lives here rather than in a view so register.js and upgrade.js share one definition.
+// The plane's `permanent` list is authoritative: a sku can appear in BOTH `skus` and `expiring` when
+// a paid grant sits over a still-live trial for it (the trial→paid conversion), so "sate_hosted with
+// no expiry" is NOT a reliable test — it wrongly reads a just-upgraded customer as still on trial.
+// Trust `permanent` when the plane provides it; fall back to the old expiry heuristic only for older
+// planes that omit it. Gate FEATURES on hasSku() (already god/f&f-aware); gate anything trial- or
+// money-shaped on this. Lives here so register.js and upgrade.js share one definition.
 export function permanentAccess(m = me()) {
-  const skus = (m && m.entitlements && m.entitlements.skus) || [];
+  const ent = (m && m.entitlements) || {};
+  const skus = ent.skus || [];
   if (skus.includes("god") || skus.includes("friends_and_family")) return true;
-  return skus.includes("sate_hosted") && !hostedExpiry(m); // paid hosted with no expiry
+  if (Array.isArray(ent.permanent)) return ent.permanent.includes("sate_hosted");
+  return skus.includes("sate_hosted") && !hostedExpiry(m); // legacy fallback: no `permanent` field
 }
 // Short noun for how permanent access was granted — for menus/badges. null when not permanent.
 export function accessLabel(m = me()) {
