@@ -28,11 +28,26 @@ async function setEdition(platform: Platform, uid: string, email: string, editio
   }
   // Provision the chosen edition's trial. Idempotent server-side (one per email per sku). Entitlement
   // identity is the email; no-op when the plane/trial key isn't configured (self-host edition).
-  const trial = email
-    ? await provisionTrial(platform, email, EDITION_SKU[edition], 30)
-    : { ok: false, reason: "no-email" };
-  const entitlements = email ? await getEntitlements(platform, email) : { skus: [], expiring: {} };
-  return { edition, trial, entitlements };
+  //
+  // But NOT for users who already hold permanent access — the god / friends-and-family super-SKUs, or
+  // a non-expiring paid grant. Handing them a 30-day trial is worse than pointless: it writes an
+  // `expiring.<sku>` date onto an account that never expires, which every trial-shaped piece of UI
+  // then reads as "your access ends on…". That is what put a family member on a 30-day countdown.
+  const existing = email ? await getEntitlements(platform, email) : { skus: [], expiring: {} };
+  const permanent =
+    existing.skus.includes("god") ||
+    existing.skus.includes("friends_and_family") ||
+    (existing.skus.includes(EDITION_SKU[edition]) && !existing.expiring?.[EDITION_SKU[edition]]);
+
+  const trial = !email
+    ? { ok: false, reason: "no-email" }
+    : permanent
+      ? { ok: true, granted: false, reason: "permanent-access" }
+      : await provisionTrial(platform, email, EDITION_SKU[edition], 30);
+
+  // Re-read only when a grant actually happened, so the response reflects the new trial.
+  const entitlements = email && trial.granted !== false ? await getEntitlements(platform, email) : existing;
+  return { edition, trial, entitlements, permanent };
 }
 
 export async function registerAccount(app: App, deps: RouteDeps): Promise<void> {

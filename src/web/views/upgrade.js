@@ -16,7 +16,7 @@
 "use strict";
 
 import {
-  $, el, api, me, hasSku, refreshMe, toast, busy, safeUrl,
+  $, el, api, me, hasSku, hostedExpiry, permanentAccess, refreshMe, toast, busy, safeUrl,
   confirmDialog, registerView, onViewChange, sheet,
 } from "../lib.js";
 
@@ -40,11 +40,6 @@ const PLANS = [
 const DEFAULT_PLAN = "hosted_yearly";
 
 // ============================================================ entitlement helpers
-// The trial/paid expiry for the hosted SKU, if the plane reports one.
-function hostedExpiry(m = me()) {
-  const exp = m && m.entitlements && m.entitlements.expiring;
-  return (exp && exp.sate_hosted) || null;
-}
 // Whole days from now until an ISO instant (min 0). Rounds up so "expires later today" reads "1".
 function daysLeft(iso) {
   const ms = new Date(String(iso).replace(" ", "T")).getTime() - Date.now();
@@ -52,18 +47,6 @@ function daysLeft(iso) {
   return Math.max(0, Math.ceil(ms / 86400000));
 }
 const aiEntitled = () => hasSku("sate_hosted");
-
-// Permanent (non-trial) access — the god / friends-and-family super-SKUs, or a real non-expiring
-// paid hosted grant. These users are fully entitled forever, so they must NEVER see a trial
-// countdown, a "trial ended — AI paused" nag, or an upgrade prompt. (hasSku already folds god/f&f
-// into every feature-gate SKU check; this is specifically about suppressing the trial/upgrade UI,
-// which keys off the sate_hosted *expiry* and so misfired for permanent holders who also carry a
-// registration trial grant.)
-function permanentAccess(m = me()) {
-  const skus = (m && m.entitlements && m.entitlements.skus) || [];
-  if (skus.includes("god") || skus.includes("friends_and_family")) return true;
-  return skus.includes("sate_hosted") && !hostedExpiry(m); // paid hosted with no expiry
-}
 
 // ============================================================ actions
 // Start Stripe checkout for a plan and hand off to the returned URL. safeUrl() keeps the redirect to
