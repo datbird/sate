@@ -49,6 +49,7 @@ import {
 } from "../ai/index";
 import * as foodsKb from "../kb/foods";
 import * as activitiesKb from "../kb/activities";
+import { normUpc, barcodeVariants } from "../shared/barcode.js";
 
 // ---- small coercion helpers (mirror v1 num / string handling) -----------
 const str = (v: unknown): string => (v == null ? "" : String(v));
@@ -402,41 +403,8 @@ async function usageSummary(store: DataStore, providers: string[]) {
 // free (keyless) Open Food Facts lookup. The keyed nutrition chain (USDA/Nutritionix/FatSecret), the
 // identity chain (UPCitemdb/Go-UPC/Barcode Lookup) and the AI-estimate fallback remain on the consumer
 // /api/log/barcode route; they are NOT reproduced here (documented simplification).
-function normUpc(s: unknown): string {
-  return String(s || "").replace(/^0+/, "");
-}
-function upcACheck(b11: string): string {
-  let sum = 0;
-  for (let i = 0; i < 11; i++) sum += (i % 2 === 0 ? 3 : 1) * Number(b11[i] || 0);
-  return String((10 - (sum % 10)) % 10);
-}
-function upcEtoA(e: string): string | null {
-  let s = String(e || "");
-  let ns = "0";
-  if (s.length === 8) { ns = s[0]!; s = s.slice(1, 7); }
-  else if (s.length === 7) { ns = s[0]!; s = s.slice(1); }
-  else if (s.length !== 6) return null;
-  if (!/^\d{6}$/.test(s) || (ns !== "0" && ns !== "1")) return null;
-  const d = s.split("");
-  const last = d[5];
-  let b: string;
-  if (last === "0" || last === "1" || last === "2") b = ns + d[0] + d[1] + last + "0000" + d[2] + d[3] + d[4];
-  else if (last === "3") b = ns + d[0] + d[1] + d[2] + "00000" + d[3] + d[4];
-  else if (last === "4") b = ns + d[0] + d[1] + d[2] + d[3] + "00000" + d[4];
-  else b = ns + d[0] + d[1] + d[2] + d[3] + d[4] + "0000" + last;
-  return b + upcACheck(b);
-}
-function barcodeVariants(code: string): string[] {
-  const out: string[] = [];
-  const push = (c: string) => { if (c && /^\d{6,14}$/.test(c) && out.indexOf(c) < 0) out.push(c); };
-  push(code);
-  const a = upcEtoA(code);
-  if (a) { push(a); push("0" + a); }
-  if (code.length === 12) push("0" + code);
-  if (code.length === 13 && code[0] === "0") push(code.slice(1));
-  if (code.length === 14 && code.slice(0, 2) === "00") push(code.slice(2));
-  return out;
-}
+// normUpc / barcodeVariants now live in ../shared/barcode.js — imported at the top of this file
+// and shared verbatim with the Hosted (PocketBase) edition.
 interface BarcodeFood {
   name: string; brand: string; serving_desc: string; serving_g: number;
   kcal: number; protein: number; carbs: number; fat: number;
