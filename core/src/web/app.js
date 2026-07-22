@@ -11,7 +11,8 @@
 
 import {
   $, $$, api, getJSON, setToken, setUnauthorizedHandler, setMe, setRefreshMe, APP, me,
-  showView, openView, view, toast, hasSku, initPullToRefresh, refreshCurrentView,
+  showView, openView, view, toast, hasSku, permanentAccess, accessLabel,
+  initPullToRefresh, refreshCurrentView,
 } from "./lib.js";
 
 // Import every view for its registration side effect. Each module calls registerView(...) at import
@@ -232,9 +233,16 @@ function paintAccount(m) {
   $("#who").textContent = email;
   $("#menuEmail").textContent = email;
   $("#avatar").textContent = (email[0] || "?").toUpperCase();
-  // Hosted edition "just works" — show Upgrade only when the user is not on a paid hosted SKU.
+  // Hosted edition "just works", so there's nothing to sell someone whose access never expires —
+  // but stay visible and say WHAT they have. hasSku() folds god/friends_and_family into every SKU
+  // check, so the old `hidden = hasSku("sate_hosted")` hid this row from exactly the people who
+  // should be told they're on Friends & Family, leaving them with no acknowledgement anywhere.
   const up = $("#menuUpgrade");
-  if (up) up.hidden = hasSku("sate_hosted");
+  if (up) {
+    const perm = permanentAccess(m);
+    up.hidden = false;
+    up.textContent = perm ? `✨ ${accessLabel(m)}` : "Upgrade";
+  }
   // Admin console (operator only) — env-admin or profile role==admin, per /api/me.
   const ad = $("#menuAdmin");
   if (ad) ad.hidden = !(m.isAdmin || m.role === "admin");

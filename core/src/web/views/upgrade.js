@@ -16,7 +16,7 @@
 "use strict";
 
 import {
-  $, el, api, me, hasSku, hostedExpiry, permanentAccess, refreshMe, toast, busy, safeUrl,
+  $, el, api, me, hasSku, hostedExpiry, permanentAccess, accessNote, refreshMe, toast, busy, safeUrl,
   confirmDialog, registerView, onViewChange, sheet,
 } from "../lib.js";
 
@@ -95,12 +95,19 @@ function build(body, ctrl) {
   const exp = hostedExpiry(m);
 
   // ---- status line: full-access note, trial countdown, gated prompt, or active-plan note
+  // Permanent holders (god / friends-and-family / paid-forever) get an explicit acknowledgement of
+  // what they have — and nothing to buy. Rendering plan cards and a "Continue to checkout" button at
+  // someone whose access never expires is just confusing, so we stop here and keep only the
+  // switch-edition affordance below.
   if (permanentAccess(m)) {
-    body.appendChild(el("p", {
-      class: "hint", style: { margin: "0 0 12px" },
-      text: "You have full access — no plan needed.",
+    body.appendChild(el("div", {
+      class: "trial-banner", style: { margin: "0 0 14px" },
+      html: "✨ " + accessNote(m),
     }));
-  } else if (!entitled) {
+    appendEditionFooter(body, m, ctrl);
+    return;
+  }
+  if (!entitled) {
     body.appendChild(el("div", {
       class: "trial-banner", style: { borderColor: "var(--danger)", margin: "0 0 14px" },
       html: "<b>Your trial has ended.</b> AI features are paused until you upgrade — pick a plan below to turn them back on.",
@@ -149,7 +156,12 @@ function build(body, ctrl) {
   cont.addEventListener("click", () => checkout(selected));
   body.appendChild(cont);
 
-  // ---- switch-edition affordance (POST /api/edition) — offer the OTHER edition
+  appendEditionFooter(body, m, ctrl);
+}
+
+// The switch-edition affordance (POST /api/edition) — offers the OTHER edition. Shared by the
+// buy-a-plan path and the permanent-access path, which shows it without any plan cards.
+function appendEditionFooter(body, m, ctrl) {
   const otherEdition = (m.edition === "selfhost") ? "hosted" : "selfhost";
   const footer = el("div", { style: { marginTop: "16px", textAlign: "center" } },
     el("button", {
@@ -159,7 +171,7 @@ function build(body, ctrl) {
         : "Back to the Hosted edition",
       onClick: () => switchEdition(otherEdition, ctrl),
     }),
-    el("p", {
+    permanentAccess(m) ? null : el("p", {
       class: "hint", style: { margin: "8px 0 0" },
       text: "Plans renew automatically. Manage or cancel any time from your billing portal.",
     }),

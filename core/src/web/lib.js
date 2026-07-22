@@ -215,12 +215,24 @@ export function permanentAccess(m = me()) {
   if (skus.includes("god") || skus.includes("friends_and_family")) return true;
   return skus.includes("sate_hosted") && !hostedExpiry(m); // paid hosted with no expiry
 }
-// How that permanent access was granted, for user-facing copy. null when access is not permanent.
+// Short noun for how permanent access was granted — for menus/badges. null when not permanent.
 export function accessLabel(m = me()) {
   const skus = (m && m.entitlements && m.entitlements.skus) || [];
-  if (skus.includes("god")) return "full access";
+  if (skus.includes("god")) return "Full access";
   if (skus.includes("friends_and_family")) return "Friends & Family";
-  return permanentAccess(m) ? "an active plan" : null;
+  return permanentAccess(m) ? "Active plan" : null;
+}
+// One-sentence acknowledgement of permanent access, as trusted HTML (the only markup is our own
+// <b>). null when access is not permanent. Suppressing the trial nag is not enough on its own —
+// someone on Friends & Family should be TOLD that is what they have, rather than just silently
+// never being asked for money.
+export function accessNote(m = me()) {
+  const skus = (m && m.entitlements && m.entitlements.skus) || [];
+  if (skus.includes("friends_and_family")) {
+    return "You’re on <b>Friends &amp; Family</b> — everything’s unlocked, permanently. No trial, no card, nothing to renew. Enjoy!";
+  }
+  if (skus.includes("god")) return "You have <b>full access</b> — everything’s unlocked, permanently.";
+  return permanentAccess(m) ? "You’re on an <b>active plan</b> — everything’s unlocked." : null;
 }
 // app.js registers its /api/me re-fetcher here so any view can request a state refresh.
 let _refreshMe = async () => {};
