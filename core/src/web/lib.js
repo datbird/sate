@@ -197,6 +197,31 @@ export function hasSku(sku) {
   const skus = (APP.me && APP.me.entitlements && APP.me.entitlements.skus) || [];
   return skus.includes(sku) || skus.includes("god") || skus.includes("friends_and_family");
 }
+// The trial/paid expiry the plane reports for the hosted SKU, or null when the grant is permanent.
+export function hostedExpiry(m = me()) {
+  const exp = m && m.entitlements && m.entitlements.expiring;
+  return (exp && exp.sate_hosted) || null;
+}
+// Permanent (non-trial) access — the god / friends-and-family super-SKUs, or a real non-expiring
+// paid hosted grant. These users are entitled forever, so they must NEVER be shown a trial offer, a
+// trial countdown, a "trial ended — AI paused" nag, or an upgrade prompt.
+//
+// Registration provisions a 30-day sate_hosted trial for anyone who picks the hosted edition, which
+// includes god/f&f holders — so any check that keys off the sate_hosted *expiry* alone misfires for
+// them. Gate FEATURES on hasSku() (already god/f&f-aware); gate anything trial- or money-shaped on
+// this. Lives here rather than in a view so register.js and upgrade.js share one definition.
+export function permanentAccess(m = me()) {
+  const skus = (m && m.entitlements && m.entitlements.skus) || [];
+  if (skus.includes("god") || skus.includes("friends_and_family")) return true;
+  return skus.includes("sate_hosted") && !hostedExpiry(m); // paid hosted with no expiry
+}
+// How that permanent access was granted, for user-facing copy. null when access is not permanent.
+export function accessLabel(m = me()) {
+  const skus = (m && m.entitlements && m.entitlements.skus) || [];
+  if (skus.includes("god")) return "full access";
+  if (skus.includes("friends_and_family")) return "Friends & Family";
+  return permanentAccess(m) ? "an active plan" : null;
+}
 // app.js registers its /api/me re-fetcher here so any view can request a state refresh.
 let _refreshMe = async () => {};
 export function setRefreshMe(fn) { _refreshMe = fn || (async () => {}); }

@@ -21,7 +21,7 @@
 
 import {
   $, $$, el, esc, api, toast, me, refreshMe, showView, openView,
-  registerView,
+  registerView, permanentAccess, accessLabel,
 } from "../lib.js";
 
 // The dynamically-created full-screen .onboard element (null when closed), the current pick, and the
@@ -60,6 +60,11 @@ function draw() {
   const app = (me() && me().app_name) || "Sate";
   const hostedOn = sel === "hosted";
   const selfOn = sel === "selfhost";
+  // god / friends-and-family / paid-forever holders already have permanent access. Offering them a
+  // "30-day free trial" is wrong and alarming — it reads as though their access is about to lapse.
+  // Tell them what they have instead, and drop the trial pitch from the card and the CTA.
+  const perm = permanentAccess();
+  const label = accessLabel();
 
   body.innerHTML =
     `<h2 style="text-align:center;margin-top:6px">Welcome to ${esc(app)}</h2>` +
@@ -67,7 +72,7 @@ function draw() {
     '<div class="plan-cards">' +
       `<button type="button" class="plan-card${hostedOn ? " on" : ""}" data-ed="hosted">` +
         `<span class="plan-name">${esc(app)} Hosted <span class="plan-badge">Recommended</span></span>` +
-        '<span class="plan-price">Free for 30 days</span>' +
+        (perm ? '' : '<span class="plan-price">Free for 30 days</span>') +
         '<span class="plan-desc">AI just works — nothing to set up. Fully managed in the cloud, with automatic updates and your coach ready out of the box.</span>' +
       '</button>' +
       `<button type="button" class="plan-card${selfOn ? " on" : ""}" data-ed="selfhost">` +
@@ -75,14 +80,19 @@ function draw() {
         '<span class="plan-desc">For tinkerers: run your own Docker instance and bring your own AI provider keys. Full control — but you operate and maintain it.</span>' +
       '</button>' +
     '</div>' +
-    (hostedOn
+    (hostedOn && perm
+      ? `<div class="trial-banner">✨ You’re on <b>${esc(label)}</b> — everything’s already unlocked, with no trial and no card. Enjoy!</div>`
+      : '') +
+    (hostedOn && !perm
       ? '<div class="trial-banner">✨ Your 30-day free trial starts now — no card required. AI coaching, food search, and proactive check-ins all included.</div>'
       : '') +
     (selfOn
       ? '<div class="ob-warn"><b>Self-hosting is not the managed experience.</b> You’ll run the Sate Docker container yourself and supply your own AI provider keys (OpenAI, Gemini, etc.). There is no managed cloud, no automatic updates, and no built-in AI — it’s all on you.</div>'
       : '') +
     '<div class="ob-nav"><span></span>' +
-      `<button type="button" class="primary" id="regNext">${hostedOn ? "Start free trial" : "Continue with self-host"}</button>` +
+      `<button type="button" class="primary" id="regNext">${
+        selfOn ? "Continue with self-host" : perm ? "Get started" : "Start free trial"
+      }</button>` +
     '</div>';
 
   $$(".plan-card[data-ed]").forEach((b) => (b.onclick = () => { sel = b.dataset.ed; draw(); }));
