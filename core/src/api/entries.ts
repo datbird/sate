@@ -1382,6 +1382,20 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
       }
       if (intensity !== undefined) patch.intensity = intensity;
 
+      // Move the entry to a different date. The client sends a new logged_at (+ the tz it should
+      // bucket in); recompute the local-day bucket so the entry lands on the intended calendar day
+      // (same tz-aware rule as logging — see the "disappearing log" fix). Nutrition is untouched, so
+      // a date-only change never re-runs AI and never reclassifies source.
+      if (b.logged_at !== undefined) {
+        const ts = new Date(String(b.logged_at));
+        if (!isNaN(ts.getTime())) {
+          const tz = b.tz_offset_min !== undefined ? num(b.tz_offset_min) : num(rec.tz_offset_min);
+          patch.logged_at = ts.toISOString();
+          patch.tz_offset_min = tz;
+          patch.day = dayKey(patch.logged_at, tz);
+        }
+      }
+
       const updated = await store.update<Entry>("entries", id, patch);
       const day = dayOf(updated);
       return ok(c, { entry: updated, totals: await dayTotals(store, day) });
@@ -1400,6 +1414,34 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
     if (rec.user !== uid) return err(c, "forbidden", 403);
     await store.delete("entries", id);
     return ok(c, { deleted: id });
+  });
+
+  // ---- POST /api/entries/:id/duplicate — clone an entry to a new date (default: now).
+  // Copies the nutrition/activity content verbatim (kcal, macros, items, description, note, kind,
+  // provider/model) into a fresh entry with a new id and a new logged_at/day. No AI; the numbers are
+  // reused as-is. Used by the "duplicate to today" affordance so a repeated meal/workout is one tap.
+  app.post("/api/entries/:id/duplicate", async (c) => {
+    const uid = getUid(c);
+    const store = platform.data.forUser(uid);
+    const id = c.req.param("id");
+    const rec = await store.get<Entry>("entries", id);
+    if (!rec) return err(c, "not found", 404);
+    if (rec.user !== uid) return err(c, "forbidden", 403);
+    const b = (await c.req.json().catch(() => ({}))) as { logged_at?: string; tz_offset_min?: number };
+    const logged_at = b.logged_at ? new Date(b.logged_at).toISOString() : new Date().toISOString();
+    const tz = num(b.tz_offset_min);
+    const day = dayKey(logged_at, tz);
+    // Strip identity/timestamp fields from the source; carry everything else (content) through.
+    const { id: _id, logged_at: _la, tz_offset_min: _tz, day: _day, created: _cr, ...content } =
+      rec as Entry & { created?: unknown };
+    const entry = await store.create<Entry>("entries", {
+      ...(content as Partial<Entry>),
+      user: uid,
+      logged_at,
+      tz_offset_min: tz,
+      day,
+    } as Entry);
+    return ok(c, { entry, totals: await dayTotals(store, day) });
   });
 
   // ---- GET /api/activities/search?q= — compose-tab autocomplete + per-minute burn.

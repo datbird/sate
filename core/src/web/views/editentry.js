@@ -60,11 +60,25 @@ export function open(entry) {
   // instead of being clipped past the top/bottom safe areas.
   const s = sheet({ title: en.description || "Edit entry" });
 
+  // The entry's LOCAL calendar day + wall-clock time, derived from its stored UTC logged_at and the
+  // tz it was logged in. We prefill the date picker with the local day and, when the user moves it,
+  // keep the same time-of-day so the item keeps its position within the day's feed.
+  const entryTz = Number(en.tz_offset_min) || 0;
+  const localIso = new Date(Date.parse(en.logged_at || new Date().toISOString()) - entryTz * 60000).toISOString();
+  const curDay = localIso.slice(0, 10); // YYYY-MM-DD (local)
+  const timePart = localIso.slice(10); // "THH:MM:SS.sssZ" (local wall-clock)
+
   s.setBody((body) => {
     body.innerHTML =
       `<div class="subline" style="text-align:left;margin:0 0 10px">Currently ` +
       `<b style="color:var(--ink)">${fmt(en.kcal)} ${esc(unit)}</b>` +
       `${activity && en.duration_min ? " · " + Math.round(en.duration_min) + " min" : ""}</div>` +
+
+      `<div class="menu-label" style="padding-left:0">Date</div>` +
+      `<div class="editrow" style="display:flex;gap:8px;align-items:center">` +
+      `<input type="date" id="ee-date" value="${esc(curDay)}" style="flex:1;min-width:0">` +
+      `<button class="link" id="ee-dup" type="button" style="white-space:nowrap">⧉ Duplicate to today</button>` +
+      `</div>` +
 
       `<div class="menu-label" style="padding-left:0">Adjust the amount</div>` +
       `<div class="quickscale">${scaleBtns}</div>` +
@@ -89,6 +103,18 @@ export function open(entry) {
       `value="${esc(en.note || "")}" placeholder="Add a note…"></label>` +
       `<div class="manualgrid">${manualCells}</div>` +
       `<div class="sheet-actions"><button class="primary" id="ee-save" style="flex:1">Save changes</button></div>`;
+
+    // Change the date — move the entry to another calendar day (keeps its time-of-day, so feed
+    // ordering within the day is preserved). Applies on change, like the scale chips.
+    $("#ee-date", body).addEventListener("change", (e) => {
+      const newDay = e.target.value;
+      if (!newDay || newDay === curDay) return;
+      const loggedAt = new Date(Date.parse(newDay + timePart) + entryTz * 60000).toISOString();
+      applyEdit({ logged_at: loggedAt, tz_offset_min: entryTz }, "Moved to " + newDay);
+    });
+
+    // Duplicate this entry onto today (same food/workout + numbers, no AI). New id, current date.
+    $("#ee-dup", body).addEventListener("click", duplicateToToday);
 
     // Quick-scale chips.
     $$("[data-scale]", body).forEach((b) =>
@@ -139,13 +165,29 @@ export function open(entry) {
     applyEdit(payload);
   }
 
-  async function applyEdit(payload) {
+  async function applyEdit(payload, okMsg) {
     s.close();
     toast("Updating…");
     try {
       const r = await api("/api/entries/" + en.id, { method: "PATCH", json: payload });
       const e = (r && r.entry) || {};
-      toast(`Updated to ${fmt(e.kcal)} ${e.kind === "activity" ? "cal" : "kcal"}.`);
+      toast(okMsg || `Updated to ${fmt(e.kcal)} ${e.kind === "activity" ? "cal" : "kcal"}.`);
+      afterEntryChange();
+    } catch (err) { toast(err.message); }
+  }
+
+  // Clone this entry onto today. Server copies the content and stamps a fresh date; the current tz
+  // goes in the body so the copy buckets into the user's local "today".
+  async function duplicateToToday() {
+    s.close();
+    toast("Duplicating…");
+    try {
+      const r = await api("/api/entries/" + en.id + "/duplicate", {
+        method: "POST",
+        json: { tz_offset_min: new Date().getTimezoneOffset() },
+      });
+      const e = (r && r.entry) || {};
+      toast(`Duplicated to today${e.kcal !== undefined ? " · " + fmt(e.kcal) + (e.kind === "activity" ? " cal" : " kcal") : ""}.`);
       afterEntryChange();
     } catch (err) { toast(err.message); }
   }
