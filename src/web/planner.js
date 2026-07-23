@@ -281,3 +281,18 @@ export function nextOccurrence(schedule, todayLocal, overrides = []) {
   }
   return null;
 }
+
+// The remaining daily budget = goal − today's LOGGED totals, per macro, clamped at 0. Drives the
+// recipe suggester's prefilled (editable) target (spec §7.2). Pure — the DOM passes me().goals + the
+// server-authoritative today totals; this never re-sums anything.
+export function remainingBudget(goals, totals) {
+  const g = goals || {};
+  const t = totals || {};
+  const left = (goal, used) => Math.max(0, Math.round(num(goal) - num(used)));
+  return {
+    kcal: left(g.kcal, t.kcal),
+    protein: left(g.protein, t.protein),
+    carbs: left(g.carbs, t.carbs),
+    fat: left(g.fat, t.fat),
+  };
+}
