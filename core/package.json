@@ -10,11 +10,15 @@
     "./schema": "./src/schema/index.ts",
     "./domain/nutrition": "./src/domain/nutrition.ts"
   },
+  "scripts": {
+    "test": "bash test/run.sh"
+  },
   "dependencies": {
     "hono": "^4.6.9",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "esbuild": "^0.24.0"
   }
 }
