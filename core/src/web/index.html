@@ -85,11 +85,17 @@
           </div>
         </div>
 
-        <!-- add -->
-        <button class="addbtn" id="addBtn" type="button">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-          Add to log
-        </button>
+        <!-- Log / Plan pair (spec §9): Log opens the compose sheet; Plan opens the plan-an-event flow. -->
+        <div class="logplan" id="logplan">
+          <button class="addbtn" id="logBtn" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            Log
+          </button>
+          <button class="addbtn plan" id="planBtn" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M8 3v3M16 3v3M3 9.5h18"/></svg>
+            Plan
+          </button>
+        </div>
 
         <!-- day-grouped infinite feed -->
         <h3 class="section" id="feedlbl">Log</h3>
