@@ -188,3 +188,43 @@ export function buildPlanRequest(form, tzOffsetMin) {
   };
   return { method: "POST", path: "/api/plan/entry", body };
 }
+
+// ============================================================ Plan-tab pure helpers (phase 4)
+// Weekday labels (0..6 = Sun..Sat), matching the projector's getUTCDay() convention.
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// "HH:mm" (24h) → a friendly "7:30am" / "12:00pm" / "12:00am". Returns "" for a missing/blank time.
+function prettyTime(time) {
+  if (!time) return "";
+  const [h, m] = String(time).split(":").map((x) => Number(x));
+  if (!isFinite(h)) return "";
+  const ap = h < 12 ? "am" : "pm";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return h12 + ":" + String(m || 0).padStart(2, "0") + ap;
+}
+
+// A human recurrence summary for the Plan tab's Scheduled rows: "Every weekday · 7:30am",
+// "Every day · 6:00pm", "Weekly on Mon, Wed, Fri · 6:00am", "Monthly on day 15 · 12:00pm".
+// Pure — reads only the schedule's recurrence/time_of_day/active_from.
+export function recurrenceSummary(schedule) {
+  const r = (schedule && schedule.recurrence) || {};
+  const iv = Math.max(1, Number(r.interval) || 1);
+  let base = "";
+  if (r.unit === "daily") {
+    base = iv === 1 ? "Every day" : "Every " + iv + " days";
+  } else if (r.unit === "weekly") {
+    const wd = Array.isArray(r.by_weekday) ? r.by_weekday.slice().sort((a, b) => a - b) : [];
+    const isWeekday = wd.length === 5 && [1, 2, 3, 4, 5].every((x) => wd.includes(x));
+    if (isWeekday) {
+      base = iv === 1 ? "Every weekday" : "Every " + iv + " weeks on weekdays";
+    } else {
+      const label = wd.length ? wd.map((d) => DOW[d]).join(", ") : "week";
+      base = iv === 1 ? "Weekly on " + label : "Every " + iv + " weeks on " + label;
+    }
+  } else if (r.unit === "monthly") {
+    const dom = Number(r.day_of_month) || Number(String(schedule.active_from || "").slice(8, 10)) || 1;
+    base = (iv === 1 ? "Monthly on day " : "Every " + iv + " months on day ") + dom;
+  }
+  const t = prettyTime(schedule && schedule.time_of_day);
+  return t ? (base ? base + " · " + t : t) : base;
+}

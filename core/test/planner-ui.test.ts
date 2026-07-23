@@ -189,3 +189,29 @@ test("buildPlanRequest: activity one-off puts duration_min top-level on the entr
   assert.equal(req.body.duration_min, 25);
   assert.equal(req.body.kcal, 120);
 });
+
+import { recurrenceSummary } from "../src/web/planner.js";
+
+const wd = (recurrence, time = "07:30", active_from = "2026-07-01") =>
+  ({ recurrence, time_of_day: time, active_from });
+
+test("recurrenceSummary: daily", () => {
+  assert.equal(recurrenceSummary(wd({ unit: "daily", interval: 1 }, "18:00")), "Every day · 6:00pm");
+  assert.equal(recurrenceSummary(wd({ unit: "daily", interval: 2 }, "06:00")), "Every 2 days · 6:00am");
+});
+
+test("recurrenceSummary: weekly weekday-set collapses Mon–Fri to 'Every weekday'", () => {
+  assert.equal(recurrenceSummary(wd({ unit: "weekly", interval: 1, by_weekday: [1, 2, 3, 4, 5] })), "Every weekday · 7:30am");
+  assert.equal(recurrenceSummary(wd({ unit: "weekly", interval: 1, by_weekday: [1, 3, 5] }, "06:00")), "Weekly on Mon, Wed, Fri · 6:00am");
+  assert.equal(recurrenceSummary(wd({ unit: "weekly", interval: 2, by_weekday: [0, 6] }, "09:00")), "Every 2 weeks on Sun, Sat · 9:00am");
+});
+
+test("recurrenceSummary: monthly uses day_of_month, else the active_from day-of-month", () => {
+  assert.equal(recurrenceSummary(wd({ unit: "monthly", interval: 1, day_of_month: 15 }, "12:00")), "Monthly on day 15 · 12:00pm");
+  assert.equal(recurrenceSummary(wd({ unit: "monthly", interval: 3 }, "08:00", "2026-07-05")), "Every 3 months on day 5 · 8:00am");
+});
+
+test("recurrenceSummary: midnight formats as 12:00am; missing time drops the suffix", () => {
+  assert.equal(recurrenceSummary(wd({ unit: "daily", interval: 1 }, "00:00")), "Every day · 12:00am");
+  assert.equal(recurrenceSummary({ recurrence: { unit: "daily", interval: 1 }, active_from: "2026-07-01" }), "Every day");
+});
