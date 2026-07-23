@@ -8,9 +8,16 @@ import {
   parseJSON,
   normalizeNutrition,
   normalizeActivity,
+  buildRecipeSuggestMsg,
+  buildRecipeExpandMsg,
+  normalizeRecipeIdeas,
+  normalizeRecipe,
   type AIFunction,
   type NutritionResult,
   type ActivityResult,
+  type RecipeIdeas,
+  type Recipe,
+  type RecipeTarget,
 } from "./prompts";
 import { checkLimit, recordUsage } from "./usage";
 
@@ -90,6 +97,48 @@ export async function estimateActivity(platform: Platform, inp: EstimateInput): 
     messages: [{ role: "user", text: inp.text || "(no description)" }],
   });
   return normalizeActivity(parseJSON(res.text));
+}
+
+// ---- recipe_suggest → ~5 compact ideas that fit a numeric target (spec §7) ----------------
+export interface SuggestRecipesInput {
+  target: RecipeTarget;
+  method?: string;
+  prefs?: string;
+  /** Pulled from the profile by the route — NEVER from the client body. */
+  allergies?: string;
+}
+export async function suggestRecipes(platform: Platform, inp: SuggestRecipesInput): Promise<RecipeIdeas> {
+  const { provider, model } = await resolveDefaultModel(platform, "ai"); // Latest Flash by default
+  const p = PROMPTS.recipe_suggest;
+  const res = await callAI(platform, {
+    provider,
+    model,
+    system: p.system,
+    jsonMode: p.jsonMode,
+    messages: [{ role: "user", text: buildRecipeSuggestMsg(inp) }],
+  });
+  return normalizeRecipeIdeas(parseJSON(res.text));
+}
+
+// ---- recipe_expand → one idea → a full recipe with per-serving macros (spec §7) -----------
+export interface ExpandRecipeInput {
+  idea: string | { name?: string };
+  target?: RecipeTarget;
+  prefs?: string;
+  /** Pulled from the profile by the route — NEVER from the client body. */
+  allergies?: string;
+}
+export async function expandRecipe(platform: Platform, inp: ExpandRecipeInput): Promise<Recipe> {
+  const { provider, model } = await resolveDefaultModel(platform, "ai");
+  const p = PROMPTS.recipe_expand;
+  const res = await callAI(platform, {
+    provider,
+    model,
+    system: p.system,
+    jsonMode: p.jsonMode,
+    messages: [{ role: "user", text: buildRecipeExpandMsg(inp) }],
+  });
+  return normalizeRecipe(parseJSON(res.text));
 }
 
 // ---- default provider/model resolution (Phase 1) ------------------------
