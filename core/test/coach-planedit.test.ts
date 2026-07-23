@@ -47,6 +47,20 @@ test("POST /api/nutritionist drops invalid fields; an all-invalid trailer → pl
   } finally { (globalThis as any).fetch = orig; }
 });
 
+test("POST /api/nutritionist keeps valid fields and drops invalid ones in a MIXED trailer", async () => {
+  const orig = (globalThis as any).fetch;
+  try {
+    const { req, platform } = client();
+    // One valid (goal_kcal), one invalid (method:"bogus"), one valid (activity_level:"active").
+    stubGemini(platform, 'Ok.\n<<PLAN_CHANGE>>{"goal_kcal":1900,"method":"bogus","activity_level":"active"}');
+    const res = await req("/api/nutritionist", { method: "POST", body: JSON.stringify({ mode: "chat", message: "x" }) });
+    const body = await res.json();
+    assert.equal(body.reply, "Ok.");
+    // The bad method is dropped; the two valid fields survive — a partial, sanitized change.
+    assert.deepEqual(body.plan_change, { goal_kcal: 1900, activity_level: "active" });
+  } finally { (globalThis as any).fetch = orig; }
+});
+
 test("POST /api/nutritionist with no trailer returns plan_change null and a clean reply", async () => {
   const orig = (globalThis as any).fetch;
   try {
@@ -73,19 +87,20 @@ async function seedProfile(platform: any, extra: Record<string, unknown> = {}) {
 test("POST /api/plan/apply re-runs the engine for an explicit goal_kcal (macros derived, NOT echoed)", async () => {
   const { req, platform } = client();
   await seedProfile(platform);
-  const res = await req("/api/plan/apply", { method: "POST", body: JSON.stringify({ goal_kcal: 1800, method: "protein" }) });
+  // Smuggle bogus macro fields in the request to PROVE the engine is authoritative: the route must
+  // IGNORE these and derive every macro from macroTargets(1800,"protein",90) — never echo the request.
+  const res = await req("/api/plan/apply", { method: "POST", body: JSON.stringify({ goal_kcal: 1800, method: "protein", protein: 999, carbs: 999, fat: 999, sodium: 9999 }) });
   assert.equal(res.status, 200);
   const body = await res.json();
-  // The engine honored the explicit kcal…
-  assert.equal(body.goals.kcal, 1800);
+  // The engine honored the explicit kcal and DERIVED the EXACT macros — macroTargets(1800,"protein",90)
+  // = {protein:180, carbs:149, fat:54, sodium:2300} — not the request's 999s.
+  assert.deepEqual(body.goals, { kcal: 1800, protein: 180, carbs: 149, fat: 54, sodium: 2300 });
   assert.equal(body.plan.targets.kcal, 1800);
-  // …and DERIVED the macros deterministically via macroTargets(1800,"protein",90) — protein-forward,
-  // and self-consistent (a positive protein target, not the AI's arithmetic).
-  assert.ok(body.goals.protein > 0);
   assert.ok(body.plan_summary && /1,?800/.test(body.plan_summary));
-  // Persisted: GET /api/me reflects the new goals + method + plan_summary.
+  // Persisted: GET /api/me reflects the ENGINE'S goals (protein 180, not 999) + method + plan_summary.
   const me = await (await req("/api/me?tz=0")).json();
   assert.equal(me.goals.kcal, 1800);
+  assert.equal(me.goals.protein, 180);
   assert.equal(me.track_mode, "protein");
   assert.equal(me.plan_summary, body.plan_summary);
 });
@@ -93,13 +108,16 @@ test("POST /api/plan/apply re-runs the engine for an explicit goal_kcal (macros 
 test("POST /api/plan/apply with a weight_goal recomputes the deficit AND persists the goal", async () => {
   const { req, platform } = client();
   await seedProfile(platform);
+  // Maintenance kcal (a no-op valid change, no weight goal) as the comparison baseline.
+  const maint = (await (await req("/api/plan/apply", { method: "POST", body: JSON.stringify({ activity_level: "sedentary" }) })).json()).goals.kcal;
   const res = await req("/api/plan/apply", {
     method: "POST",
     body: JSON.stringify({ weight_goal: { target_lb: 180, target_date: "2027-01-01" } }),
   });
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.ok(body.goals.kcal > 0);
+  // 198→180 lb loss by the deadline ⇒ a real deficit ⇒ target must be BELOW maintenance, not just >0.
+  assert.ok(body.goals.kcal > 0 && body.goals.kcal < maint, `deficit target ${body.goals.kcal} should be < maintenance ${maint}`);
   // The weight goal landed in the same collection POST /api/weight/goals writes.
   const wg = await (await req("/api/weight/goals")).json();
   assert.equal(wg.goals.length, 1);
