@@ -23,6 +23,7 @@ import { registerCheckins } from "./checkins";
 import { registerAccount } from "./account";
 import { registerAdmin } from "./admin";
 import { registerPlan } from "./plan";
+import { registerRecipes } from "./recipes";
 
 export interface ApiConfig {
   // TODO(phase2): v1 routed each function to a per-user/per-function provider+model. Phase 1 resolves
@@ -91,6 +92,7 @@ export function buildApi(platform: Platform, cfg: ApiConfig = {}): App {
   void registerAccount(app, deps); // /api/register, /api/edition (hosted/self-host + trial provisioning)
   void registerAdmin(app, deps); // /api/admin/* (admin-gated: env ADMIN_EMAILS or profile role==admin)
   void registerPlan(app, deps); // /api/plan/entry (create planned), /api/plan/accept (planned→logged)
+  void registerRecipes(app, deps); // /api/recipes/suggest, /api/recipes/expand (AI; allergies server-side)
 
   return app;
 }
