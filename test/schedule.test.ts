@@ -99,3 +99,36 @@ test("weekly interval=2 fires every other week from active_from", () => {
     [], "2026-07-06", "2026-07-31", "2026-07-01");
   assert.deepEqual(occ.map((o) => o.scheduled_date), ["2026-07-06", "2026-07-20"]);
 });
+
+function monthly(over: Partial<PlanSchedule> = {}): PlanSchedule {
+  return {
+    id: "m1", user: "u", kind: "food", name: "Cheat meal",
+    payload: { kcal: 1200 },
+    recurrence: { unit: "monthly", interval: 1, day_of_month: 15 },
+    time_of_day: "18:00", tz_offset_min: 0,
+    active_from: "2026-01-15", is_active: true, ...over,
+  };
+}
+
+test("monthly fires on day_of_month each month", () => {
+  const occ = projectOccurrences([monthly()], [], "2026-07-01", "2026-09-30", "2026-07-01");
+  assert.deepEqual(occ.map((o) => o.scheduled_date), ["2026-07-15", "2026-08-15", "2026-09-15"]);
+});
+
+test("monthly with no day_of_month defaults to active_from's day-of-month", () => {
+  const occ = projectOccurrences([monthly({ recurrence: { unit: "monthly", interval: 1 }, active_from: "2026-06-09" })],
+    [], "2026-07-01", "2026-08-31", "2026-07-01");
+  assert.deepEqual(occ.map((o) => o.scheduled_date), ["2026-07-09", "2026-08-09"]);
+});
+
+test("monthly day 31 clamps to the last day of shorter months", () => {
+  const occ = projectOccurrences([monthly({ recurrence: { unit: "monthly", interval: 1, day_of_month: 31 }, active_from: "2026-01-31" })],
+    [], "2026-02-01", "2026-04-30", "2026-02-01");
+  assert.deepEqual(occ.map((o) => o.scheduled_date), ["2026-02-28", "2026-03-31", "2026-04-30"]);
+});
+
+test("monthly interval=2 fires every other month from active_from", () => {
+  const occ = projectOccurrences([monthly({ recurrence: { unit: "monthly", interval: 2, day_of_month: 10 }, active_from: "2026-01-10" })],
+    [], "2026-01-01", "2026-06-30", "2026-01-01");
+  assert.deepEqual(occ.map((o) => o.scheduled_date), ["2026-01-10", "2026-03-10", "2026-05-10"]);
+});
