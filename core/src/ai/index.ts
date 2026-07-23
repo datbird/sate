@@ -98,22 +98,34 @@ export async function estimateActivity(platform: Platform, inp: EstimateInput): 
 // `settings` key/value collection, falling back to Google) and the Secrets port for the key (callAI
 // resolves `<provider>-api-key`). TODO(phase2): restore per-function pickModel + second-opinion role.
 const DEFAULT_PROVIDER: ProviderName = "google";
-const DEFAULT_MODEL = "gemini-2.5-flash";
+// Standard model = "Latest Flash": Google's rolling alias that always points at the newest 2.x Flash,
+// so the app tracks model upgrades without a redeploy. The "second opinion" deliberately runs a
+// STRONGER, different model — "Latest Pro" — otherwise a second opinion just re-runs the same model
+// and tells you nothing. Both are settable per-instance (default_*_model in the settings collection);
+// on Cloud, which exposes no AI admin, these built-in defaults are the effective config.
+const DEFAULT_MODEL = "gemini-flash-latest";
+const DEFAULT_SECOND_MODEL = "gemini-pro-latest";
 
 export async function resolveDefaultModel(
   platform: Platform,
-  category: "ai" | "vision" = "ai",
+  category: "ai" | "vision" | "second" = "ai",
 ): Promise<{ provider: ProviderName; model: string }> {
   let provider: ProviderName = DEFAULT_PROVIDER;
-  let model = DEFAULT_MODEL;
+  let model = category === "second" ? DEFAULT_SECOND_MODEL : DEFAULT_MODEL;
   try {
     const { items } = await platform.data
       .instance()
       .list<{ id: string; key: string; value: string }>("settings", { limit: 500 });
     const s: Record<string, string> = {};
     for (const r of items) s[r.key] = r.value;
-    const p = category === "vision" ? s.default_vision_provider : s.default_ai_provider;
-    const m = category === "vision" ? s.default_vision_model : s.default_ai_model;
+    const p =
+      category === "vision" ? s.default_vision_provider
+      : category === "second" ? s.default_second_provider
+      : s.default_ai_provider;
+    const m =
+      category === "vision" ? s.default_vision_model
+      : category === "second" ? s.default_second_model
+      : s.default_ai_model;
     if (p) provider = p as ProviderName;
     if (m) model = m;
   } catch {
@@ -140,8 +152,13 @@ export async function dailySummary(platform: Platform, ctx: string): Promise<str
 // ---- web_lookup → web-grounded nutrition for a food not in the local DB --
 // `sources` is the optional "Preferred sources" hint block. Web search + forced-JSON can't be
 // combined, so jsonMode is off and the reply is parsed defensively.
-export async function webLookup(platform: Platform, query: string, sources?: string): Promise<NutritionResult> {
-  const { provider, model } = await resolveDefaultModel(platform, "ai");
+export async function webLookup(
+  platform: Platform,
+  query: string,
+  sources?: string,
+  category: "ai" | "second" = "ai",
+): Promise<NutritionResult> {
+  const { provider, model } = await resolveDefaultModel(platform, category);
   const p = PROMPTS.web_lookup;
   const userMsg = (sources ? sources + "\n\n" : "") + "Food/meal to research and estimate:\n" + query;
   const res = await callAI(platform, {
