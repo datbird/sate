@@ -174,6 +174,7 @@ function initTimeline() {
   TL.maxTo = addDays(TL.today, 365);        // don't probe further forward than ~1 year
   TL.seq++;
   $("#feed").innerHTML = "";
+  TL.loading = false;
   loadSlice(TL.win.from, TL.win.to, TL.seq).then(() => {
     renderTimeline();
     // Center Today on open (BE ledger pattern): bring the "Today" divider to the top of the viewport.

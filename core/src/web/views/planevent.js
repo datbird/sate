@@ -143,7 +143,7 @@ function renderFill(host) {
 }
 
 async function submit() {
-  if (!F.name && !F.description) { toast(F.kind === "activity" ? "Name the activity" : "Name the meal"); return; }
+  if (!F.name.trim() && !F.description.trim()) { toast(F.kind === "activity" ? "Name the activity" : "Name the meal"); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(F.date)) { toast("Pick a date"); return; }
   if (!Number.isInteger(Number(F.interval)) || Number(F.interval) < 1) { toast("Repeat interval must be a whole number ≥ 1"); return; }
   // Normalize numeric strings the pure builder expects (numbers/undefined, not "").
