@@ -124,3 +124,67 @@ export function plannedState(item) {
 export function itemKey(item) {
   return item.origin === "occurrence" ? String(item.id) : "entry:" + String(item.id);
 }
+
+// Build the intended-content object shared by a one-off planned entry (spread top-level) and a
+// schedule (nested under `payload`). Matches the API: food → kcal + macros (+ items/note); activity →
+// kcal(burn) + duration_min (+ distance/intensity/note).
+function contentOf(form, kind) {
+  const c = { kcal: num(form.kcal) };
+  if (form.note != null && form.note !== "") c.note = String(form.note);
+  if (kind === "activity") {
+    c.duration_min = num(form.duration_min);
+    if (form.distance != null && form.distance !== "") c.distance = num(form.distance);
+    if (form.intensity) c.intensity = String(form.intensity);
+  } else {
+    const m = form.macros || {};
+    c.macros = {
+      protein: num(m.protein), carbs: num(m.carbs), fat: num(m.fat),
+      fiber: num(m.fiber), sugar: num(m.sugar), sodium: num(m.sodium), sat_fat: num(m.sat_fat),
+    };
+    if (Array.isArray(form.items) && form.items.length) c.items = form.items;
+  }
+  return c;
+}
+
+// Map the plan-an-event form to the exact API call. repeat "none" → a one-off planned entry
+// (POST /api/plan/entry, logged_at = local instant in UTC); any repeat → a recurring schedule
+// (POST /api/plan/schedules) whose occurrences the timeline projects. Pure — no fetch, no Date.now().
+export function buildPlanRequest(form, tzOffsetMin) {
+  const kind = form.kind === "activity" ? "activity" : "food";
+  const tz = Number(tzOffsetMin) || 0;
+  const time = form.time || "12:00";
+  const date = form.date;
+  const content = contentOf(form, kind);
+
+  if (form.repeat && form.repeat !== "none") {
+    const recurrence = { unit: form.repeat, interval: Math.max(1, Number(form.interval) || 1) };
+    if (form.repeat === "weekly" && Array.isArray(form.by_weekday) && form.by_weekday.length) {
+      recurrence.by_weekday = form.by_weekday.slice();
+    }
+    if (form.repeat === "monthly" && form.day_of_month) {
+      recurrence.day_of_month = Number(form.day_of_month);
+    }
+    return {
+      method: "POST", path: "/api/plan/schedules",
+      body: {
+        kind,
+        name: form.name || form.description || (kind === "activity" ? "Activity" : "Meal"),
+        payload: content,
+        recurrence,
+        time_of_day: time,
+        tz_offset_min: tz,
+        active_from: date,
+        is_active: true,
+      },
+    };
+  }
+
+  const body = {
+    kind,
+    description: form.description || form.name || "",
+    logged_at: localInstantUTC(date, time, tz),
+    tz_offset_min: tz,
+    ...content, // one-off entry carries content top-level (POST /api/plan/entry reads b.kcal/b.macros/...)
+  };
+  return { method: "POST", path: "/api/plan/entry", body };
+}
