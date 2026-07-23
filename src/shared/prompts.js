@@ -169,6 +169,17 @@ function allergiesLine(allergies) {
 }
 
 // ---- recipe prompt builders (pure; server injects allergies from the profile) ----
+// Maps incoming track_mode tokens to prompt emphasis vocabulary to fix inversion (e.g., "fat" means
+// low-fat tracking, not fat-forward). See buildRecipeSuggestMsg caller contracts.
+var METHOD_EMPHASIS = {
+  calories: "balanced calories",
+  carb: "low-carb",
+  protein: "high-protein",
+  fat: "low-fat",
+  balanced: "balanced macros",
+  heart: "heart-healthy",
+};
+
 function targetLines(target) {
   var t = target || {};
   return [
@@ -184,7 +195,10 @@ function buildRecipeSuggestMsg(inp) {
   var method = (inp.method == null ? "" : String(inp.method)).trim();
   var prefs = (inp.prefs == null ? "" : String(inp.prefs)).trim();
   var al = allergiesLine(inp.allergies);
-  if (method) L.push("Tracking-method emphasis: " + method + ".");
+  if (method) {
+    var emphasis = METHOD_EMPHASIS[method] || method || "balanced macros";
+    L.push("Tracking-method emphasis: " + emphasis + ".");
+  }
   if (prefs) L.push("Preferences: " + prefs);
   if (al) L.push(al);
   L.push("Suggest about 5 distinct meal ideas that fit this target.");

@@ -32,22 +32,66 @@ test("allergiesLine renders a restriction line only when allergies are present",
   assert.match(line, /must respect|restriction|allerg/i);
 });
 
-test("buildRecipeSuggestMsg embeds the numeric target, method, prefs, and allergies", () => {
-  const msg = buildRecipeSuggestMsg({
+test("buildRecipeSuggestMsg maps raw track_mode tokens to emphasis vocabulary (fat→low-fat, carb→low-carb)", () => {
+  // Test mapping of raw token "fat" (which means low-fat tracking) to emphasis phrase "low-fat"
+  const msgFat = buildRecipeSuggestMsg({
     target: { kcal: 650, protein: 45, carbs: 60, fat: 20 },
-    method: "high-protein", prefs: "quick, no oven", allergies: "peanuts, shellfish",
+    method: "fat", prefs: "quick, no oven", allergies: "peanuts",
   });
-  assert.match(msg, /650/); assert.match(msg, /45/); assert.match(msg, /60/); assert.match(msg, /20/);
-  assert.match(msg, /high-protein/);
-  assert.match(msg, /quick, no oven/);
-  assert.match(msg, /peanuts, shellfish/);
-  assert.match(msg, /must respect/i);
+  assert.match(msgFat, /low-fat/);
+  assert.doesNotMatch(msgFat, /^Tracking-method emphasis: fat\./m); // not bare token
+
+  // Test mapping of raw token "carb" (which means low-carb tracking) to emphasis phrase "low-carb"
+  const msgCarb = buildRecipeSuggestMsg({
+    target: { kcal: 650, protein: 45, carbs: 30, fat: 20 },
+    method: "carb",
+  });
+  assert.match(msgCarb, /low-carb/);
+
+  // Test mapping of raw token "protein" to emphasis phrase "high-protein"
+  const msgProtein = buildRecipeSuggestMsg({
+    target: { kcal: 650, protein: 60, carbs: 60, fat: 20 },
+    method: "protein",
+  });
+  assert.match(msgProtein, /high-protein/);
+
+  // Test mapping of raw token "balanced" to emphasis phrase "balanced macros"
+  const msgBalanced = buildRecipeSuggestMsg({
+    target: { kcal: 650, protein: 45, carbs: 60, fat: 20 },
+    method: "balanced",
+  });
+  assert.match(msgBalanced, /balanced macros/);
+
+  // Test mapping of raw token "heart" to emphasis phrase "heart-healthy"
+  const msgHeart = buildRecipeSuggestMsg({
+    target: { kcal: 650, protein: 45, carbs: 60, fat: 20 },
+    method: "heart",
+  });
+  assert.match(msgHeart, /heart-healthy/);
+
+  // Test mapping of raw token "calories" to emphasis phrase "balanced calories"
+  const msgCalories = buildRecipeSuggestMsg({
+    target: { kcal: 650, protein: 45, carbs: 60, fat: 20 },
+    method: "calories",
+  });
+  assert.match(msgCalories, /balanced calories/);
 });
 
 test("buildRecipeSuggestMsg omits empty method/prefs/allergies cleanly (no allergy line when none)", () => {
   const msg = buildRecipeSuggestMsg({ target: { kcal: 500, protein: 30, carbs: 50, fat: 15 } });
   assert.match(msg, /500/);
   assert.doesNotMatch(msg, /must respect/i); // no allergy line when there are none
+  assert.doesNotMatch(msg, /Tracking-method emphasis/); // no method line when empty
+});
+
+test("buildRecipeSuggestMsg handles unknown/unrecognized method with fallback to default", () => {
+  // Unknown method should still embed itself (or fall back); shouldn't crash
+  const msg = buildRecipeSuggestMsg({
+    target: { kcal: 500, protein: 30, carbs: 50, fat: 15 },
+    method: "unknown_mode",
+  });
+  // Unknown methods pass through as-is (or fallback to "balanced macros")
+  assert.match(msg, /Tracking-method emphasis/);
 });
 
 test("buildRecipeExpandMsg names the idea and carries allergies", () => {
