@@ -228,3 +228,56 @@ export function recurrenceSummary(schedule) {
   const t = prettyTime(schedule && schedule.time_of_day);
   return t ? (base ? base + " · " + t : t) : base;
 }
+
+// --- next-occurrence: a MIRROR of domain/schedule.ts firesOn + active-bounds, kept here as the
+// client copy (planner.js imports nothing). Same date math as the server projector, so the "Next: …"
+// label on a Scheduled row matches the timeline exactly. Deterministic — todayLocal is passed in.
+const _daysBetween = (a, b) => Math.round((ymdToUTC(b) - ymdToUTC(a)) / MS_DAY);
+const _weekdayOf = (ymd) => new Date(ymdToUTC(ymd)).getUTCDay();
+const _daysInMonth = (y, m0) => new Date(Date.UTC(y, m0 + 1, 0)).getUTCDate();
+
+function firesOn(schedule, d) {
+  const r = schedule.recurrence || {};
+  const unit = r.unit;
+  const interval = Math.max(1, Math.floor(Number(r.interval) || 1));
+  if (unit === "daily") {
+    const diff = _daysBetween(schedule.active_from, d);
+    return diff >= 0 && diff % interval === 0;
+  }
+  if (unit === "weekly") {
+    const days = Array.isArray(r.by_weekday) && r.by_weekday.length ? r.by_weekday : [_weekdayOf(schedule.active_from)];
+    if (!days.includes(_weekdayOf(d))) return false;
+    if (interval === 1) return true;
+    const weeks = Math.floor(_daysBetween(schedule.active_from, d) / 7);
+    return weeks >= 0 && weeks % interval === 0;
+  }
+  if (unit === "monthly") {
+    const y = Number(d.slice(0, 4)), m0 = Number(d.slice(5, 7)) - 1;
+    const ay = Number(schedule.active_from.slice(0, 4)), am0 = Number(schedule.active_from.slice(5, 7)) - 1;
+    const monthsDiff = (y - ay) * 12 + (m0 - am0);
+    if (monthsDiff < 0 || monthsDiff % interval !== 0) return false;
+    const want = Math.max(1, Math.floor(Number(r.day_of_month) || Number(schedule.active_from.slice(8, 10))));
+    return Number(d.slice(8, 10)) === Math.min(want, _daysInMonth(y, m0));
+  }
+  return false;
+}
+
+// The first calendar date >= todayLocal (and within active bounds, honoring skip overrides) on which
+// the schedule fires, or null if none within a bounded 366-day forward window. Pure/deterministic.
+export function nextOccurrence(schedule, todayLocal, overrides = []) {
+  if (!schedule || !schedule.is_active) return null;
+  const skip = new Set(
+    (overrides || [])
+      .filter((o) => o && o.is_skipped && o.schedule_id === schedule.id)
+      .map((o) => o.scheduled_date),
+  );
+  let d = schedule.active_from > todayLocal ? schedule.active_from : todayLocal;
+  const end = schedule.active_to && schedule.active_to < addDays(todayLocal, 366)
+    ? schedule.active_to
+    : addDays(todayLocal, 366);
+  for (; d <= end; d = addDays(d, 1)) {
+    if (d < schedule.active_from) continue;
+    if (firesOn(schedule, d) && !skip.has(d)) return d;
+  }
+  return null;
+}
