@@ -164,6 +164,17 @@ test("POST /api/plan/accept 403s an entry owned by another user", async () => {
   assert.equal(res.status, 403);
 });
 
+test("POST /api/plan/accept (occurrence) 403s a schedule owned by another user", async () => {
+  const { req, platform } = client();
+  // seedSchedule stores into the caller's own store but with a mismatched `user` field.
+  const sched = await seedSchedule(platform, { user: "someone-else@example.com" });
+  const res = await req("/api/plan/accept", {
+    method: "POST",
+    body: JSON.stringify({ schedule_id: sched.id, scheduled_date: "2026-07-24" }),
+  });
+  assert.equal(res.status, 403);
+});
+
 test("POST /api/plan/accept 400s when entry_id is missing", async () => {
   const { req } = client();
   const res = await req("/api/plan/accept", { method: "POST", body: JSON.stringify({}) });

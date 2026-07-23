@@ -181,3 +181,29 @@ test("PATCH occurrence 404s an unknown schedule", async () => {
   const res = await req("/api/plan/schedules/nope/occurrences/2026-07-11", { method: "PATCH", body: JSON.stringify({ scope: "one", new_time: "20:00" }) });
   assert.equal(res.status, 404);
 });
+
+test("PATCH occurrence 403s a schedule owned by another user", async () => {
+  const { req, platform } = client();
+  const store = platform.data.forUser("tester@example.com"); // the caller's own store
+  const rec = await store.create("plan_schedules", {
+    user: "someone-else@example.com", kind: "food", name: "not yours",
+    payload: {}, recurrence: { unit: "daily", interval: 1 },
+    time_of_day: "07:00", tz_offset_min: 0, active_from: "2026-07-01", is_active: true,
+  });
+  const res = await req(`/api/plan/schedules/${rec.id}/occurrences/2026-07-11`, {
+    method: "PATCH", body: JSON.stringify({ scope: "one", new_time: "20:00" }),
+  });
+  assert.equal(res.status, 403);
+});
+
+test("DELETE occurrence scope=one 403s a schedule owned by another user", async () => {
+  const { req, platform } = client();
+  const store = platform.data.forUser("tester@example.com"); // the caller's own store
+  const rec = await store.create("plan_schedules", {
+    user: "someone-else@example.com", kind: "food", name: "not yours",
+    payload: {}, recurrence: { unit: "daily", interval: 1 },
+    time_of_day: "07:00", tz_offset_min: 0, active_from: "2026-07-01", is_active: true,
+  });
+  const res = await req(`/api/plan/schedules/${rec.id}/occurrences/2026-07-11?scope=one`, { method: "DELETE" });
+  assert.equal(res.status, 403);
+});
