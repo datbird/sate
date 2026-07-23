@@ -142,6 +142,56 @@ export const Activity = z.object({
 });
 export type Activity = z.infer<typeof Activity>;
 
+// ---- recurring plan schedules (Planner phase 2) -------------------------
+// A recurring meal/activity definition. `payload` carries the same INTENDED content a planned entry
+// would (food: kcal/macros/items/description/note; activity: kcal-burn/duration_min/distance/intensity/
+// description). Occurrences are PROJECTED (never stored) by domain/schedule.projectOccurrences until the
+// user accepts one, which materializes a status:"logged" entry. `once` is intentionally NOT a unit —
+// one-offs are plain planned entries (§2.1). Field names mirror domain/schedule.PlanSchedule exactly.
+export const RECURRENCE_UNITS = ["daily", "weekly", "monthly"] as const;
+export type RecurrenceUnit = (typeof RECURRENCE_UNITS)[number];
+
+export const ScheduleRecurrence = z.object({
+  unit: z.enum(RECURRENCE_UNITS),
+  interval: z.number().int().positive().default(1), // >= 1 ("every 2 weeks" = weekly / 2)
+  by_weekday: z.array(z.number().int().min(0).max(6)).optional(), // 0..6 (Sun..Sat), weekly only
+  day_of_month: z.number().int().min(1).max(31).optional(), // 1..31, monthly only (default = anchor DOM)
+});
+export type ScheduleRecurrence = z.infer<typeof ScheduleRecurrence>;
+
+export const PlanSchedule = z.object({
+  id: z.string(),
+  user: z.string(), // Firebase uid
+  kind: z.enum(ENTRY_KINDS).default("food"),
+  name: z.string(),
+  payload: z.record(z.string(), z.unknown()).default({}), // intended entry content (see above)
+  recurrence: ScheduleRecurrence,
+  time_of_day: z.string().default("12:00"), // "HH:mm" local wall-clock
+  tz_offset_min: z.number().default(0), // JS getTimezoneOffset() minutes the schedule was authored in
+  active_from: z.string(), // YYYY-MM-DD
+  active_to: z.string().optional(), // YYYY-MM-DD; open-ended if absent
+  is_active: z.boolean().default(true),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+});
+export type PlanSchedule = z.infer<typeof PlanSchedule>;
+
+// ---- per-occurrence exceptions (Planner phase 2) ------------------------
+// One row per edited/skipped occurrence of a schedule. (schedule_id, scheduled_date) is the occurrence
+// identity, mirroring BalanceEngine's {scheduleId}:{date}. is_skipped = "delete just this one";
+// new_time/new_payload = "edit just this one". Applied by the projector at read time.
+export const PlanOverride = z.object({
+  id: z.string(),
+  user: z.string(),
+  schedule_id: z.string(),
+  scheduled_date: z.string(), // YYYY-MM-DD (the occurrence being overridden)
+  is_skipped: z.boolean().default(false),
+  new_time: z.string().optional(), // "HH:mm"
+  new_payload: z.record(z.string(), z.unknown()).optional(),
+  created_at: z.string().optional(),
+});
+export type PlanOverride = z.infer<typeof PlanOverride>;
+
 // ---- body measurements (weight/height time series) ----------------------
 export const Measurement = z.object({
   id: z.string(),
