@@ -85,6 +85,15 @@ export const Entry = z.object({
   intensity: z.string().optional(),
   met: z.number().optional(),
   ext_id: z.string().optional(), // external-source dedup key (e.g. Apple Health workout UUID)
+  // ---- planning (Planner phase 1) ----
+  // status="planned" = a future meal/activity that has NOT happened; it carries the *intended*
+  // content but is EXCLUDED from every total until accepted (status→"logged") via POST /api/plan/accept.
+  // Absent on all pre-Planner entries → treated as "logged" (see isLogged in api/helpers).
+  status: z.enum(["logged", "planned"]).default("logged"),
+  // Set on an entry materialized from a recurring schedule occurrence (phase 2). (schedule id, date)
+  // is the occurrence identity, mirroring BalanceEngine's {scheduleId}:{date}.
+  plan_schedule_id: z.string().optional(),
+  scheduled_date: z.string().optional(), // YYYY-MM-DD occurrence date this entry materialized from
 });
 export type Entry = z.infer<typeof Entry>;
 
