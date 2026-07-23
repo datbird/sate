@@ -67,3 +67,35 @@ test("localInstantUTC is the inverse of dayKey by construction", () => {
   const iso = localInstantUTC("2026-07-10", "23:30", 300);
   assert.equal(iso, "2026-07-11T04:30:00.000Z");
 });
+
+function weekly(over: Partial<PlanSchedule> = {}): PlanSchedule {
+  return {
+    id: "w1", user: "u", kind: "activity", name: "Run",
+    payload: { kcal: 250, duration_min: 30 },
+    recurrence: { unit: "weekly", interval: 1, by_weekday: [1, 3, 5] }, // Mon/Wed/Fri
+    time_of_day: "06:00", tz_offset_min: 0,
+    active_from: "2026-07-01", is_active: true, ...over,
+  };
+}
+
+test("weekly by_weekday emits only the listed weekdays", () => {
+  // 2026-07-06 Mon, -07 Tue, -08 Wed, -09 Thu, -10 Fri, -11 Sat, -12 Sun.
+  const occ = projectOccurrences([weekly()], [], "2026-07-06", "2026-07-12", "2026-07-01");
+  assert.deepEqual(occ.map((o) => o.scheduled_date), ["2026-07-06", "2026-07-08", "2026-07-10"]);
+});
+
+test("weekly with no by_weekday defaults to active_from's weekday", () => {
+  // 2026-07-01 is a Wednesday → fire only on Wednesdays.
+  const occ = projectOccurrences([weekly({ recurrence: { unit: "weekly", interval: 1 }, active_from: "2026-07-01" })],
+    [], "2026-07-06", "2026-07-19", "2026-07-01");
+  assert.deepEqual(occ.map((o) => o.scheduled_date), ["2026-07-08", "2026-07-15"]);
+});
+
+test("weekly interval=2 fires every other week from active_from", () => {
+  // Mondays only, every 2 weeks. active_from 2026-07-01 (Wed); week 0 = 06-28..07-04.
+  // Mondays: 07-06 (wk1), 07-13 (wk2), 07-20 (wk3), 07-27 (wk4). weeksDiff = floor((d-active_from)/7).
+  // 07-06 diff5 wk0; 07-13 diff12 wk1; 07-20 diff19 wk2; 07-27 diff26 wk3 → even weeks: 07-06, 07-20.
+  const occ = projectOccurrences([weekly({ recurrence: { unit: "weekly", interval: 2, by_weekday: [1] } })],
+    [], "2026-07-06", "2026-07-31", "2026-07-01");
+  assert.deepEqual(occ.map((o) => o.scheduled_date), ["2026-07-06", "2026-07-20"]);
+});
