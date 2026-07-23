@@ -215,3 +215,44 @@ test("recurrenceSummary: midnight formats as 12:00am; missing time drops the suf
   assert.equal(recurrenceSummary(wd({ unit: "daily", interval: 1 }, "00:00")), "Every day · 12:00am");
   assert.equal(recurrenceSummary({ recurrence: { unit: "daily", interval: 1 }, active_from: "2026-07-01" }), "Every day");
 });
+
+import { nextOccurrence } from "../src/web/planner.js";
+
+const weekday = { id: "s1", is_active: true, active_from: "2026-07-01", time_of_day: "07:30",
+  recurrence: { unit: "weekly", interval: 1, by_weekday: [1, 2, 3, 4, 5] } };
+const daily = { id: "s2", is_active: true, active_from: "2026-07-01", time_of_day: "18:00",
+  recurrence: { unit: "daily", interval: 1 } };
+const monthly31 = { id: "s3", is_active: true, active_from: "2026-01-31", time_of_day: "09:00",
+  recurrence: { unit: "monthly", interval: 1, day_of_month: 31 } };
+
+test("nextOccurrence returns today when the schedule fires today", () => {
+  // 2026-07-23 is a Thursday → the weekday schedule fires today.
+  assert.equal(nextOccurrence(weekday, "2026-07-23"), "2026-07-23");
+});
+
+test("nextOccurrence skips forward over non-firing days", () => {
+  // 2026-07-25 is Saturday → next weekday occurrence is Monday 2026-07-27.
+  assert.equal(nextOccurrence(weekday, "2026-07-25"), "2026-07-27");
+});
+
+test("nextOccurrence clamps a monthly day-31 to the month's last day", () => {
+  assert.equal(nextOccurrence(monthly31, "2026-02-01"), "2026-02-28");
+});
+
+test("nextOccurrence honors a skip override on the otherwise-next date", () => {
+  assert.equal(
+    nextOccurrence(daily, "2026-07-23", [{ schedule_id: "s2", scheduled_date: "2026-07-23", is_skipped: true }]),
+    "2026-07-24",
+  );
+});
+
+test("nextOccurrence respects active_from (future start) and active_to (past end)", () => {
+  const future = { ...daily, active_from: "2026-08-10" };
+  assert.equal(nextOccurrence(future, "2026-07-23"), "2026-08-10");
+  const ended = { ...daily, active_to: "2026-07-20" };
+  assert.equal(nextOccurrence(ended, "2026-07-23"), null);
+});
+
+test("nextOccurrence returns null for an inactive schedule", () => {
+  assert.equal(nextOccurrence({ ...daily, is_active: false }, "2026-07-23"), null);
+});
