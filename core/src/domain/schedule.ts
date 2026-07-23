@@ -98,7 +98,17 @@ function firesOn(s: PlanSchedule, unit: RecurrenceUnit, interval: number, d: str
       const weeks = Math.floor(daysBetween(s.active_from, d) / 7);
       return weeks >= 0 && weeks % interval === 0;
     }
-    // "monthly" is added in Task 3.
+    case "monthly": {
+      const y = Number(d.slice(0, 4));
+      const m0 = Number(d.slice(5, 7)) - 1;
+      const ay = Number(s.active_from.slice(0, 4));
+      const am0 = Number(s.active_from.slice(5, 7)) - 1;
+      const monthsDiff = (y - ay) * 12 + (m0 - am0);
+      if (monthsDiff < 0 || monthsDiff % interval !== 0) return false;
+      const wantDom = Math.max(1, Math.floor(Number(s.recurrence.day_of_month) || Number(s.active_from.slice(8, 10))));
+      const firingDom = Math.min(wantDom, daysInMonth(y, m0)); // day 31 → last day of a shorter month
+      return Number(d.slice(8, 10)) === firingDom;
+    }
     default:
       return false;
   }
