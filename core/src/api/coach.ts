@@ -24,6 +24,7 @@ import {
   nutritionist,
   resolveDefaultModel,
   allergiesLine,
+  splitPlanChange,
   type AIImage,
   type AIMessage,
 } from "../ai/index";
@@ -38,6 +39,7 @@ import type {
   ActivityLevel,
   GoalMethod,
 } from "../schema";
+import { GOAL_METHODS, ACTIVITY_LEVELS } from "../schema";
 
 // ---- local helpers ------------------------------------------------------
 
@@ -50,6 +52,33 @@ const num = (v: unknown): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
+
+// The sanitized, enum-checked plan change the client + apply route act on. Built from the RAW parsed
+// trailer (splitPlanChange) using the real schema enums. Returns null if nothing valid remains.
+export interface PlanChange {
+  goal_kcal?: number;
+  method?: GoalMethod;
+  activity_level?: ActivityLevel;
+  weight_goal?: { target_lb: number; target_date: string };
+}
+export function validatePlanChange(raw: unknown): PlanChange | null {
+  if (!raw || typeof raw !== "object") return null;
+  const b = raw as Record<string, any>;
+  const out: PlanChange = {};
+  let has = false;
+  if (num(b.goal_kcal) > 0) { out.goal_kcal = Math.round(num(b.goal_kcal)); has = true; }
+  if (b.method != null && (GOAL_METHODS as readonly string[]).includes(String(b.method))) {
+    out.method = String(b.method) as GoalMethod; has = true;
+  }
+  if (b.activity_level != null && (ACTIVITY_LEVELS as readonly string[]).includes(String(b.activity_level))) {
+    out.activity_level = String(b.activity_level) as ActivityLevel; has = true;
+  }
+  const wg = b.weight_goal;
+  if (wg && typeof wg === "object" && num(wg.target_lb) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(String(wg.target_date || ""))) {
+    out.weight_goal = { target_lb: num(wg.target_lb), target_date: String(wg.target_date) }; has = true;
+  }
+  return has ? out : null;
+}
 
 // The client's local calendar date (YYYY-MM-DD) right now; tzMin follows Date.getTimezoneOffset().
 const todayStr = (tzMin = 0): string =>
@@ -345,10 +374,16 @@ export async function registerCoach(app: App, deps: RouteDeps): Promise<void> {
       return err(c, String((e as Error)?.message || e), 502);
     }
 
+    // Split off the machine-readable <<PLAN_CHANGE>> trailer (spec §10): the user only ever sees the
+    // stripped visibleText; the proposal is validated (enum/range) before it reaches the client.
+    const { visibleText, planChange } = splitPlanChange(reply);
+    const proposed = validatePlanChange(planChange);
+
     // Report the model/provider that (by default) served the reply, for parity with v1's response.
     const { provider, model } = await resolveDefaultModel(platform, image ? "vision" : "ai");
     return ok(c, {
-      reply,
+      reply: visibleText,
+      plan_change: proposed,
       role,
       provider,
       model,
