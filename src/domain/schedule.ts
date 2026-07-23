@@ -114,7 +114,6 @@ function firesOn(s: PlanSchedule, unit: RecurrenceUnit, interval: number, d: str
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- `overrides` is consulted in Task 4.
 export function projectOccurrences(
   schedules: PlanSchedule[],
   overrides: PlanOverride[],
@@ -127,6 +126,10 @@ export function projectOccurrences(
   const out: Occurrence[] = [];
   if (start > toDate) return out;
 
+  // Index overrides by "{scheduleId}:{date}" — the occurrence identity.
+  const ovByKey = new Map<string, PlanOverride>();
+  for (const o of overrides) ovByKey.set(`${o.schedule_id}:${o.scheduled_date}`, o);
+
   for (const s of schedules) {
     if (!s.is_active) continue;
     const unit = s.recurrence?.unit;
@@ -138,18 +141,22 @@ export function projectOccurrences(
       if (d < s.active_from) continue;             // before the schedule began
       if (!firesOn(s, unit, interval, d)) continue;
 
-      const time = s.time_of_day || "00:00";
+      const o = ovByKey.get(`${s.id}:${d}`);
+      if (o?.is_skipped) continue;                      // "delete just this one"
+      const overridden = !!(o && (o.new_time || o.new_payload));
+      const time = o?.new_time || s.time_of_day || "00:00";
+      const payload = o?.new_payload ?? s.payload ?? {};
       out.push({
         id: `${s.id}:${d}`,
         schedule_id: s.id,
         scheduled_date: d,
         kind: s.kind,
         name: s.name,
-        payload: s.payload ?? {},
+        payload,
         time_of_day: time,
         logged_at: localInstantUTC(d, time, s.tz_offset_min),
         day: d,
-        is_overridden: false,
+        is_overridden: overridden,
       });
     }
   }
