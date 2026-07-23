@@ -127,3 +127,65 @@ test("itemKey namespaces entries and uses the occurrence's synthetic id", () => 
   assert.equal(itemKey(loggedEntry), "entry:e1");
   assert.equal(itemKey(occurrence), "s1:2026-07-24");
 });
+
+import { buildPlanRequest } from "../src/web/planner.js";
+
+test("buildPlanRequest: repeat 'none' → POST /api/plan/entry with logged_at from date+time+tz", () => {
+  const req = buildPlanRequest({
+    kind: "food", description: "Planned dinner", kcal: 800, macros: { protein: 50, carbs: 60, fat: 30 },
+    date: "2026-07-24", time: "19:00", repeat: "none",
+  }, 0);
+  assert.equal(req.method, "POST");
+  assert.equal(req.path, "/api/plan/entry");
+  assert.equal(req.body.kind, "food");
+  assert.equal(req.body.description, "Planned dinner");
+  assert.equal(req.body.kcal, 800);
+  assert.equal(req.body.macros.protein, 50);
+  assert.equal(req.body.logged_at, "2026-07-24T19:00:00.000Z");
+  assert.equal(req.body.tz_offset_min, 0);
+});
+
+test("buildPlanRequest: daily repeat → POST /api/plan/schedules with recurrence + payload + active_from", () => {
+  const req = buildPlanRequest({
+    kind: "food", name: "Overnight oats", kcal: 300, macros: { protein: 12, carbs: 40, fat: 8 },
+    date: "2026-07-24", time: "07:30", repeat: "daily", interval: 1,
+  }, 300);
+  assert.equal(req.path, "/api/plan/schedules");
+  assert.equal(req.body.name, "Overnight oats");
+  assert.deepEqual(req.body.recurrence, { unit: "daily", interval: 1 });
+  assert.equal(req.body.time_of_day, "07:30");
+  assert.equal(req.body.tz_offset_min, 300);
+  assert.equal(req.body.active_from, "2026-07-24");
+  assert.equal(req.body.is_active, true);
+  assert.equal(req.body.payload.kcal, 300);
+  assert.equal(req.body.payload.macros.carbs, 40);
+});
+
+test("buildPlanRequest: weekly repeat carries by_weekday", () => {
+  const req = buildPlanRequest({
+    kind: "activity", name: "Run", kcal: 250, duration_min: 30,
+    date: "2026-07-24", time: "06:00", repeat: "weekly", interval: 2, by_weekday: [1, 3, 5],
+  }, 0);
+  assert.equal(req.path, "/api/plan/schedules");
+  assert.equal(req.body.kind, "activity");
+  assert.deepEqual(req.body.recurrence, { unit: "weekly", interval: 2, by_weekday: [1, 3, 5] });
+  assert.equal(req.body.payload.duration_min, 30);
+});
+
+test("buildPlanRequest: monthly repeat carries day_of_month; interval defaults to 1", () => {
+  const req = buildPlanRequest({
+    kind: "food", name: "Cheat meal", kcal: 1200, date: "2026-07-15", time: "18:00",
+    repeat: "monthly", day_of_month: 15,
+  }, 0);
+  assert.deepEqual(req.body.recurrence, { unit: "monthly", interval: 1, day_of_month: 15 });
+});
+
+test("buildPlanRequest: activity one-off puts duration_min top-level on the entry", () => {
+  const req = buildPlanRequest({
+    kind: "activity", description: "Evening walk", kcal: 120, duration_min: 25,
+    date: "2026-07-24", time: "20:00", repeat: "none",
+  }, 0);
+  assert.equal(req.path, "/api/plan/entry");
+  assert.equal(req.body.duration_min, 25);
+  assert.equal(req.body.kcal, 120);
+});
