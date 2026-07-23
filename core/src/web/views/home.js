@@ -16,8 +16,11 @@
 import {
   $, $$, api, APP, me, registerView, openView, view, toast,
   statRing, ringEl, lineChart, sparkBars, feedRow, dayDivider, tripleRingCard,
-  fmt, modeOf, METRIC, RC, localDayKey, weighInEdit, weighInDelete,
+  fmt, modeOf, METRIC, RC, localDayKey, weighInEdit, weighInDelete, dayLabel, todayISO,
 } from "../lib.js";
+import {
+  timelineWindow, expandWindow, groupByDay, dayHeading, displayFields, plannedState, itemKey,
+} from "../planner.js";
 
 // View-local UI state (mirrors v1 HOME): which slice + window + chart the dashboard is showing.
 const HOME = { scope: "all", range: "day", chart: "ring", weight: null };
@@ -47,8 +50,8 @@ async function render() {
   } catch (e) { toast(e.message); return; }
   HOME.weight = wp;
   renderStats(stats);
-  $("#feedlbl").textContent = "Log";
-  loadFeed(true);
+  $("#feedlbl").textContent = "Timeline";
+  initTimeline();
 }
 
 // ============================================================ stat card
@@ -137,53 +140,117 @@ function renderStats(s) {
 const sub = (text) => { const d = document.createElement("div"); d.className = "subline"; d.textContent = text; return d; };
 function htmlRow(a, b) { const d = document.createElement("div"); d.className = "avgrow"; d.innerHTML = `<span>${a}</span><span>${b}</span>`; return d; }
 
-// ============================================================ feed (cursor + scope + day groups)
-const FEED = { cursor: null, done: false, loading: false, lastDay: null, seq: 0 };
+// ============================================================ timeline (merged /api/timeline)
+// Home's feed IS the merged timeline (spec §4.3): logged actuals + planned one-offs + projected
+// occurrences over a window around today, newest-future at the top scrolling DOWN into the past.
+// HONESTY: this list is NEVER summed. The stat card reads /api/stats (server, planned-excluded);
+// planned/occurrence rows carry no totals of their own. Accepting a row (Task 5) refreshes totals
+// from the server, never from this array.
+const TL = { win: null, byKey: new Map(), loading: false, seq: 0, today: null, reachedPast: false, reachedFuture: false };
 
-async function loadFeed(reset) {
-  if (FEED.loading) return;
-  const ul = $("#feed");
-  if (reset) { FEED.cursor = null; FEED.done = false; FEED.lastDay = null; FEED.seq++; ul.innerHTML = ""; }
-  if (FEED.done) return;
-  const seq = FEED.seq;
-  FEED.loading = true;
-  try {
-    const qs = "/api/feed?limit=40&scope=" + HOME.scope + (FEED.cursor ? "&before=" + encodeURIComponent(FEED.cursor) : "");
-    const r = await api(qs);
-    if (seq !== FEED.seq) return; // a reset happened mid-flight
-    appendFeed(r.entries || []);
-    FEED.cursor = r.next;
-    if (!r.next) FEED.done = true;
-    if (reset && !ul.children.length) {
-      ul.innerHTML = '<li class="hint" style="color:var(--muted);font-size:13px;padding:10px 2px">Nothing logged yet — tap <b>+ Add to log</b>.</li>';
-      FEED.done = true;
-    }
-  } catch (_) { /* keep whatever is already shown */ }
-  finally { if (seq === FEED.seq) FEED.loading = false; }
-  // Backfill until the page fills the screen so scrolling can begin.
-  if (!FEED.done && document.body.offsetHeight <= window.innerHeight + 200) loadFeed(false);
+function initTimeline() {
+  TL.today = todayISO();
+  TL.win = timelineWindow(TL.today);
+  TL.byKey = new Map();
+  TL.reachedPast = false;
+  TL.reachedFuture = false;
+  TL.seq++;
+  $("#feed").innerHTML = "";
+  loadSlice(TL.win.from, TL.win.to, TL.seq).then(() => {
+    renderTimeline();
+    // Center Today on open (BE ledger pattern): bring the "Today" divider to the top of the viewport.
+    const today = $('#feed [data-day="' + TL.today + '"]');
+    if (today && typeof today.scrollIntoView === "function") today.scrollIntoView({ block: "start" });
+  });
 }
 
-function appendFeed(entries) {
+// Fetch a [from,to] slice and merge into TL.byKey (keyed → idempotent; overlapping windows dedupe).
+async function loadSlice(from, to, seq) {
+  if (TL.loading) return;
+  TL.loading = true;
+  try {
+    const r = await api("/api/timeline?scope=" + HOME.scope + "&from=" + from + "&to=" + to);
+    if (seq !== TL.seq) return; // a scope change / reset happened mid-flight
+    for (const it of r.items || []) TL.byKey.set(itemKey(it), it);
+  } catch (_) { /* keep whatever is already shown */ }
+  finally { if (seq === TL.seq) TL.loading = false; }
+}
+
+// Rebuild #feed from TL.byKey, preserving scroll position by anchoring on the element under the
+// viewport top (prepending future content above the fold must not jump the view).
+function renderTimeline() {
   const ul = $("#feed");
-  entries.forEach((en) => {
-    const key = localDayKey(en.logged_at);
-    if (key !== FEED.lastDay) { FEED.lastDay = key; ul.appendChild(dayDivider(en.logged_at)); }
-    ul.appendChild(feedRow(en, {
-      onEdit: (e) => openView("editentry", e),
-      onDelete: (e) => deleteEntry(e.id),
-      // Weigh-ins in the All feed (opt-in) get the same swipe edit/delete as the Weight tab.
-      onWeightEdit: (r) => weighInEdit(r, render),
-      onWeightDelete: (r) => weighInDelete(r, render),
-      // onClick defaults to onEdit inside feedRow.
-    }));
-  });
+  const anchor = anchorInfo(ul);
+  const groups = groupByDay([...TL.byKey.values()]); // descending: future day → today → past day
+  ul.innerHTML = "";
+  if (!groups.length) {
+    ul.innerHTML = '<li class="hint" style="color:var(--muted);font-size:13px;padding:10px 2px">Nothing here yet — <b>Log</b> what you ate or <b>Plan</b> an event.</li>';
+    return;
+  }
+  for (const g of groups) {
+    const divider = dayDivider(g.items[0].logged_at);
+    // Prefer the pure relative heading; fall back to lib.dayLabel's absolute format.
+    const rel = dayHeading(g.day, TL.today);
+    if (rel) { const span = divider.querySelector("span"); if (span) span.textContent = rel; }
+    divider.dataset.day = g.day;
+    ul.appendChild(divider);
+    for (const it of g.items) ul.appendChild(timelineRowEl(it));
+  }
+  restoreAnchor(ul, anchor);
+}
+
+// One timeline row: a logged stored entry uses the existing swipe feedRow; planned items (one-off
+// entries + occurrences) get the ghosted accept row (Task 5). Until Task 5, planned rows fall back to
+// a plain read-only feedRow so the merge is verifiable on its own.
+function timelineRowEl(it) {
+  if (it.state === "logged" && it.origin === "entry") {
+    return feedRow(it, { onEdit: (e) => openView("editentry", e), onDelete: (e) => deleteEntry(e.id) });
+  }
+  return feedRow(it, {}); // TEMP (Task 5 replaces with plannedRowEl)
 }
 
 async function deleteEntry(id) {
   try { await api("/api/entries/" + id, { method: "DELETE" }); toast("Deleted"); render(); }
   catch (e) { toast(e.message); }
 }
+
+// ---- scroll-anchor preservation (keep the viewport steady across a re-render) ----
+function anchorInfo(ul) {
+  const kids = Array.from(ul.children);
+  for (const node of kids) {
+    const r = node.getBoundingClientRect();
+    if (r.bottom > 0) return { day: node.dataset ? node.dataset.day : null, top: r.top };
+  }
+  return null;
+}
+function restoreAnchor(ul, anchor) {
+  if (!anchor || !anchor.day) return;
+  const el2 = ul.querySelector('[data-day="' + anchor.day + '"]');
+  if (!el2) return;
+  const delta = el2.getBoundingClientRect().top - anchor.top;
+  if (delta) window.scrollBy(0, delta);
+}
+
+// ---- bidirectional infinite scroll: near the top → more future; near the bottom → more past ----
+async function extendFuture() {
+  if (TL.loading || TL.reachedFuture) return;
+  const oldTo = TL.win.to;
+  TL.win = expandWindow(TL.win, "future");
+  const before = TL.byKey.size;
+  await loadSlice(addDays1(oldTo), TL.win.to, TL.seq);
+  if (TL.byKey.size === before) TL.reachedFuture = true; // no new items → stop asking (bounded)
+  renderTimeline();
+}
+async function extendPast() {
+  if (TL.loading || TL.reachedPast) return;
+  const oldFrom = TL.win.from;
+  TL.win = expandWindow(TL.win, "past");
+  const before = TL.byKey.size;
+  await loadSlice(TL.win.from, addDays1(oldFrom, -1), TL.seq);
+  if (TL.byKey.size === before) TL.reachedPast = true;
+  renderTimeline();
+}
+const addDays1 = (ymd, n = 1) => new Date(Date.parse(ymd + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 
 // ============================================================ one-time control wiring
 // The scope/range/chart segmented controls + the add button are static markup in index.html; wire
@@ -209,11 +276,12 @@ const addBtn = $("#addBtn");
 if (addBtn) addBtn.addEventListener("click", () =>
   openView("compose", { scope: HOME.scope === "activity" ? "activity" : "nutrition" }));
 
-// Infinite scroll: pull the next page as the user nears the bottom of the Home feed.
+// Bidirectional infinite scroll: near the top loads more future, near the bottom loads more past.
 window.addEventListener("scroll", () => {
   const home = $("#view-home");
   if (!home || home.hidden || HOME.scope === "weight") return;
-  if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 500) loadFeed(false);
+  if (window.scrollY <= 400) extendFuture();                                              // near top → future
+  else if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 500) extendPast(); // near bottom → past
 }, { passive: true });
 
 // ============================================================ register with the router
