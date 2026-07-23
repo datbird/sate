@@ -120,8 +120,68 @@ function showFullPlan() {
   dialog({ title: "Your full plan", body });
 }
 
-// Task 6/7 stubs — replaced when those tasks land.
-function loadSchedules() {}
+// ---- "Scheduled" section: the recurring plan manager (spec §8.2).
+async function loadSchedules() {
+  const list = UI.schedList;
+  list.innerHTML = '<div class="loadrow"><span class="spinner"></span><span>Loading…</span></div>';
+  let schedules = [];
+  try {
+    schedules = (await api("/api/plan/schedules")).schedules || [];
+  } catch (e) {
+    list.innerHTML = '<div class="hint">Couldn’t load schedules — ' + esc(e.message) + "</div>";
+    return;
+  }
+  list.innerHTML = "";
+  if (!schedules.length) {
+    list.appendChild(el("div", { class: "hint" }, "No recurring plans yet. Tap ", el("b", {}, "Plan"), " above and pick a repeat to create one."));
+    return;
+  }
+  // Soonest-next first; schedules with no upcoming occurrence sink to the bottom.
+  const today = todayISO();
+  schedules
+    .map((s) => ({ s, next: nextOccurrence(s, today) }))
+    .sort((a, b) => (a.next || "9999").localeCompare(b.next || "9999"))
+    .forEach(({ s, next }) => list.appendChild(scheduleRow(s, next)));
+}
+
+const KIND_ICON = {
+  food: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v7a2 2 0 0 0 4 0V3"/><path d="M10 12v9"/><ellipse cx="16" cy="6.4" rx="2.2" ry="3.4"/><path d="M16 9.8V21"/></svg>',
+  activity: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4" r="1"/><path d="M4 17l5 1 .75-1.5"/><path d="M15 21v-4l-4-3 1-6"/><path d="M7 12V9l5-1 3 3 3 1"/></svg>',
+};
+
+function scheduleRow(s, next) {
+  const icon = el("span", { class: "sched-ico " + (s.kind === "activity" ? "a" : "n"),
+    html: KIND_ICON[s.kind === "activity" ? "activity" : "food"] });
+  const nextLabel = next ? "Next: " + prettyDate(next) : "No upcoming occurrence";
+  const text = el("div", { class: "sched-text" },
+    el("span", { class: "sched-name" }, esc(s.name || "(unnamed)")),
+    el("span", { class: "sched-sub" }, esc(recurrenceSummary(s)) + " · " + esc(nextLabel)));
+  const del = el("button", { class: "sched-del", type: "button", "aria-label": "Delete", title: "Delete",
+    html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/></svg>' });
+  del.addEventListener("click", (ev) => { ev.stopPropagation(); deleteSchedule(s); });
+  const row = el("div", { class: "sched-row", role: "button", tabindex: "0" }, icon, text, del);
+  row.addEventListener("click", () => openView("planevent", { schedule: s, mode: "edit" }));
+  return row;
+}
+
+// A short absolute date label ("Mon, Jul 27") from a YYYY-MM-DD, parsed as a UTC anchor so it never
+// tz-shifts a day. (The pure helper returns the label-free date; formatting stays in the DOM layer.)
+function prettyDate(ymd) {
+  const d = new Date(ymd + "T00:00:00Z");
+  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+async function deleteSchedule(s) {
+  const ok = await confirmDialog("Delete “" + (s.name || "this plan") + "” and all its future occurrences?",
+    { title: "Delete schedule", confirmLabel: "Delete", danger: true });
+  if (!ok) return;
+  try {
+    await api("/api/plan/schedules/" + s.id, { method: "DELETE" });
+    toast("Schedule deleted");
+    loadSchedules();
+  } catch (e) { toast(e.message); }
+}
+
 function renderLogPlan() {}
 
 registerView("plan", { container: "#view-plan", render });

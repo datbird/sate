@@ -987,3 +987,16 @@ button.link.danger { color: var(--danger); }
 .yourplan .plan-actions button[disabled] { opacity: .5; cursor: default; }
 .fullplan-text p { margin: 0 0 12px; line-height: 1.5; }
 .fullplan-text p:last-child { margin-bottom: 0; }
+
+/* ---- Planner: Scheduled list ---- */
+.sched-list { display: flex; flex-direction: column; gap: 8px; }
+.sched-row { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); cursor: pointer; }
+.sched-row:active { transform: translateY(1px); }
+.sched-ico { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: color-mix(in srgb, var(--brand) 12%, transparent); color: var(--brand); }
+.sched-ico svg { width: 20px; height: 20px; }
+.sched-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.sched-name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sched-sub { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sched-del { flex: none; background: transparent; border: none; color: var(--muted); padding: 6px; border-radius: 8px; cursor: pointer; }
+.sched-del:active { color: var(--danger, #dc2626); }
+.sched-del svg { width: 18px; height: 18px; }
