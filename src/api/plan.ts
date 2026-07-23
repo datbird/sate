@@ -108,6 +108,10 @@ export async function registerPlan(app: App, deps: RouteDeps): Promise<void> {
       const date = String(b.scheduled_date);
 
       // Idempotent: if this occurrence already materialized, return that entry (no double-count).
+      // Fail CLOSED on a query error here — this existence-check is the idempotency guard itself,
+      // so silently falling through to create() on error risks a duplicate materialized entry
+      // (double-count) exactly when the guard is needed most.
+      let existing: Entry | undefined;
       try {
         const { items } = await store.list<Entry>("entries", {
           where: [
@@ -116,13 +120,13 @@ export async function registerPlan(app: App, deps: RouteDeps): Promise<void> {
           ],
           limit: 1,
         });
-        const existing = items[0];
-        if (existing) {
-          const eday = existing.day || dayKey(existing.logged_at, num(existing.tz_offset_min));
-          return ok(c, { entry: existing, totals: await dayIntakeTotals(store, eday) });
-        }
+        existing = items[0];
       } catch {
-        /* fall through to create */
+        return err(c, "could not verify occurrence state", 502);
+      }
+      if (existing) {
+        const eday = existing.day || dayKey(existing.logged_at, num(existing.tz_offset_min));
+        return ok(c, { entry: existing, totals: await dayIntakeTotals(store, eday) });
       }
 
       const sched = await store.get<PlanSchedule>("plan_schedules", scheduleId);
@@ -330,6 +334,8 @@ export async function registerPlan(app: App, deps: RouteDeps): Promise<void> {
     type Item = Record<string, unknown> & { logged_at: string };
     const items: Item[] = [];
     const materialized = new Set<string>();
+    // Build the materialized-key set from ALL in-range entries BEFORE the scope filter — a scoped
+    // request must still drop occurrences materialized by an out-of-scope entry.
     for (const e of entries) {
       if (e.plan_schedule_id && e.scheduled_date) materialized.add(`${e.plan_schedule_id}:${e.scheduled_date}`);
       if (!kindOk(e.kind)) continue;
