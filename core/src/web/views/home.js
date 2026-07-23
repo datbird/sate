@@ -16,10 +16,10 @@
 import {
   $, $$, api, APP, me, registerView, openView, view, toast,
   statRing, ringEl, lineChart, sparkBars, feedRow, dayDivider, tripleRingCard,
-  fmt, modeOf, METRIC, RC, localDayKey, weighInEdit, weighInDelete, dayLabel, todayISO,
+  fmt, modeOf, METRIC, RC, todayISO,
 } from "../lib.js";
 import {
-  timelineWindow, expandWindow, groupByDay, dayHeading, displayFields, plannedState, itemKey,
+  timelineWindow, expandWindow, groupByDay, dayHeading, displayFields, plannedState, itemKey, addDays,
 } from "../planner.js";
 
 // View-local UI state (mirrors v1 HOME): which slice + window + chart the dashboard is showing.
@@ -146,14 +146,25 @@ function htmlRow(a, b) { const d = document.createElement("div"); d.className = 
 // HONESTY: this list is NEVER summed. The stat card reads /api/stats (server, planned-excluded);
 // planned/occurrence rows carry no totals of their own. Accepting a row (Task 5) refreshes totals
 // from the server, never from this array.
-const TL = { win: null, byKey: new Map(), loading: false, seq: 0, today: null, reachedPast: false, reachedFuture: false };
+// emptyPast/emptyFuture: consecutive-empty-slice counters per direction (reset whenever a slice adds
+// ≥1 new key). stopPast/stopFuture: latched once EITHER 3 consecutive empty slices land OR the hard
+// date bound is hit — never on a single empty slice, so a gap in the data (e.g. two quiet months)
+// can't permanently hide older/newer content. minFrom/maxTo are the hard bounds (see initTimeline).
+const TL = {
+  win: null, byKey: new Map(), loading: false, seq: 0, today: null,
+  emptyPast: 0, emptyFuture: 0, stopPast: false, stopFuture: false, minFrom: null, maxTo: null,
+};
 
 function initTimeline() {
   TL.today = todayISO();
   TL.win = timelineWindow(TL.today);
   TL.byKey = new Map();
-  TL.reachedPast = false;
-  TL.reachedFuture = false;
+  TL.emptyPast = 0;
+  TL.emptyFuture = 0;
+  TL.stopPast = false;
+  TL.stopFuture = false;
+  TL.minFrom = addDays(TL.today, -3 * 365); // don't probe further back than ~3 years
+  TL.maxTo = addDays(TL.today, 365);        // don't probe further forward than ~1 year
   TL.seq++;
   $("#feed").innerHTML = "";
   loadSlice(TL.win.from, TL.win.to, TL.seq).then(() => {
@@ -161,6 +172,7 @@ function initTimeline() {
     // Center Today on open (BE ledger pattern): bring the "Today" divider to the top of the viewport.
     const today = $('#feed [data-day="' + TL.today + '"]');
     if (today && typeof today.scrollIntoView === "function") today.scrollIntoView({ block: "start" });
+    fillViewportIfNeeded();
   });
 }
 
@@ -232,25 +244,53 @@ function restoreAnchor(ul, anchor) {
 }
 
 // ---- bidirectional infinite scroll: near the top → more future; near the bottom → more past ----
+// Each direction stops independently once EITHER 3 consecutive fetched slices add zero new item-keys
+// (a real end of data) OR its hard date bound is reached — a single empty slice only means that date
+// range is empty, not that no further content exists (see Task 4 review: don't latch on first empty).
 async function extendFuture() {
-  if (TL.loading || TL.reachedFuture) return;
+  if (TL.loading || TL.stopFuture) return;
   const oldTo = TL.win.to;
-  TL.win = expandWindow(TL.win, "future");
+  if (oldTo >= TL.maxTo) { TL.stopFuture = true; return; } // already at the hard bound
+  let next = expandWindow(TL.win, "future");
+  const hitBound = next.to >= TL.maxTo;
+  if (hitBound) next = { from: next.from, to: TL.maxTo }; // clamp to the bound, fetch the final slice
+  TL.win = next;
   const before = TL.byKey.size;
   await loadSlice(addDays1(oldTo), TL.win.to, TL.seq);
-  if (TL.byKey.size === before) TL.reachedFuture = true; // no new items → stop asking (bounded)
+  if (TL.byKey.size > before) TL.emptyFuture = 0; // got new content → reset the counter
+  else TL.emptyFuture++;
+  if (hitBound || TL.emptyFuture >= 3) TL.stopFuture = true;
   renderTimeline();
+  fillViewportIfNeeded();
 }
 async function extendPast() {
-  if (TL.loading || TL.reachedPast) return;
+  if (TL.loading || TL.stopPast) return;
   const oldFrom = TL.win.from;
-  TL.win = expandWindow(TL.win, "past");
+  if (oldFrom <= TL.minFrom) { TL.stopPast = true; return; } // already at the hard bound
+  let next = expandWindow(TL.win, "past");
+  const hitBound = next.from <= TL.minFrom;
+  if (hitBound) next = { from: TL.minFrom, to: next.to }; // clamp to the bound, fetch the final slice
+  TL.win = next;
   const before = TL.byKey.size;
   await loadSlice(TL.win.from, addDays1(oldFrom, -1), TL.seq);
-  if (TL.byKey.size === before) TL.reachedPast = true;
+  if (TL.byKey.size > before) TL.emptyPast = 0; // got new content → reset the counter
+  else TL.emptyPast++;
+  if (hitBound || TL.emptyPast >= 3) TL.stopPast = true;
   renderTimeline();
+  fillViewportIfNeeded();
 }
 const addDays1 = (ymd, n = 1) => new Date(Date.parse(ymd + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+
+// ---- viewport backfill: a sparse timeline (few logged/planned days) may not fill the screen, which
+// leaves the user with no scroll event to trigger further expansion. Mirrors the old feed's "keep
+// backfilling until the page fills" behavior. Prefers past first, then future; each call only fires
+// one more extend, and extend* re-invokes this after render, so it self-terminates via the same
+// counters/bounds as manual scrolling (both directions latched → no-op).
+function fillViewportIfNeeded() {
+  if (document.body.offsetHeight > window.innerHeight + 200) return; // already fills the viewport
+  if (!TL.stopPast) extendPast();
+  else if (!TL.stopFuture) extendFuture();
+}
 
 // ============================================================ one-time control wiring
 // The scope/range/chart segmented controls + the add button are static markup in index.html; wire
