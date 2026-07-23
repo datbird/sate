@@ -3,17 +3,24 @@
 // POSTs via the pure planner.buildPlanRequest to /api/plan/entry (one-off) or /api/plan/schedules
 // (recurring). "None" makes a planned entry; a repeat makes a schedule the timeline projects.
 //
-// The recipe suggester (spec §7) is Phase 5 — the "Suggest a recipe" option is present but disabled
-// (a clean seam). Food search reuses the existing foodsearch view. Reuses lib's sheet()/api()/toast()
-// and the compose manual-food field vocabulary; escapes all user text with esc(). After a successful
-// create it refreshes Home so the item lands on the timeline.
+// The recipe suggester (spec §7, Phase 5) is LIVE for meals: a target prefilled from the remaining
+// daily budget → AI ideas (/api/recipes/suggest) → a full recipe (/api/recipes/expand) → either
+// "Add to plan" (fills this form's F, the user still picks date/time/repeat, then the normal submit()
+// below makes a PLANNED entry/schedule via buildPlanRequest) or "Log now" (creates a LOGGED entry via
+// /api/plan/entry + /api/plan/accept — NOT /api/foods/manual, which would pollute the shared food KB
+// with one-off AI recipes). The recipe (ingredients+steps) is stored in the entry's `note`. Allergies
+// are applied SERVER-SIDE from the profile — the client never collects or sends them. All AI-generated
+// text (idea names/blurbs, ingredients, steps) renders via textContent (`el({text:...})`), never
+// innerHTML, so it can never execute as markup. Food search reuses the existing foodsearch view.
+// Reuses lib's sheet()/api()/toast() and the compose manual-food field vocabulary; escapes all user
+// text with esc(). After a successful create it refreshes Home so the item lands on the timeline.
 
 "use strict";
 
 import {
-  $$, el, esc, api, toast, busy, sheet, openView, registerView, tzOffset, todayISO, view,
+  $$, el, esc, api, toast, busy, sheet, openView, registerView, tzOffset, todayISO, view, me, fmt,
 } from "../lib.js";
-import { buildPlanRequest } from "../planner.js";
+import { buildPlanRequest, remainingBudget } from "../planner.js";
 import { render as renderHome } from "./home.js";
 
 const WEEKDAYS = [["S", 0], ["M", 1], ["T", 2], ["W", 3], ["T", 4], ["F", 5], ["S", 6]];
@@ -164,7 +171,9 @@ function renderFill(host) {
   const seams = el("div", { class: "planseams" },
     el("button", { class: "link", type: "button", text: F.kind === "activity" ? "Search activities…" : "Search food…",
       onClick: () => openView("foodsearch", "") }),
-    el("button", { class: "link", type: "button", disabled: "", title: "Coming soon", text: "✨ Suggest a recipe (soon)" }),
+    ...(F.kind === "activity" ? [] : [
+      el("button", { class: "link", type: "button", text: "✨ Suggest a recipe", onClick: () => openRecipePanel() }),
+    ]),
   );
 
   host.append(el("div", { class: "field-lbl", text: "Details" }), manual, seams);
@@ -204,6 +213,211 @@ async function submit() {
     try { renderHome(); } catch (_) {}
     try { const p = view("plan"); if (p && p.render) p.render(); } catch (_) {}
   } catch (e) { toast(e.message); if (saveBtn) saveBtn.disabled = false; }
+}
+
+// ---- recipe suggester (spec §7): prefilled editable target → ideas → full recipe → plan | log ----
+let R = null; // { target, prefs, ideas, chosen, recipe }
+let recipeCtrl = null;
+let recipeBusy = false; // guards every AI/API call in this panel against a double-fire
+
+// The prefilled target = the remaining daily budget (goal − today's logged totals), editable.
+function initRecipeState() {
+  const m = me() || {};
+  const t = remainingBudget(m.goals, m.totals);
+  // If the meal already has numbers typed, prefer those; else use the remaining budget.
+  R = {
+    target: {
+      kcal: num(F.kcal) || t.kcal,
+      protein: num(F.macros.protein) || t.protein,
+      carbs: num(F.macros.carbs) || t.carbs,
+      fat: num(F.macros.fat) || t.fat,
+    },
+    prefs: "",
+    ideas: null,
+    chosen: null,
+    recipe: null,
+  };
+}
+
+function openRecipePanel() {
+  initRecipeState();
+  recipeBusy = false;
+  recipeCtrl = sheet({
+    title: "Suggest a recipe",
+    className: "recipesheet",
+    onClose: () => { recipeCtrl = null; },
+    body: (b) => renderRecipe(b),
+  });
+}
+
+function renderRecipe(host) {
+  host.innerHTML = "";
+  // 1) editable target
+  const tgt = el("div", { class: "rtarget" });
+  [["kcal", "Calories"], ["protein", "Protein (g)"], ["carbs", "Carbs (g)"], ["fat", "Fat (g)"]].forEach(([k, label]) => {
+    const inp = el("input", { type: "number", step: "any", inputmode: "decimal", value: String(R.target[k] || 0) });
+    inp.addEventListener("input", () => { R.target[k] = num(inp.value); });
+    tgt.append(el("label", { class: "mfield" }, el("span", { text: label }), inp));
+  });
+  // 2) prefs (free text only — allergies are NEVER collected here; the server applies them from the
+  // saved profile, so a client-side field would be redundant at best and spoofable at worst).
+  const prefs = el("input", { type: "text", placeholder: "Preferences (optional) — e.g. quick, vegetarian, no oven", value: R.prefs });
+  prefs.addEventListener("input", () => { R.prefs = prefs.value; });
+  // 3) actions + results
+  const results = el("div", { class: "rresults" });
+  const go = el("button", { class: "primary", type: "button", text: R.ideas ? "Re-roll" : "Get ideas",
+    onClick: () => loadIdeas(results, go) });
+
+  host.append(
+    el("div", { class: "field-lbl", text: "Target (prefilled from your remaining budget — edit freely)" }),
+    tgt,
+    el("label", { class: "field" }, "Preferences", prefs),
+    el("div", { class: "sheet-actions", style: { marginTop: "8px" } }, go),
+    results,
+  );
+  if (R.recipe) renderFullRecipe(results);
+  else if (R.ideas) renderIdeas(results);
+}
+
+async function loadIdeas(results, goBtn) {
+  if (recipeBusy) return;
+  recipeBusy = true;
+  goBtn.disabled = true;
+  R.recipe = null; R.chosen = null;
+  busy("Finding recipes…");
+  try {
+    const r = await api("/api/recipes/suggest", { method: "POST",
+      json: { target: R.target, method: (me() || {}).track_mode || "", prefs: R.prefs } });
+    R.ideas = (r && r.ideas) || [];
+    goBtn.textContent = "Re-roll";
+    renderIdeas(results);
+  } catch (e) { toast(e.message); } finally { recipeBusy = false; goBtn.disabled = false; }
+}
+
+// Every idea/blurb/ingredient/step below is untrusted AI output — rendered exclusively via the `text`
+// prop (Node.textContent), never `html`, so it can never execute as markup.
+function renderIdeas(host) {
+  host.innerHTML = "";
+  if (!R.ideas.length) { host.append(el("div", { class: "hint", text: "No ideas fit that target — adjust it and try again." })); return; }
+  const list = el("div", { class: "idealist" });
+  R.ideas.forEach((idea) => {
+    const macro = fmt(idea.kcal) + " kcal · " + fmt(idea.protein) + "P / " + fmt(idea.carbs) + "C / " + fmt(idea.fat) + "F";
+    const card = el("button", { class: "ideacard", type: "button" },
+      el("div", { class: "iname", text: idea.name }),          // text node → esc-safe
+      el("div", { class: "imacro", text: macro }),
+      el("div", { class: "iblurb", text: idea.blurb || "" }),
+    );
+    card.addEventListener("click", () => expandIdea(idea, host, list));
+    list.append(card);
+  });
+  host.append(list);
+}
+
+async function expandIdea(idea, host, list) {
+  if (recipeBusy) return;
+  recipeBusy = true;
+  if (list) $$("button", list).forEach((b) => { b.disabled = true; });
+  R.chosen = idea;
+  busy("Building the recipe…");
+  try {
+    const r = await api("/api/recipes/expand", { method: "POST",
+      json: { idea: idea.name, target: R.target, prefs: R.prefs } });
+    R.recipe = r;
+    renderFullRecipe(host);
+  } catch (e) {
+    toast(e.message);
+    if (list) $$("button", list).forEach((b) => { b.disabled = false; });
+  } finally { recipeBusy = false; }
+}
+
+function renderFullRecipe(host) {
+  host.innerHTML = "";
+  const r = R.recipe;
+  const ing = el("ul", { class: "ringlist" });
+  (r.ingredients || []).forEach((g) => ing.append(el("li", { text: (g.amount ? g.amount + " " : "") + g.item })));
+  const steps = el("ol", { class: "rsteps" });
+  (r.steps || []).forEach((s) => steps.append(el("li", { text: s })));
+  const macro = fmt(r.kcal) + " kcal · " + fmt(r.macros.protein) + "P / " + fmt(r.macros.carbs) + "C / " + fmt(r.macros.fat) + "F  (per serving)";
+  const back = el("button", { class: "link", type: "button", text: "← Back to ideas", onClick: () => { R.recipe = null; renderIdeas(host); } });
+  const addPlan = el("button", { class: "primary", type: "button", text: "Add to plan", onClick: () => addRecipeToPlan() });
+  const logNow = el("button", { class: "ghost", type: "button", text: "Log now", onClick: () => logRecipeNow(addPlan, logNow) });
+  host.append(
+    el("div", { class: "rtitle", text: r.name + (r.servings ? " · serves " + r.servings : "") }),
+    el("div", { class: "imacro", text: macro }),
+    el("div", { class: "field-lbl", text: "Ingredients" }), ing,
+    el("div", { class: "field-lbl", text: "Steps" }), steps,
+    el("div", { class: "rrow" }, addPlan, logNow),
+    back,
+  );
+}
+
+// A recipe → a note string stored on the resulting entry/schedule for reference (spec §7.2, ruling #5).
+function recipeNote(r) {
+  const ing = (r.ingredients || []).map((g) => "- " + (g.amount ? g.amount + " " : "") + g.item).join("\n");
+  const steps = (r.steps || []).map((s, i) => (i + 1) + ". " + s).join("\n");
+  return "Ingredients:\n" + ing + "\n\nSteps:\n" + steps;
+}
+
+// "Add to plan" → hand off to the plan-an-event flow: fill F with the recipe's content, close the
+// recipe sheet, and re-render the fill step. The user's already-chosen date/time/repeat still apply;
+// the existing "Add to plan" submit runs buildPlanRequest → a PLANNED entry (or schedule) — nothing is
+// counted until the user accepts it later (honesty). The recipe itself rides along in F.note.
+function addRecipeToPlan() {
+  const r = R.recipe;
+  F.name = r.name; F.description = r.name;
+  F.kcal = String(Math.round(num(r.kcal) || 0));
+  F.macros = {
+    protein: String(Math.round(num(r.macros.protein) || 0)),
+    carbs: String(Math.round(num(r.macros.carbs) || 0)),
+    fat: String(Math.round(num(r.macros.fat) || 0)),
+  };
+  F.note = recipeNote(r);
+  if (recipeCtrl) recipeCtrl.close();
+  recipeCtrl = null;
+  toast("Recipe added — set the date/time and tap Add to plan.");
+  // Re-render the whole plan sheet body so the filled numbers show (lib.sheet's controller exposes
+  // its body element as `.body`; see lib.js's documented sheet() contract).
+  if (planCtrl && planCtrl.body) renderForm(planCtrl.body);
+}
+
+// "Log now" → a LOGGED entry immediately (honesty: this one counts toward today's totals right away).
+// Deliberately NOT /api/foods/manual — that route upserts into the shared, reusable food KB, and a
+// one-off AI recipe has no business polluting it. Instead: create a planned entry (/api/plan/entry)
+// then immediately accept it (/api/plan/accept) — the same "planned→logged" primitive the rest of the
+// planner already uses — so the entry ends up status:"logged" with no KB side effect.
+async function logRecipeNow(addPlanBtn, logBtn) {
+  if (recipeBusy) return;
+  recipeBusy = true;
+  if (addPlanBtn) addPlanBtn.disabled = true;
+  if (logBtn) logBtn.disabled = true;
+  const r = R.recipe;
+  busy("Logging…");
+  try {
+    const created = await api("/api/plan/entry", { method: "POST", json: {
+      kind: "food",
+      description: r.name,
+      note: recipeNote(r),
+      kcal: num(r.kcal),
+      macros: {
+        protein: num(r.macros.protein), carbs: num(r.macros.carbs), fat: num(r.macros.fat),
+        fiber: num(r.macros.fiber), sugar: num(r.macros.sugar), sodium: num(r.macros.sodium), sat_fat: num(r.macros.sat_fat),
+      },
+      tz_offset_min: tzOffset(),
+    } });
+    const entry = created && created.entry;
+    if (!entry || !entry.id) throw new Error("Could not create the entry");
+    await api("/api/plan/accept", { method: "POST", json: { entry_id: entry.id } });
+    toast("Logged.");
+    if (recipeCtrl) recipeCtrl.close();
+    recipeCtrl = null;
+    if (planCtrl) planCtrl.close();
+    planCtrl = null; editing = null;
+    try { renderHome(); } catch (_) {}
+  } catch (e) {
+    toast(e.message);
+    if (addPlanBtn) addPlanBtn.disabled = false;
+    if (logBtn) logBtn.disabled = false;
+  } finally { recipeBusy = false; }
 }
 
 export function render() {} // overlay-only; required by the view contract.

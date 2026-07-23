@@ -1000,3 +1000,21 @@ button.link.danger { color: var(--danger); }
 .sched-del { flex: none; background: transparent; border: none; color: var(--muted); padding: 6px; border-radius: 8px; cursor: pointer; }
 .sched-del:active { color: var(--danger, #dc2626); }
 .sched-del svg { width: 18px; height: 18px; }
+
+/* ---- Planner: recipe suggester panel ---- */
+.recipesheet .rtarget { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.recipesheet .rresults { margin-top: 10px; }
+.recipesheet .idealist { display: flex; flex-direction: column; gap: 8px; }
+.recipesheet .ideacard { text-align: left; width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: transparent; cursor: pointer; }
+.recipesheet .ideacard:active { transform: translateY(1px); }
+.recipesheet .ideacard[disabled] { opacity: .5; cursor: default; }
+.recipesheet .iname { font-weight: 700; }
+.recipesheet .imacro { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.recipesheet .iblurb { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.recipesheet .rtitle { font-weight: 800; font-size: 16px; margin-bottom: 2px; }
+.recipesheet .ringlist, .recipesheet .rsteps { margin: 6px 0 0 18px; display: flex; flex-direction: column; gap: 4px; }
+.recipesheet .rrow { display: flex; gap: 10px; margin-top: 14px; }
+.recipesheet .rrow .primary, .recipesheet .rrow .ghost { flex: 1 1 0; }
+.recipesheet .rrow .ghost { background: transparent; color: var(--brand); border: 1.5px solid color-mix(in srgb, var(--brand) 45%, var(--line)); border-radius: 10px; font-weight: 700; }
+.recipesheet .rrow button[disabled] { opacity: .5; cursor: default; }
+.recipesheet .sheet-actions button[disabled] { opacity: .5; cursor: default; }
