@@ -22,6 +22,7 @@ const num = (x) => (x === "" || x == null || isNaN(+x) ? undefined : +x);
 // View-local form state for the open sheet.
 let F = null;
 let planCtrl = null;
+let saveBtn = null;
 
 export function open(args = {}) {
   F = {
@@ -75,7 +76,7 @@ function renderForm(host) {
   // 5) fill (content)
   const fillHost = el("div", { id: "planFill" });
 
-  const saveBtn = el("button", { class: "primary", type: "button", text: "Add to plan", onClick: submit });
+  saveBtn = el("button", { class: "primary", type: "button", text: "Add to plan", onClick: submit });
 
   host.append(
     kindSeg,
@@ -158,13 +159,14 @@ async function submit() {
   };
   const req = buildPlanRequest(form, tzOffset());
   busy("Saving plan…");
+  if (saveBtn) saveBtn.disabled = true;
   try {
     await api(req.path, { method: req.method, json: req.body });
     toast(F.repeat === "none" ? "Added to your plan." : "Recurring plan created.");
     if (planCtrl) planCtrl.close();
     planCtrl = null;
     try { renderHome(); } catch (_) {}
-  } catch (e) { toast(e.message); }
+  } catch (e) { toast(e.message); if (saveBtn) saveBtn.disabled = false; }
 }
 
 export function render() {} // overlay-only; required by the view contract.
