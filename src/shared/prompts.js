@@ -166,6 +166,93 @@ function allergiesLine(allergies) {
   return "DIETARY RESTRICTIONS / ALLERGIES (must respect — never include these): " + a;
 }
 
+// ---- recipe prompt builders (pure; server injects allergies from the profile) ----
+function targetLines(target) {
+  var t = target || {};
+  return [
+    "Target for this meal (fit these as closely as you reasonably can):",
+    "- Calories: " + num(t.kcal) + " kcal",
+    "- Protein: " + num(t.protein) + " g, Carbs: " + num(t.carbs) + " g, Fat: " + num(t.fat) + " g",
+  ];
+}
+
+function buildRecipeSuggestMsg(inp) {
+  inp = inp || {};
+  var L = targetLines(inp.target);
+  var method = (inp.method == null ? "" : String(inp.method)).trim();
+  var prefs = (inp.prefs == null ? "" : String(inp.prefs)).trim();
+  var al = allergiesLine(inp.allergies);
+  if (method) L.push("Tracking-method emphasis: " + method + ".");
+  if (prefs) L.push("Preferences: " + prefs);
+  if (al) L.push(al);
+  L.push("Suggest about 5 distinct meal ideas that fit this target.");
+  return L.join("\n");
+}
+
+function buildRecipeExpandMsg(inp) {
+  inp = inp || {};
+  var idea = inp.idea;
+  var name = idea && typeof idea === "object" ? String(idea.name || "") : String(idea || "");
+  var L = ["Expand this meal idea into a full recipe: " + name];
+  if (inp.target) L = L.concat(targetLines(inp.target));
+  var prefs = (inp.prefs == null ? "" : String(inp.prefs)).trim();
+  var al = allergiesLine(inp.allergies);
+  if (prefs) L.push("Preferences: " + prefs);
+  if (al) L.push(al);
+  return L.join("\n");
+}
+
+// ---- recipe response normalizers (strict-JSON already parsed; coerce + clamp + fallback) ----
+var MAX_IDEAS = 8;
+
+function normalizeRecipeIdeas(obj) {
+  var ideas = obj && Array.isArray(obj.ideas) ? obj.ideas : [];
+  var clean = [];
+  for (var i = 0; i < ideas.length && clean.length < MAX_IDEAS; i++) {
+    var it = ideas[i] || {};
+    clean.push({
+      name: String(it.name || "Meal idea"),
+      kcal: num(it.kcal),
+      protein: num(it.protein),
+      carbs: num(it.carbs),
+      fat: num(it.fat),
+      blurb: String(it.blurb || ""),
+    });
+  }
+  return { ideas: clean };
+}
+
+function macrosOf(m) {
+  m = m || {};
+  return {
+    protein: num(m.protein), carbs: num(m.carbs), fat: num(m.fat),
+    fiber: num(m.fiber), sugar: num(m.sugar), sodium: num(m.sodium), sat_fat: num(m.sat_fat),
+  };
+}
+
+function normalizeRecipe(obj) {
+  var o = obj && typeof obj === "object" ? obj : {};
+  var ing = Array.isArray(o.ingredients) ? o.ingredients : [];
+  var ingredients = [];
+  for (var i = 0; i < ing.length; i++) {
+    var g = ing[i];
+    if (g && typeof g === "object") ingredients.push({ item: String(g.item || ""), amount: String(g.amount || "") });
+    else if (g != null && String(g).trim()) ingredients.push({ item: String(g), amount: "" });
+  }
+  var st = Array.isArray(o.steps) ? o.steps : [];
+  var steps = [];
+  for (var j = 0; j < st.length; j++) { if (st[j] != null && String(st[j]).trim()) steps.push(String(st[j])); }
+  var servings = num(o.servings);
+  return {
+    name: String(o.name || ""),
+    servings: servings > 0 ? Math.round(servings) : (o.name ? 1 : 0),
+    ingredients: ingredients,
+    steps: steps,
+    kcal: num(o.kcal),
+    macros: macrosOf(o.macros),
+  };
+}
+
 const PROMPTS = {
   vision_estimate: { system: NUTRITION_SYSTEM, jsonMode: true },
   text_parse: { system: NUTRITION_SYSTEM, jsonMode: true },
@@ -256,4 +343,8 @@ module.exports = {
   normalizeNutrition,
   normalizeActivity,
   allergiesLine,
+  buildRecipeSuggestMsg,
+  buildRecipeExpandMsg,
+  normalizeRecipeIdeas,
+  normalizeRecipe,
 };

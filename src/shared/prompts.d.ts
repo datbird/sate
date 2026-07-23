@@ -59,3 +59,16 @@ export declare function normalizeActivity(obj: any): ActivityResult;
 // server-side into the recipe prompts and the nutritionist coach context. Empty string when the
 // user has none, so callers can concatenate unconditionally.
 export declare function allergiesLine(allergies: string | undefined | null): string;
+
+export interface RecipeIdea { name: string; kcal: number; protein: number; carbs: number; fat: number; blurb: string; }
+export interface RecipeIdeas { ideas: RecipeIdea[]; }
+export interface RecipeIngredient { item: string; amount: string; }
+export interface Recipe {
+  name: string; servings: number; ingredients: RecipeIngredient[]; steps: string[];
+  kcal: number; macros: { protein: number; carbs: number; fat: number; fiber: number; sugar: number; sodium: number; sat_fat: number };
+}
+export interface RecipeTarget { kcal: number; protein: number; carbs: number; fat: number; }
+export declare function buildRecipeSuggestMsg(inp: { target: RecipeTarget; method?: string; prefs?: string; allergies?: string }): string;
+export declare function buildRecipeExpandMsg(inp: { idea: string | { name?: string }; target?: RecipeTarget; prefs?: string; allergies?: string }): string;
+export declare function normalizeRecipeIdeas(obj: unknown): RecipeIdeas;
+export declare function normalizeRecipe(obj: unknown): Recipe;
