@@ -224,4 +224,69 @@ export async function registerPlan(app: App, deps: RouteDeps): Promise<void> {
     await store.delete("plan_schedules", id);
     return ok(c, { deleted: id });
   });
+
+  // ---- GET /api/timeline?from&to&scope&tz — the merged Home/Plan timeline (spec §4.1).
+  // Stored entries in [from,to] (logged actuals + planned one-offs) merged with projected occurrences
+  // from active schedules; skipped + already-materialized occurrence dates are dropped. Occurrences are
+  // never stored, so they never reach any total — this route returns a list only (honesty preserved).
+  app.get("/api/timeline", async (c) => {
+    const uid = getUid(c);
+    const store = platform.data.forUser(uid);
+    const tz = Number(c.req.query("tz") || 0);
+    const todayLocal = dayKey(new Date().toISOString(), tz);
+    const from = String(c.req.query("from") || todayLocal);
+    const to = String(c.req.query("to") || from);
+    const scope = String(c.req.query("scope") || "all");
+    const wantActivity = scope === "activity" ? true : scope === "nutrition" ? false : null;
+    const kindOk = (k?: string) => wantActivity === null || (k === "activity") === wantActivity;
+
+    // 1) Stored entries whose local day falls in [from,to]. Single inequality on `day` + orderBy day
+    //    (no composite index); the upper bound is applied in code. Covers logged actuals + planned one-offs.
+    let entries: Entry[] = [];
+    try {
+      ({ items: entries } = await store.list<Entry>("entries", {
+        where: [{ field: "day", op: ">=", value: from }],
+        orderBy: [{ field: "day", dir: "asc" }],
+        limit: 2000,
+      }));
+    } catch {
+      entries = [];
+    }
+    entries = entries.filter((e) => (e.day || "") <= to);
+
+    type Item = Record<string, unknown> & { logged_at: string };
+    const items: Item[] = [];
+    const materialized = new Set<string>();
+    for (const e of entries) {
+      if (e.plan_schedule_id && e.scheduled_date) materialized.add(`${e.plan_schedule_id}:${e.scheduled_date}`);
+      if (!kindOk(e.kind)) continue;
+      items.push({ ...e, state: e.status === "planned" ? "planned" : "logged", origin: "entry" });
+    }
+
+    // 2) Projected occurrences from active schedules + overrides, minus skipped/materialized dates.
+    let schedules: PlanSchedule[] = [];
+    let overrides: PlanOverride[] = [];
+    try {
+      ({ items: schedules } = await store.list<PlanSchedule>("plan_schedules", {
+        where: [{ field: "is_active", op: "==", value: true }], limit: 500,
+      }));
+    } catch {
+      schedules = [];
+    }
+    try {
+      ({ items: overrides } = await store.list<PlanOverride>("plan_overrides", { limit: 2000 }));
+    } catch {
+      overrides = [];
+    }
+    const occ: Occurrence[] = projectOccurrences(schedules, overrides, from, to, todayLocal);
+    for (const o of occ) {
+      if (!kindOk(o.kind)) continue;
+      if (materialized.has(o.id)) continue; // accepted/edited-into-an-entry → the stored entry represents it
+      items.push({ ...o, state: "planned", origin: "occurrence" });
+    }
+
+    // 3) Chronological merge.
+    items.sort((a, b) => (a.logged_at < b.logged_at ? -1 : a.logged_at > b.logged_at ? 1 : 0));
+    return ok(c, { from, to, scope, items });
+  });
 }
