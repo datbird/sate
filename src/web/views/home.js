@@ -370,9 +370,12 @@ segControl("#scope", "scope", render);
 segControl("#range", "range", () => api("/api/stats?range=" + HOME.range).then(renderStats).catch(() => {}));
 segControl("#charts", "chart", () => api("/api/stats?range=" + HOME.range).then(renderStats).catch(() => {}));
 
-const addBtn = $("#addBtn");
-if (addBtn) addBtn.addEventListener("click", () =>
+const logBtn = $("#logBtn");
+if (logBtn) logBtn.addEventListener("click", () =>
   openView("compose", { scope: HOME.scope === "activity" ? "activity" : "nutrition" }));
+const planBtn = $("#planBtn");
+if (planBtn) planBtn.addEventListener("click", () =>
+  openView("planevent", { scope: HOME.scope === "activity" ? "activity" : "nutrition" }));
 
 // Bidirectional infinite scroll: near the top loads more future, near the bottom loads more past.
 window.addEventListener("scroll", () => {

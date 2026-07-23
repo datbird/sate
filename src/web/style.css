@@ -698,6 +698,13 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
   font-size: 16px; font-weight: 600; cursor: pointer; box-shadow: 0 6px 18px color-mix(in srgb, var(--brand) 32%, transparent); }
 .addbtn svg { width: 20px; height: 20px; }
 
+/* ---- Planner: the Log / Plan button pair ---- */
+.logplan { display: flex; gap: 10px; }
+.logplan .addbtn { flex: 1 1 0; margin: 0; }
+.logplan .addbtn.plan {
+  color: var(--brand); background: transparent; border: 1.5px solid color-mix(in srgb, var(--brand) 45%, var(--line));
+}
+
 /* feed entries (new type-icon design; overrides the old .entry layout) */
 .entries { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 8px; }
 /* Feed row = a clip container; `.entry-main` (full-width, opaque) covers the `.entry-actions` strip
