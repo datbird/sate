@@ -22,6 +22,7 @@ import "./views/home.js";
 import "./views/coach.js";
 import "./views/history.js";
 import "./views/compose.js";
+import "./views/planevent.js";
 import "./views/foodsearch.js";
 import "./views/editentry.js";
 import "./views/weight.js";
