@@ -72,3 +72,18 @@ export declare function buildRecipeSuggestMsg(inp: { target: RecipeTarget; metho
 export declare function buildRecipeExpandMsg(inp: { idea: string | { name?: string }; target?: RecipeTarget; prefs?: string; allergies?: string }): string;
 export declare function normalizeRecipeIdeas(obj: unknown): RecipeIdeas;
 export declare function normalizeRecipe(obj: unknown): Recipe;
+
+// The raw, UNVALIDATED plan-change object parsed from the model's <<PLAN_CHANGE>> trailer. The route
+// (validatePlanChange) enforces the GOAL_METHODS/ACTIVITY_LEVELS enums + ranges before anything is used.
+export interface PlanChangeRaw {
+  goal_kcal?: unknown;
+  method?: unknown;
+  activity_level?: unknown;
+  weight_goal?: { target_lb?: unknown; target_date?: unknown };
+}
+export interface PlanChangeSplit {
+  visibleText: string;
+  planChange: PlanChangeRaw | null;
+}
+// Split a raw model reply into the user-visible text (trailer stripped) + the parsed proposal (or null).
+export declare function splitPlanChange(raw: string | null | undefined): PlanChangeSplit;
