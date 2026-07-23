@@ -11,6 +11,7 @@ import {
   err,
   ensureProfile,
   foodGrounding,
+  isLogged,
   type App,
   type RouteDeps,
 } from "./helpers";
@@ -184,7 +185,7 @@ async function recentIntake(
       orderBy: [{ field: "day" }],
       limit: 1000,
     });
-    items = res.items;
+    items = res.items.filter(isLogged);
   } catch {
     items = [];
   }
@@ -458,7 +459,7 @@ export async function registerCoach(app: App, deps: RouteDeps): Promise<void> {
         orderBy: [{ field: "logged_at", dir: "desc" }],
         limit: 500,
       });
-      items = res.items;
+      items = res.items.filter(isLogged);
     } catch {
       items = [];
     }

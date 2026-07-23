@@ -5,8 +5,8 @@
 
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import type { Platform } from "../ports";
-import type { Food, Profile } from "../schema";
+import type { Platform, DataStore } from "../ports";
+import type { Entry, Food, Macros, Profile } from "../schema";
 import * as foods from "../kb/foods";
 
 // ---- Hono typing --------------------------------------------------------
@@ -40,6 +40,40 @@ export const err = (c: Context<AppVars>, message: string, status: number = 400):
 export function dayKey(loggedAtISO: string, tzOffsetMin = 0): string {
   const t = Date.parse(loggedAtISO) - (Number(tzOffsetMin) || 0) * 60000;
   return new Date(t).toISOString().slice(0, 10);
+}
+
+// ---- planning honesty rule -------------------------------------------------
+// A planned entry (status:"planned") carries INTENDED content but counts toward NO total until it is
+// accepted (status→"logged"). Entries created before the Planner have no status field → treated as
+// logged. Every intake/burn aggregation filters on this. (Activity-vs-intake exclusion is separate.)
+export const isLogged = (e: { status?: string }): boolean => e.status !== "planned";
+
+// The ONE canonical server-authoritative day-intake total. Sums a local day's LOGGED food entries;
+// planned entries (honesty rule) and activity entries (burn, never intake) are excluded. Every route
+// that reports a single day's totals (log routes, /api/entries, accept) uses this — no re-implementation.
+export async function dayIntakeTotals(
+  store: DataStore,
+  day: string,
+): Promise<{ kcal: number; protein: number; carbs: number; fat: number; fiber: number; sugar: number; sodium: number; sat_fat: number; count: number }> {
+  const t = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, sodium: 0, sat_fat: 0, count: 0 };
+  if (!day) return t;
+  let items: Entry[] = [];
+  try {
+    ({ items } = await store.list<Entry>("entries", { where: [{ field: "day", op: "==", value: day }], limit: 500 }));
+  } catch {
+    return t;
+  }
+  const num = (v: unknown): number => { const n = Number(v); return isFinite(n) ? n : 0; };
+  for (const e of items) {
+    if (!isLogged(e)) continue; // planned entries never count toward intake
+    if (e.kind === "activity") continue; // burn is not intake
+    const m = (e.macros || {}) as Macros;
+    t.count += 1;
+    t.kcal += num(e.kcal);
+    t.protein += num(m.protein); t.carbs += num(m.carbs); t.fat += num(m.fat);
+    t.fiber += num(m.fiber); t.sugar += num(m.sugar); t.sodium += num(m.sodium); t.sat_fat += num(m.sat_fat);
+  }
+  return t;
 }
 
 // ---- instance settings (key/value) --------------------------------------
