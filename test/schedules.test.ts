@@ -109,3 +109,75 @@ test("upsertOverride writes exactly one row per (schedule_id, scheduled_date), u
   assert.equal((items[0] as any).is_skipped, false, "the second call's patch won");
   assert.equal((items[0] as any).new_time, "08:00");
 });
+
+test("PATCH occurrence scope=one upserts an override (leaves the series)", async () => {
+  const { req, platform } = client();
+  const { body } = await createSchedule(req);
+  const id = body.schedule.id;
+  const res = await req(`/api/plan/schedules/${id}/occurrences/2026-07-11`, {
+    method: "PATCH", body: JSON.stringify({ scope: "one", new_time: "20:00", new_payload: { kcal: 550 } }),
+  });
+  assert.equal(res.status, 200);
+  const out = await res.json();
+  assert.equal(out.scope, "one");
+  assert.equal(out.override.new_time, "20:00");
+  assert.equal(out.override.new_payload.kcal, 550);
+  // Series unchanged: the schedule keeps its original time.
+  const store = platform.data.forUser("tester@example.com");
+  const sched = await store.get("plan_schedules", id);
+  assert.equal(sched.time_of_day, "07:30");
+});
+
+test("PATCH occurrence scope=one twice updates the same override (no duplicate)", async () => {
+  const { req, platform } = client();
+  const { body } = await createSchedule(req);
+  const id = body.schedule.id;
+  await req(`/api/plan/schedules/${id}/occurrences/2026-07-11`, { method: "PATCH", body: JSON.stringify({ scope: "one", new_time: "20:00" }) });
+  await req(`/api/plan/schedules/${id}/occurrences/2026-07-11`, { method: "PATCH", body: JSON.stringify({ scope: "one", new_time: "21:00" }) });
+  const store = platform.data.forUser("tester@example.com");
+  const { items } = await store.list("plan_overrides", {});
+  assert.equal(items.length, 1, "one override row for the date");
+  assert.equal(items[0].new_time, "21:00");
+});
+
+test("PATCH occurrence scope=all edits the schedule", async () => {
+  const { req } = client();
+  const { body } = await createSchedule(req);
+  const id = body.schedule.id;
+  const res = await req(`/api/plan/schedules/${id}/occurrences/2026-07-11`, {
+    method: "PATCH", body: JSON.stringify({ scope: "all", new_time: "09:00", recurrence: { unit: "weekly", interval: 1, by_weekday: [1] } }),
+  });
+  const out = await res.json();
+  assert.equal(out.scope, "all");
+  assert.equal(out.schedule.time_of_day, "09:00");
+  assert.equal(out.schedule.recurrence.unit, "weekly");
+});
+
+test("DELETE occurrence scope=one writes a skip override", async () => {
+  const { req, platform } = client();
+  const { body } = await createSchedule(req);
+  const id = body.schedule.id;
+  const res = await req(`/api/plan/schedules/${id}/occurrences/2026-07-11?scope=one`, { method: "DELETE" });
+  assert.equal(res.status, 200);
+  const out = await res.json();
+  assert.equal(out.skipped, true);
+  const store = platform.data.forUser("tester@example.com");
+  const { items } = await store.list("plan_overrides", {});
+  assert.equal(items[0].is_skipped, true);
+});
+
+test("DELETE occurrence scope=all deactivates the schedule", async () => {
+  const { req } = client();
+  const { body } = await createSchedule(req);
+  const id = body.schedule.id;
+  const res = await req(`/api/plan/schedules/${id}/occurrences/2026-07-11?scope=all`, { method: "DELETE" });
+  const out = await res.json();
+  assert.equal(out.deactivated, true);
+  assert.equal(out.schedule.is_active, false);
+});
+
+test("PATCH occurrence 404s an unknown schedule", async () => {
+  const { req } = client();
+  const res = await req("/api/plan/schedules/nope/occurrences/2026-07-11", { method: "PATCH", body: JSON.stringify({ scope: "one", new_time: "20:00" }) });
+  assert.equal(res.status, 404);
+});

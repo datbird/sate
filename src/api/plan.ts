@@ -289,4 +289,84 @@ export async function registerPlan(app: App, deps: RouteDeps): Promise<void> {
     items.sort((a, b) => (a.logged_at < b.logged_at ? -1 : a.logged_at > b.logged_at ? 1 : 0));
     return ok(c, { from, to, scope, items });
   });
+
+  // ---- PATCH /api/plan/schedules/:id/occurrences/:date — edit one (override) or all (schedule).
+  app.patch("/api/plan/schedules/:id/occurrences/:date", async (c) => {
+    const uid = getUid(c);
+    const store = platform.data.forUser(uid);
+    const id = c.req.param("id");
+    const date = c.req.param("date");
+    const rec = await store.get<PlanSchedule>("plan_schedules", id);
+    if (!rec) return err(c, "not found", 404);
+    if (rec.user !== uid) return err(c, "forbidden", 403);
+    const b = (await c.req.json().catch(() => ({}))) as Record<string, any>;
+
+    if (b.scope === "all") {
+      // Edit-all = patch the schedule (payload / time / recurrence).
+      const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+      const nextPayload = b.new_payload ?? b.payload;
+      if (nextPayload && typeof nextPayload === "object") patch.payload = nextPayload;
+      const nextTime = b.new_time ?? b.time_of_day;
+      if (nextTime !== undefined) patch.time_of_day = String(nextTime);
+      if (b.recurrence && typeof b.recurrence === "object") {
+        const r = ScheduleRecurrence.safeParse(b.recurrence);
+        if (!r.success) return err(c, "invalid recurrence", 400);
+        patch.recurrence = r.data;
+      }
+      try {
+        const schedule = await store.update<PlanSchedule>("plan_schedules", id, patch as Partial<PlanSchedule>);
+        return ok(c, { schedule, scope: "all" });
+      } catch (e) {
+        return err(c, msgOf(e), 502);
+      }
+    }
+
+    // scope=one (default) → upsert a plan_override with new_time / new_payload.
+    const draft: Record<string, unknown> = {
+      user: uid, schedule_id: id, scheduled_date: date, is_skipped: false,
+      created_at: new Date().toISOString(),
+    };
+    const nextTime = b.new_time ?? b.time_of_day;
+    if (nextTime !== undefined) draft.new_time = String(nextTime);
+    const nextPayload = b.new_payload ?? b.payload;
+    if (nextPayload && typeof nextPayload === "object") draft.new_payload = nextPayload;
+    try {
+      const override = await upsertOverride(store, id, date, draft);
+      return ok(c, { override, scope: "one" });
+    } catch (e) {
+      return err(c, msgOf(e), 502);
+    }
+  });
+
+  // ---- DELETE /api/plan/schedules/:id/occurrences/:date?scope=one|all — skip one or deactivate all.
+  app.delete("/api/plan/schedules/:id/occurrences/:date", async (c) => {
+    const uid = getUid(c);
+    const store = platform.data.forUser(uid);
+    const id = c.req.param("id");
+    const date = c.req.param("date");
+    const rec = await store.get<PlanSchedule>("plan_schedules", id);
+    if (!rec) return err(c, "not found", 404);
+    if (rec.user !== uid) return err(c, "forbidden", 403);
+
+    if (c.req.query("scope") === "all") {
+      try {
+        const schedule = await store.update<PlanSchedule>("plan_schedules", id, {
+          is_active: false, updated_at: new Date().toISOString(),
+        } as Partial<PlanSchedule>);
+        return ok(c, { schedule, scope: "all", deactivated: true });
+      } catch (e) {
+        return err(c, msgOf(e), 502);
+      }
+    }
+
+    // scope=one (default) → upsert an is_skipped override.
+    try {
+      const override = await upsertOverride(store, id, date, {
+        user: uid, schedule_id: id, scheduled_date: date, is_skipped: true, created_at: new Date().toISOString(),
+      });
+      return ok(c, { override, scope: "one", skipped: true });
+    } catch (e) {
+      return err(c, msgOf(e), 502);
+    }
+  });
 }
