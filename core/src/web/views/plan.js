@@ -182,7 +182,28 @@ async function deleteSchedule(s) {
   } catch (e) { toast(e.message); }
 }
 
-function renderLogPlan() {}
+// ---- Log · Plan buttons (spec §8.3, §9) — the same pair as Home; built into the Plan tab's slot.
+function renderLogPlan() {
+  const host = UI.logplan;
+  host.innerHTML = "";
+  const logBtn = el("button", { class: "addbtn", type: "button" },
+    htmlSvg('<path d="M12 5v14M5 12h14"/>', 2.4), "Log");
+  const planBtn = el("button", { class: "addbtn plan", type: "button" },
+    htmlSvg('<rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M8 3v3M16 3v3M3 9.5h18"/>', 1.9), "Plan");
+  logBtn.addEventListener("click", () => openView("compose", { scope: "nutrition" }));
+  planBtn.addEventListener("click", () => openView("planevent", { scope: "nutrition" }));
+  host.append(logBtn, planBtn);
+}
+
+// Small inline-SVG helper (keeps the two buttons visually identical to Home's markup).
+function htmlSvg(inner, sw) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "none");
+  s.setAttribute("stroke", "currentColor"); s.setAttribute("stroke-width", String(sw));
+  s.setAttribute("stroke-linecap", "round"); s.setAttribute("stroke-linejoin", "round");
+  s.innerHTML = inner;
+  return s;
+}
 
 registerView("plan", { container: "#view-plan", render });
 export { render };
