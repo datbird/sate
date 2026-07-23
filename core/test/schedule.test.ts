@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { projectOccurrences, localInstantUTC, type PlanSchedule } from "../src/domain/schedule.ts";
+import { type PlanOverride } from "../src/domain/schedule.ts";
 
 // A minimal daily schedule factory; override fields per test.
 function daily(over: Partial<PlanSchedule> = {}): PlanSchedule {
@@ -131,4 +132,35 @@ test("monthly interval=2 fires every other month from active_from", () => {
   const occ = projectOccurrences([monthly({ recurrence: { unit: "monthly", interval: 2, day_of_month: 10 }, active_from: "2026-01-10" })],
     [], "2026-01-01", "2026-06-30", "2026-01-01");
   assert.deepEqual(occ.map((o) => o.scheduled_date), ["2026-01-10", "2026-03-10", "2026-05-10"]);
+});
+
+function ov(over: Partial<PlanOverride>): PlanOverride {
+  return { id: "o1", user: "u", schedule_id: "s1", scheduled_date: "2026-07-11", ...over };
+}
+
+test("override is_skipped drops that occurrence only", () => {
+  const occ = projectOccurrences([daily()], [ov({ is_skipped: true })], "2026-07-10", "2026-07-12", "2026-07-10");
+  assert.deepEqual(occ.map((o) => o.scheduled_date), ["2026-07-10", "2026-07-12"]);
+});
+
+test("override new_time moves the occurrence's time_of_day and logged_at, flags is_overridden", () => {
+  const occ = projectOccurrences([daily({ time_of_day: "07:30" })],
+    [ov({ scheduled_date: "2026-07-11", new_time: "20:00" })], "2026-07-11", "2026-07-11", "2026-07-11");
+  assert.equal(occ[0].time_of_day, "20:00");
+  assert.equal(occ[0].logged_at, "2026-07-11T20:00:00.000Z");
+  assert.equal(occ[0].is_overridden, true);
+});
+
+test("override new_payload replaces the occurrence payload, flags is_overridden", () => {
+  const occ = projectOccurrences([daily({ payload: { kcal: 300 } })],
+    [ov({ scheduled_date: "2026-07-11", new_payload: { kcal: 550, description: "Bigger oats" } })],
+    "2026-07-11", "2026-07-11", "2026-07-11");
+  assert.deepEqual(occ[0].payload, { kcal: 550, description: "Bigger oats" });
+  assert.equal(occ[0].is_overridden, true);
+});
+
+test("a non-matching override leaves the series untouched", () => {
+  const occ = projectOccurrences([daily()], [ov({ schedule_id: "other", scheduled_date: "2026-07-11", is_skipped: true })],
+    "2026-07-10", "2026-07-12", "2026-07-10");
+  assert.deepEqual(occ.map((o) => o.scheduled_date), ["2026-07-10", "2026-07-11", "2026-07-12"]);
 });
