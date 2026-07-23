@@ -7,7 +7,7 @@
 
 import type { Context } from "hono";
 import {
-  getUid, getEmail, ok, err, dayKey, ensureProfile, foodGrounding, isLogged, dayIntakeTotals,
+  getUid, getEmail, ok, err, dayKey, ensureProfile, foodGrounding, dayIntakeTotals,
   type App, type AppVars, type RouteDeps,
 } from "./helpers";
 import {

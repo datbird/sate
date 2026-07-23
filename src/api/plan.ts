@@ -22,7 +22,6 @@ function macrosOf(m: any): Macros {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function registerPlan(app: App, deps: RouteDeps): Promise<void> {
   const { platform } = deps;
 
