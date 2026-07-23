@@ -89,7 +89,10 @@ export const Entry = z.object({
   // status="planned" = a future meal/activity that has NOT happened; it carries the *intended*
   // content but is EXCLUDED from every total until accepted (status→"logged") via POST /api/plan/accept.
   // Absent on all pre-Planner entries → treated as "logged" (see isLogged in api/helpers).
-  status: z.enum(["logged", "planned"]).default("logged"),
+  // OPTIONAL, not defaulted: pre-Planner entries in Firestore have NO status field and read back
+  // undefined; `isLogged` (status !== "planned") already treats absent as logged. A `.default("logged")`
+  // would make status REQUIRED in the inferred type and break every store.create<Entry> that omits it.
+  status: z.enum(["logged", "planned"]).optional(),
   // Set on an entry materialized from a recurring schedule occurrence (phase 2). (schedule id, date)
   // is the occurrence identity, mirroring BalanceEngine's {scheduleId}:{date}.
   plan_schedule_id: z.string().optional(),
