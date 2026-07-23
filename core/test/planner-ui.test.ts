@@ -256,3 +256,24 @@ test("nextOccurrence respects active_from (future start) and active_to (past end
 test("nextOccurrence returns null for an inactive schedule", () => {
   assert.equal(nextOccurrence({ ...daily, is_active: false }, "2026-07-23"), null);
 });
+
+import { remainingBudget } from "../src/web/planner.js";
+
+test("remainingBudget subtracts logged totals from goals, clamped at 0", () => {
+  const r = remainingBudget(
+    { kcal: 2000, protein: 150, carbs: 200, fat: 60 },
+    { kcal: 1400, protein: 90, carbs: 160, fat: 45 },
+  );
+  assert.deepEqual(r, { kcal: 600, protein: 60, carbs: 40, fat: 15 });
+});
+
+test("remainingBudget never returns a negative target", () => {
+  const r = remainingBudget({ kcal: 1800, protein: 120, carbs: 150, fat: 50 },
+                            { kcal: 2200, protein: 140, carbs: 150, fat: 70 });
+  assert.deepEqual(r, { kcal: 0, protein: 0, carbs: 0, fat: 0 });
+});
+
+test("remainingBudget tolerates missing goals/totals (treats as 0)", () => {
+  assert.deepEqual(remainingBudget(null, null), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
+  assert.deepEqual(remainingBudget({ kcal: 500 }, {}), { kcal: 500, protein: 0, carbs: 0, fat: 0 });
+});
