@@ -14,7 +14,7 @@
 // PocketBase-specific concerns deliberately stay in pb_hooks/functions.js: provider-key encryption
 // ($security AES-GCM) and the DB provider lookup. Cloud gets those from the Secrets/DataStore ports.
 
-const FUNCTIONS = ["vision_estimate", "text_parse", "daily_summary", "web_lookup", "activity_estimate", "nutritionist", "checkin"];
+const FUNCTIONS = ["vision_estimate", "text_parse", "daily_summary", "web_lookup", "activity_estimate", "nutritionist", "checkin", "recipe_suggest", "recipe_expand"];
 
 const NUTRITION_SCHEMA =
   '{"items":[{"name":string,"qty":string,"kcal":number,"protein":number,"carbs":number,"fat":number,"fiber":number,"sugar":number,"sodium":number,"sat_fat":number}],' +
@@ -122,6 +122,50 @@ const CHECKIN_SYSTEM =
   "Name), referencing a concrete detail from their data and inviting a reply. When worthwhile is " +
   "false: set topic and message to empty strings. Plain text only, no markdown.";
 
+// ---- recipe suggester (spec §7) ----------------------------------------
+// Compact ideas that FIT a numeric target; the model is grounded on exact kcal/macro numbers so the
+// suggestions actually fit the user's remaining budget. Strict minified JSON, no prose/fences.
+const RECIPE_IDEAS_SCHEMA =
+  '{"ideas":[{"name":string,"kcal":number,"protein":number,"carbs":number,"fat":number,"blurb":string}]}';
+
+const RECIPE_SUGGEST_SYSTEM =
+  "You are a meal-idea engine for the Sate nutrition app. Given a numeric nutrition TARGET for a " +
+  "single meal (calories + protein/carbs/fat grams), an optional tracking-method emphasis, optional " +
+  "free-text preferences, and any dietary restrictions/allergies, propose about 5 distinct, realistic " +
+  "meal ideas whose nutrition fits the target as closely as you reasonably can. Honor the method " +
+  "emphasis (high-protein = protein-forward; low-carb = carbs low; low-fat = fat low; balanced = even; " +
+  "heart-healthy = low saturated fat/sodium), the preferences, and — as a HARD constraint — the " +
+  "dietary restrictions/allergies: NEVER suggest a meal that includes a restricted or allergenic " +
+  "ingredient. Respond ONLY with strict minified JSON (no markdown, no code fences) matching exactly:\n" +
+  RECIPE_IDEAS_SCHEMA + "\n" +
+  "kcal is calories; protein, carbs and fat are grams for one serving of the idea. `blurb` is a single " +
+  "short appetizing sentence (no newlines). Return roughly 5 ideas. If the target is unusable, return " +
+  '{"ideas":[]}.';
+
+// Expand ONE chosen idea into a cookable recipe with exact per-serving macros. Same allergy hard rule.
+const RECIPE_FULL_SCHEMA =
+  '{"name":string,"servings":number,"ingredients":[{"item":string,"amount":string}],"steps":[string],' +
+  '"kcal":number,"macros":{"protein":number,"carbs":number,"fat":number,"fiber":number,"sugar":number,"sodium":number,"sat_fat":number}}';
+
+const RECIPE_EXPAND_SYSTEM =
+  "You are a recipe engine for the Sate nutrition app. Expand the single meal idea the user names into " +
+  "a complete, cookable recipe that still fits the given nutrition target and honors the preferences " +
+  "and, as a HARD constraint, the dietary restrictions/allergies (NEVER include a restricted or " +
+  "allergenic ingredient). Respond ONLY with strict minified JSON (no markdown, no code fences) " +
+  "matching exactly:\n" + RECIPE_FULL_SCHEMA + "\n" +
+  "servings is a whole number of servings; each ingredient has a plain `item` name and an `amount` " +
+  "string (e.g. \"2 tbsp\", \"150 g\"); steps is an ordered array of short plain-text instructions; " +
+  "kcal and macros are per ONE serving. " + UNITS_LINE + " Keep it realistic and concise.";
+
+// A single grounding line naming the user's remembered dietary restrictions/allergies, injected
+// SERVER-SIDE into the recipe prompts AND the nutritionist coach context (spec §2.4, §7.3). Empty
+// string when the user has none, so callers can concatenate unconditionally.
+function allergiesLine(allergies) {
+  var a = (allergies == null ? "" : String(allergies)).trim();
+  if (!a) return "";
+  return "DIETARY RESTRICTIONS / ALLERGIES (must respect — never include these): " + a;
+}
+
 const PROMPTS = {
   vision_estimate: { system: NUTRITION_SYSTEM, jsonMode: true },
   text_parse: { system: NUTRITION_SYSTEM, jsonMode: true },
@@ -132,6 +176,8 @@ const PROMPTS = {
   activity_estimate: { system: ACTIVITY_SYSTEM, jsonMode: true },
   nutritionist: { system: NUTRITIONIST_SYSTEM, jsonMode: false },
   checkin: { system: CHECKIN_SYSTEM, jsonMode: true },
+  recipe_suggest: { system: RECIPE_SUGGEST_SYSTEM, jsonMode: true },
+  recipe_expand: { system: RECIPE_EXPAND_SYSTEM, jsonMode: true },
 };
 
 // ---- defensive JSON extraction from a model reply ----
@@ -209,4 +255,5 @@ module.exports = {
   parseJSON,
   normalizeNutrition,
   normalizeActivity,
+  allergiesLine,
 };

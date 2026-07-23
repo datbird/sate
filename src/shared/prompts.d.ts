@@ -10,6 +10,8 @@ export declare const FUNCTIONS: readonly [
   "activity_estimate",
   "nutritionist",
   "checkin",
+  "recipe_suggest",
+  "recipe_expand",
 ];
 export type AIFunction = (typeof FUNCTIONS)[number];
 
@@ -52,3 +54,8 @@ export interface ActivityResult {
   note: string;
 }
 export declare function normalizeActivity(obj: any): ActivityResult;
+
+// A single grounding line naming the user's remembered dietary restrictions/allergies, injected
+// server-side into the recipe prompts and the nutritionist coach context. Empty string when the
+// user has none, so callers can concatenate unconditionally.
+export declare function allergiesLine(allergies: string | undefined | null): string;
