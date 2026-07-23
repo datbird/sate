@@ -87,13 +87,69 @@ test("POST /api/plan/accept 404s an unknown entry", async () => {
   assert.equal(res.status, 404);
 });
 
-test("POST /api/plan/accept 400s the occurrence branch (phase 2)", async () => {
-  const { req } = client();
-  const res = await req("/api/plan/accept", {
-    method: "POST",
-    body: JSON.stringify({ schedule_id: "s1", scheduled_date: "2026-07-24" }),
+async function seedSchedule(platform: any, over: Record<string, unknown> = {}) {
+  const store = platform.data.forUser(TEST_EMAIL);
+  return await store.create("plan_schedules", {
+    user: TEST_EMAIL, kind: "food", name: "Overnight oats",
+    payload: { kcal: 300, description: "Overnight oats", macros: { protein: 12, carbs: 40, fat: 8 } },
+    recurrence: { unit: "daily", interval: 1 }, time_of_day: "07:30", tz_offset_min: 0,
+    active_from: "2026-07-01", is_active: true, ...over,
   });
-  assert.equal(res.status, 400);
+}
+
+test("POST /api/plan/accept (occurrence) materializes a logged entry from the schedule payload", async () => {
+  const { req, platform } = client();
+  const sched = await seedSchedule(platform);
+  const res = await req("/api/plan/accept", { method: "POST", body: JSON.stringify({ schedule_id: sched.id, scheduled_date: "2026-07-24" }) });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.entry.status, "logged");
+  assert.equal(body.entry.plan_schedule_id, sched.id);
+  assert.equal(body.entry.scheduled_date, "2026-07-24");
+  assert.equal(body.entry.day, "2026-07-24");
+  assert.equal(body.entry.logged_at, "2026-07-24T07:30:00.000Z");
+  assert.equal(body.entry.kcal, 300);
+  assert.equal(body.entry.macros.protein, 12);
+  assert.equal(body.totals.kcal, 300, "materialized entry counts");
+});
+
+test("POST /api/plan/accept (occurrence) is idempotent — a second accept returns the same entry", async () => {
+  const { req, platform } = client();
+  const sched = await seedSchedule(platform);
+  const first = await (await req("/api/plan/accept", { method: "POST", body: JSON.stringify({ schedule_id: sched.id, scheduled_date: "2026-07-24" }) })).json();
+  const second = await (await req("/api/plan/accept", { method: "POST", body: JSON.stringify({ schedule_id: sched.id, scheduled_date: "2026-07-24" }) })).json();
+  assert.equal(second.entry.id, first.entry.id, "no duplicate materialization");
+  assert.equal(second.totals.kcal, 300, "no double-count");
+  const store = platform.data.forUser(TEST_EMAIL);
+  const { items } = await store.list("entries", {});
+  assert.equal(items.length, 1);
+});
+
+test("POST /api/plan/accept (occurrence) applies the override then the caller's edits", async () => {
+  const { req, platform } = client();
+  const sched = await seedSchedule(platform);
+  const store = platform.data.forUser(TEST_EMAIL);
+  await store.create("plan_overrides", { user: TEST_EMAIL, schedule_id: sched.id, scheduled_date: "2026-07-24", new_time: "09:00", new_payload: { kcal: 500, description: "Bigger oats", macros: { protein: 20, carbs: 60, fat: 10 } } });
+  const res = await req("/api/plan/accept", { method: "POST", body: JSON.stringify({ schedule_id: sched.id, scheduled_date: "2026-07-24", edits: { kcal: 450 } }) });
+  const body = await res.json();
+  assert.equal(body.entry.logged_at, "2026-07-24T09:00:00.000Z", "override new_time applied");
+  assert.equal(body.entry.description, "Bigger oats", "override new_payload applied");
+  assert.equal(body.entry.kcal, 450, "caller edit wins over override payload");
+});
+
+test("POST /api/plan/accept (occurrence) 404s an unknown schedule", async () => {
+  const { req } = client();
+  const res = await req("/api/plan/accept", { method: "POST", body: JSON.stringify({ schedule_id: "nope", scheduled_date: "2026-07-24" }) });
+  assert.equal(res.status, 404);
+});
+
+test("POST /api/plan/accept (occurrence) 409s a skipped occurrence", async () => {
+  const { req, platform } = client();
+  const sched = await seedSchedule(platform);
+  const store = platform.data.forUser(TEST_EMAIL);
+  await store.create("plan_overrides", { user: TEST_EMAIL, schedule_id: sched.id, scheduled_date: "2026-07-24", is_skipped: true });
+  const res = await req("/api/plan/accept", { method: "POST", body: JSON.stringify({ schedule_id: sched.id, scheduled_date: "2026-07-24" }) });
+  assert.equal(res.status, 409);
 });
 
 test("POST /api/plan/accept 403s an entry owned by another user", async () => {

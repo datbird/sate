@@ -102,9 +102,82 @@ export async function registerPlan(app: App, deps: RouteDeps): Promise<void> {
     const b = (await c.req.json().catch(() => ({}))) as Record<string, any>;
     const store = platform.data.forUser(uid);
 
-    if (!b.entry_id && b.schedule_id) {
-      return err(c, "accepting a recurring occurrence is not supported yet (phase 2)", 400);
+    // Occurrence branch (phase 2): materialize a logged entry from a recurring schedule occurrence.
+    if (!b.entry_id && b.schedule_id && b.scheduled_date) {
+      const scheduleId = String(b.schedule_id);
+      const date = String(b.scheduled_date);
+
+      // Idempotent: if this occurrence already materialized, return that entry (no double-count).
+      try {
+        const { items } = await store.list<Entry>("entries", {
+          where: [
+            { field: "plan_schedule_id", op: "==", value: scheduleId },
+            { field: "scheduled_date", op: "==", value: date },
+          ],
+          limit: 1,
+        });
+        const existing = items[0];
+        if (existing) {
+          const eday = existing.day || dayKey(existing.logged_at, num(existing.tz_offset_min));
+          return ok(c, { entry: existing, totals: await dayIntakeTotals(store, eday) });
+        }
+      } catch {
+        /* fall through to create */
+      }
+
+      const sched = await store.get<PlanSchedule>("plan_schedules", scheduleId);
+      if (!sched) return err(c, "schedule not found", 404);
+      if (sched.user !== uid) return err(c, "forbidden", 403);
+
+      const override = await findOverride(store, scheduleId, date);
+      if (override?.is_skipped) return err(c, "occurrence was skipped", 409);
+
+      const edits = (b.edits && typeof b.edits === "object" ? b.edits : {}) as Record<string, any>;
+      // payload = schedule.payload  <-  override.new_payload  <-  (numeric edits applied below)
+      const payload = { ...(sched.payload || {}), ...(override?.new_payload || {}) } as Record<string, any>;
+      const time = String(edits.time_of_day || override?.new_time || sched.time_of_day || "12:00");
+      const tz = edits.tz_offset_min !== undefined ? num(edits.tz_offset_min) : num(sched.tz_offset_min);
+      const logged_at = localInstantUTC(date, time, tz);
+      const day = dayKey(logged_at, tz);
+      const activity = sched.kind === "activity";
+
+      const draft: Record<string, any> = {
+        user: uid,
+        kind: sched.kind,
+        status: "logged",
+        plan_schedule_id: scheduleId,
+        scheduled_date: date,
+        description: String(edits.description ?? payload.description ?? sched.name).slice(0, 2000),
+        note: payload.note !== undefined ? String(payload.note).slice(0, 2000) : undefined,
+        source: "plan",
+        kcal: edits.kcal !== undefined ? num(edits.kcal) : num(payload.kcal),
+        items: Array.isArray(payload.items) ? payload.items : undefined,
+        logged_at,
+        tz_offset_min: tz,
+        day,
+      };
+      if (activity) {
+        draft.duration_min = edits.duration_min !== undefined ? num(edits.duration_min) : num(payload.duration_min);
+        if (edits.distance !== undefined) draft.distance = num(edits.distance);
+        else if (payload.distance !== undefined) draft.distance = num(payload.distance);
+        if (payload.intensity !== undefined) draft.intensity = String(payload.intensity);
+      } else {
+        const m = macrosOf(payload.macros);
+        for (const k of ["protein", "carbs", "fat", "fiber", "sugar", "sodium", "sat_fat"] as const) {
+          if (edits[k] !== undefined) (m as any)[k] = num(edits[k]);
+        }
+        draft.macros = m;
+      }
+
+      try {
+        const entry = await store.create<Entry>("entries", draft as Omit<Entry, "id">);
+        return ok(c, { entry, totals: await dayIntakeTotals(store, day) });
+      } catch (e) {
+        return err(c, msgOf(e), 502);
+      }
     }
+    // A schedule_id with no scheduled_date is malformed.
+    if (!b.entry_id && b.schedule_id) return err(c, "scheduled_date is required", 400);
     const id = String(b.entry_id || "");
     if (!id) return err(c, "entry_id is required", 400);
     const rec = await store.get<Entry>("entries", id);
