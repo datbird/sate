@@ -293,6 +293,25 @@ function sumTotals(items: Entry[]): DayTotals {
   return t;
 }
 
+// A short, deterministic plan narrative built from the RECOMPUTED plan (not the AI's prose) — persisted
+// as profiles.plan_summary so the Plan tab's "Show full plan" reflects the change. Self-consistent by
+// construction (same engine numbers the goals were saved from).
+function planSummaryText(inp: nutrition.PlanInput, targets: nutrition.MacroTargets, warnings: string[]): string {
+  const L: string[] = [];
+  L.push(
+    `Your plan: ${targets.kcal.toLocaleString()} kcal/day · ${targets.protein}g protein · ` +
+    `${targets.carbs}g carbs · ${targets.fat}g fat (${inp.method}).`,
+  );
+  if (inp.goals && inp.goals.length) {
+    const g = inp.goals[0]!;
+    L.push(`Goal: reach ${Math.round(g.target_kg * LB_PER_KG)} lb by ${g.target_date}.`);
+  } else {
+    L.push("Maintenance (no weight goal set).");
+  }
+  if (warnings && warnings.length) L.push(warnings[0]!);
+  return L.join(" ");
+}
+
 // ---- routes -------------------------------------------------------------
 
 export async function registerCoach(app: App, deps: RouteDeps): Promise<void> {
@@ -326,6 +345,85 @@ export async function registerCoach(app: App, deps: RouteDeps): Promise<void> {
     const inp = await buildPlanInput(store, profile, todayStr(), ov);
     const plan = nutrition.computePlan(inp);
     return ok(c, plan);
+  });
+
+  // POST /api/plan/apply — apply a coach-proposed <<PLAN_CHANGE>> AFTER the user tapped Apply (spec §10).
+  // DETERMINISTIC (no AI, no requireAI): validate the change, apply it as overrides, RE-RUN computePlan +
+  // macroTargets so the numbers are the engine's (never the AI's arithmetic), then persist goals through
+  // the same Profile fields PATCH /api/goals writes + any weight goal through the same weight_goals path
+  // POST /api/weight/goals writes + a refreshed plan_summary. This is the AUTHORITY step.
+  app.post("/api/plan/apply", async (c) => {
+    const uid = getUid(c);
+    const email = getEmail(c);
+    const profile = await ensureProfile(platform, uid, email);
+    const store = platform.data.forUser(uid);
+
+    const change = validatePlanChange(await readBody(c));
+    if (!change) return err(c, "no valid plan change to apply", 400);
+
+    // Apply the change as overrides on the profile's current values.
+    const ov: PlanOverrides = {};
+    if (change.method) ov.method = change.method;
+    if (change.activity_level) ov.activity = change.activity_level;
+    // A proposed weight goal drives the calorie delta; otherwise the user's existing goals do.
+    if (change.weight_goal) {
+      ov.goals = [{ target_kg: lbToKg(change.weight_goal.target_lb), target_date: change.weight_goal.target_date }];
+    }
+
+    const inp = await buildPlanInput(store, profile, todayStr(), ov);
+    const plan = nutrition.computePlan(inp);
+
+    // Authority: the engine's kcal — unless the user asked for an explicit target, clamped to the safe
+    // floor (male 1500 / female 1300) and a sane ceiling. Macros are ALWAYS re-derived for the final kcal.
+    const floor = (inp.sex || "").toLowerCase() === "female" ? 1300 : 1500;
+    const goalKcal = change.goal_kcal
+      ? Math.max(floor, Math.min(6000, Math.round(change.goal_kcal)))
+      : plan.targets.kcal;
+    const targets = nutrition.macroTargets(goalKcal, inp.method, inp.curKg);
+    const summary = planSummaryText(inp, targets, plan.warnings);
+
+    // Persist goals — exactly the Profile fields PATCH /api/goals writes.
+    const patch: Partial<Profile> = {
+      goal_kcal: targets.kcal,
+      goal_protein: targets.protein,
+      goal_carbs: targets.carbs,
+      goal_fat: targets.fat,
+      goal_sodium: targets.sodium,
+      method: inp.method as GoalMethod,
+      plan_summary: summary,
+    };
+    if (change.activity_level) patch.activity_level = change.activity_level;
+    const pid = (profile as Profile & { id?: string }).id;
+    try {
+      if (pid) await store.update<Profile>("profiles", pid, patch);
+    } catch (e) {
+      return err(c, String((e as Error)?.message || e), 502);
+    }
+
+    // Persist a proposed weight goal via the same weight_goals path (cap 3, lb→kg) as /api/weight/goals.
+    if (change.weight_goal) {
+      try {
+        const { items } = await store.list<WeightGoal>("weight_goals", { limit: 10 });
+        if (items.length < 3) {
+          await store.create<WeightGoal>("weight_goals", {
+            user: uid,
+            target_kg: lbToKg(change.weight_goal.target_lb),
+            target_date: change.weight_goal.target_date,
+            start_kg: inp.curKg,
+            start_date: todayStr(),
+          } as Omit<WeightGoal, "id">);
+        }
+      } catch {
+        /* non-fatal — the goals/targets already persisted */
+      }
+    }
+
+    return ok(c, {
+      applied: change,
+      plan: { bmr: plan.bmr, tdee: plan.tdee, targets, warnings: plan.warnings },
+      goals: { kcal: targets.kcal, protein: targets.protein, carbs: targets.carbs, fat: targets.fat, sodium: targets.sodium },
+      plan_summary: summary,
+    });
   });
 
   // POST /api/nutritionist — the AI coach. Body { mode:"plan"|"chat", message?, history?, image?, role? }.

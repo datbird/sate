@@ -58,3 +58,74 @@ test("POST /api/nutritionist with no trailer returns plan_change null and a clea
     assert.equal(body.plan_change, null);
   } finally { (globalThis as any).fetch = orig; }
 });
+
+// Seed a profile with real stats so computePlan produces meaningful numbers (no AI needed here).
+async function seedProfile(platform: any, extra: Record<string, unknown> = {}) {
+  const store = platform.data.forUser(TEST_EMAIL);
+  await store.create("profiles", {
+    user: TEST_EMAIL, email: TEST_EMAIL,
+    body_weight_kg: 90, height_cm: 180, age: 40, sex: "male",
+    activity_level: "sedentary", method: "calories",
+    ...extra,
+  }, TEST_EMAIL);
+}
+
+test("POST /api/plan/apply re-runs the engine for an explicit goal_kcal (macros derived, NOT echoed)", async () => {
+  const { req, platform } = client();
+  await seedProfile(platform);
+  const res = await req("/api/plan/apply", { method: "POST", body: JSON.stringify({ goal_kcal: 1800, method: "protein" }) });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  // The engine honored the explicit kcal…
+  assert.equal(body.goals.kcal, 1800);
+  assert.equal(body.plan.targets.kcal, 1800);
+  // …and DERIVED the macros deterministically via macroTargets(1800,"protein",90) — protein-forward,
+  // and self-consistent (a positive protein target, not the AI's arithmetic).
+  assert.ok(body.goals.protein > 0);
+  assert.ok(body.plan_summary && /1,?800/.test(body.plan_summary));
+  // Persisted: GET /api/me reflects the new goals + method + plan_summary.
+  const me = await (await req("/api/me?tz=0")).json();
+  assert.equal(me.goals.kcal, 1800);
+  assert.equal(me.track_mode, "protein");
+  assert.equal(me.plan_summary, body.plan_summary);
+});
+
+test("POST /api/plan/apply with a weight_goal recomputes the deficit AND persists the goal", async () => {
+  const { req, platform } = client();
+  await seedProfile(platform);
+  const res = await req("/api/plan/apply", {
+    method: "POST",
+    body: JSON.stringify({ weight_goal: { target_lb: 180, target_date: "2027-01-01" } }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(body.goals.kcal > 0);
+  // The weight goal landed in the same collection POST /api/weight/goals writes.
+  const wg = await (await req("/api/weight/goals")).json();
+  assert.equal(wg.goals.length, 1);
+  assert.equal(Math.round(wg.goals[0].target_lb), 180);
+});
+
+test("POST /api/plan/apply changes activity_level and re-derives calories", async () => {
+  const { req, platform } = client();
+  await seedProfile(platform);
+  const before = (await (await req("/api/plan/apply", { method: "POST", body: JSON.stringify({ activity_level: "sedentary" }) })).json()).goals.kcal;
+  const after = (await (await req("/api/plan/apply", { method: "POST", body: JSON.stringify({ activity_level: "athlete" }) })).json()).goals.kcal;
+  assert.ok(after > before, "a higher activity level raises maintenance calories");
+  const me = await (await req("/api/me?tz=0")).json();
+  assert.equal(me.activity_level, "athlete");
+});
+
+test("POST /api/plan/apply 400s an empty/all-invalid change", async () => {
+  const { req, platform } = client();
+  await seedProfile(platform);
+  assert.equal((await req("/api/plan/apply", { method: "POST", body: JSON.stringify({}) })).status, 400);
+  assert.equal((await req("/api/plan/apply", { method: "POST", body: JSON.stringify({ method: "bogus" }) })).status, 400);
+});
+
+test("POST /api/plan/apply clamps a dangerous goal_kcal to the safety floor", async () => {
+  const { req, platform } = client();
+  await seedProfile(platform); // male → floor 1500
+  const body = await (await req("/api/plan/apply", { method: "POST", body: JSON.stringify({ goal_kcal: 200 }) })).json();
+  assert.equal(body.goals.kcal, 1500);
+});
