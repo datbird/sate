@@ -16,7 +16,7 @@
 "use strict";
 
 import {
-  $, $$, el, api, me, registerView, sheet, toast, refreshMe,
+  $, $$, el, api, me, registerView, sheet, toast, refreshMe, view,
 } from "../lib.js";
 import { render as renderHome } from "./home.js";
 
@@ -193,6 +193,9 @@ export function open() {
       toast("Goals saved");
       s.close();
       try { renderHome(); } catch (_) {}
+      // Plan tab isn't necessarily mounted/on-screen — re-render it in place (best-effort) so its
+      // "Your Plan" card doesn't show stale targets if the user tabs back without a full reload.
+      try { const p = view("plan"); if (p && p.render) { const c = document.querySelector("#view-plan"); if (c) p.render(c); } } catch (_) {}
     } catch (er) { toast(er.message); }
   });
 

@@ -13,8 +13,8 @@
 "use strict";
 
 import {
-  $, el, esc, api, toast, me, refreshMe, openView, registerView, confirmDialog, dialog,
-  ringEl, tripleRingCard, fmt, todayISO,
+  $, el, esc, api, toast, me, openView, registerView, confirmDialog, dialog,
+  fmt, todayISO,
 } from "../lib.js";
 import { recurrenceSummary, nextOccurrence } from "../planner.js";
 
@@ -154,8 +154,8 @@ function scheduleRow(s, next) {
     html: KIND_ICON[s.kind === "activity" ? "activity" : "food"] });
   const nextLabel = next ? "Next: " + prettyDate(next) : "No upcoming occurrence";
   const text = el("div", { class: "sched-text" },
-    el("span", { class: "sched-name" }, esc(s.name || "(unnamed)")),
-    el("span", { class: "sched-sub" }, esc(recurrenceSummary(s)) + " · " + esc(nextLabel)));
+    el("span", { class: "sched-name" }, s.name || "(unnamed)"),
+    el("span", { class: "sched-sub" }, recurrenceSummary(s) + " · " + nextLabel));
   const del = el("button", { class: "sched-del", type: "button", "aria-label": "Delete", title: "Delete",
     html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/></svg>' });
   del.addEventListener("click", (ev) => { ev.stopPropagation(); deleteSchedule(s); });
