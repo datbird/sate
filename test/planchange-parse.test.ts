@@ -69,6 +69,33 @@ test("non-object JSON after the marker (array/number) → planChange null", () =
   assert.equal(splitPlanChange('x\n<<PLAN_CHANGE>>42').planChange, null);
 });
 
+test("empty-object trailer {} → planChange null (no fields = not an apply signal), still stripped", () => {
+  const r = splitPlanChange("Ok.\n<<PLAN_CHANGE>>{}");
+  assert.equal(r.planChange, null);
+  assert.equal(r.visibleText, "Ok.");
+  assert.doesNotMatch(r.visibleText, /<<PLAN_CHANGE>>/);
+});
+
+test("well-formed trailer followed by prose containing a stray '}' → still parses (brace-matched, not lastIndexOf)", () => {
+  const r = splitPlanChange('Done.\n<<PLAN_CHANGE>>{"method":"carb"}\nsmile :}');
+  assert.deepEqual(r.planChange, { method: "carb" });
+  assert.equal(r.visibleText, "Done.");
+});
+
+test("a '}' inside a JSON string value does not truncate the object", () => {
+  const r = splitPlanChange('Note.\n<<PLAN_CHANGE>>{"method":"carb","note":"a} b"}');
+  assert.deepEqual(r.planChange, { method: "carb", note: "a} b" });
+});
+
+test("array-wrapped object [{...}] → planChange null (payload must be a bare object)", () => {
+  assert.equal(splitPlanChange('x\n<<PLAN_CHANGE>>[{"goal_kcal":1800}]').planChange, null);
+});
+
+test("leading whitespace before the marker is trimmed from visibleText", () => {
+  const r = splitPlanChange('   Hello there.\n<<PLAN_CHANGE>>{"goal_kcal":1800}');
+  assert.equal(r.visibleText, "Hello there.");
+});
+
 test("tolerates null/empty/whitespace input", () => {
   assert.deepEqual(splitPlanChange(null as any), { visibleText: "", planChange: null });
   assert.deepEqual(splitPlanChange(""), { visibleText: "", planChange: null });

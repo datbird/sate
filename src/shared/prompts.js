@@ -296,21 +296,41 @@ function splitPlanChange(raw) {
   var text = raw == null ? "" : String(raw);
   var idx = text.indexOf(PLAN_CHANGE_MARKER);
   if (idx === -1) return { visibleText: text.trim(), planChange: null };
-  var visible = text.slice(0, idx).replace(/\s+$/, "");
+  var visible = text.slice(0, idx).trim();
   var after = text.slice(idx + PLAN_CHANGE_MARKER.length);
   // If the model emitted a SECOND marker, only the first one's JSON counts — truncate before the next
-  // marker so lastIndexOf("}") can't span into a later object and corrupt the parse (first wins).
+  // marker so the brace scan can't span into a later object and corrupt the parse (first wins).
   var next = after.indexOf(PLAN_CHANGE_MARKER);
   if (next !== -1) after = after.slice(0, next);
   var planChange = null;
-  var start = after.indexOf("{");
-  var end = after.lastIndexOf("}");
-  if (start !== -1 && end > start) {
-    try {
-      var parsed = JSON.parse(after.slice(start, end + 1));
-      if (parsed && typeof parsed === "object" && !(parsed instanceof Array)) planChange = parsed;
-    } catch (e) {
-      planChange = null;
+  // Anchor on the first non-whitespace char: the trailer's payload must be a bare object literal.
+  // Anything else (array, number, prose) is not a plan change. This also rejects `[{...}]` wrappers.
+  var start = after.search(/\S/);
+  if (start !== -1 && after.charAt(start) === "{") {
+    // Find the '}' that BALANCES the opening '{' — string-aware so a '}' inside a JSON string value,
+    // or stray prose after the object (a well-formed trailer followed by "... :}"), can't fool us the
+    // way lastIndexOf("}") could. Deterministic, single pass, no lookahead (goja-safe).
+    var depth = 0, inStr = false, esc = false, end = -1;
+    for (var i = start; i < after.length; i++) {
+      var c = after.charAt(i);
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === "\\") esc = true;
+        else if (c === "\"") inStr = false;
+      } else if (c === "\"") inStr = true;
+      else if (c === "{") depth++;
+      else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end !== -1) {
+      try {
+        var parsed = JSON.parse(after.slice(start, end + 1));
+        // A real change carries at least one field; an empty object is not an "apply this" signal.
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.keys(parsed).length > 0) {
+          planChange = parsed;
+        }
+      } catch (e) {
+        planChange = null;
+      }
     }
   }
   return { visibleText: visible, planChange: planChange };
