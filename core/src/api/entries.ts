@@ -7,7 +7,7 @@
 
 import type { Context } from "hono";
 import {
-  getUid, getEmail, ok, err, dayKey, ensureProfile, foodGrounding,
+  getUid, getEmail, ok, err, dayKey, ensureProfile, foodGrounding, isLogged, dayIntakeTotals,
   type App, type AppVars, type RouteDeps,
 } from "./helpers";
 import {
@@ -67,34 +67,9 @@ function foodItemsOf(items: NutritionItem[]): FoodItem[] {
 }
 
 // ---- server-authoritative day intake totals (v1 sumTotals) --------------
-// Activity entries carry kcal as *burn* and are excluded from intake.
-async function dayTotals(store: DataStore, day: string): Promise<FlatTotal & { count: number }> {
-  const t = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, sodium: 0, sat_fat: 0, count: 0 };
-  if (!day) return t;
-  let items: Entry[] = [];
-  try {
-    ({ items } = await store.list<Entry>("entries", {
-      where: [{ field: "day", op: "==", value: day }],
-      limit: 500,
-    }));
-  } catch {
-    return t;
-  }
-  for (const e of items) {
-    if (e.kind === "activity") continue;
-    t.count += 1;
-    t.kcal += num(e.kcal);
-    const m = e.macros || ({} as Macros);
-    t.protein += num(m.protein);
-    t.carbs += num(m.carbs);
-    t.fat += num(m.fat);
-    t.fiber += num(m.fiber);
-    t.sugar += num(m.sugar);
-    t.sodium += num(m.sodium);
-    t.sat_fat += num(m.sat_fat);
-  }
-  return t;
-}
+// Delegates to the shared dayIntakeTotals in helpers (planned-excluded, activity-excluded) so the
+// honesty rule and the summation are defined exactly once. Call sites are unchanged.
+const dayTotals = dayIntakeTotals;
 
 const dayOf = (e: Entry): string => e.day || dayKey(e.logged_at, num(e.tz_offset_min));
 

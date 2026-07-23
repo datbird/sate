@@ -4,7 +4,7 @@
 // (v1 keyed profiles on user_email; v2 scopes per-user data via platform.data.forUser(uid)).
 
 import {
-  getUid, getEmail, ok, err, dayKey, ensureProfile,
+  getUid, getEmail, ok, err, dayKey, ensureProfile, isLogged,
   type App, type RouteDeps,
 } from "./helpers";
 import type { Platform } from "../ports";
@@ -214,7 +214,7 @@ export async function registerProfile(app: App, deps: RouteDeps): Promise<void> 
       // TODO(phase2): provider-key-based setup detection (v1 setupDone also inspected `providers`).
       setup_done: s.setup_complete === "yes",
       today,
-      totals: sumIntake(items),
+      totals: sumIntake(items.filter(isLogged)),
     });
   });
 
@@ -307,7 +307,7 @@ export async function registerProfile(app: App, deps: RouteDeps): Promise<void> 
     const tz = Number(c.req.query("tz") || 0);
     const w = rangeWindow(range, tz, c.req.query("date") || undefined);
 
-    const recs = await fetchDayRange(platform, uid, w.startDay, w.endDay);
+    const recs = (await fetchDayRange(platform, uid, w.startDay, w.endDay)).filter(isLogged);
     const nutrition: Entry[] = [];
     const activity: Entry[] = [];
     for (const r of recs) (r.kind === "activity" ? activity : nutrition).push(r);
