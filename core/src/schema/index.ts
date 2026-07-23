@@ -285,6 +285,13 @@ export const Profile = z.object({
   // Edition the user registered/switched to. "" = not yet chosen (registration UI must prompt).
   // hosted = cloud "just works" (AI via entitlement); selfhost = BYOAI self-host license.
   edition: z.enum(["hosted", "selfhost", ""] as const).default(""),
+  // The Coach's setup plan narrative — shown by the Plan tab's "Show full plan". Persisted at
+  // onboarding's AI-plan step and refreshed whenever the plan changes (Phase 6 coach-edit). Optional
+  // and additive: existing profiles read back "" (see profileView). (spec §2.4)
+  plan_summary: z.string().optional(),
+  // Remembered dietary restrictions/allergies (free-text, e.g. "no dairy, shellfish allergy").
+  // Editable in Settings and the Plan tab; auto-applied to recipe suggestions + the coach in Phase 5.
+  allergies: z.string().optional(),
   // TODO(phase2): per-user AI routing (fn_overrides + ov_ai/ov_vision provider/model + second-opinion)
   // lives here in v1. Phase 1 uses the instance default provider/model, so these are intentionally omitted.
 });

@@ -108,6 +108,8 @@ function profileView(p: Profile) {
     checkin_enabled: !!p.checkin_enabled,
     checkin_time: p.checkin_time || "",
     checkin_freq: p.checkin_freq || "daily",
+    plan_summary: p.plan_summary || "",
+    allergies: p.allergies || "",
   };
 }
 
@@ -274,6 +276,11 @@ export async function registerProfile(app: App, deps: RouteDeps): Promise<void> 
     }
     if (b.onboarded !== undefined) patch.onboarded = !!b.onboarded;
     if (b.name !== undefined) patch.name = String(b.name).slice(0, 60).trim();
+    // Plan narrative (Coach setup text) + remembered allergies. Strings only; only touched when
+    // provided so an unrelated goals PATCH never wipes them. plan_summary can be long (a paragraph);
+    // allergies is a short line. (spec §2.4)
+    if (b.plan_summary !== undefined) patch.plan_summary = String(b.plan_summary).slice(0, 8000);
+    if (b.allergies !== undefined) patch.allergies = String(b.allergies).slice(0, 2000);
     if (b.checkin_enabled !== undefined) patch.checkin_enabled = !!b.checkin_enabled;
     if (b.checkin_time !== undefined) {
       const t = String(b.checkin_time || "");
