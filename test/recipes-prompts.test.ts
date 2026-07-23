@@ -19,6 +19,10 @@ test("recipe_suggest + recipe_expand are registered functions with strict-JSON p
   assert.match(PROMPTS.recipe_expand.system, /steps/i);
 });
 
+test("NUTRITIONIST_SYSTEM instructs the coach to respect dietary restrictions/allergies", () => {
+  assert.match(PROMPTS.nutritionist.system, /allerg|dietary restriction|restriction/i);
+});
+
 test("allergiesLine renders a restriction line only when allergies are present", () => {
   assert.equal(allergiesLine(""), "");
   assert.equal(allergiesLine("   "), "");
