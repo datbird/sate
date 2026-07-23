@@ -72,3 +72,55 @@ export function dayHeading(day, todayLocal) {
   if (day === addDays(todayLocal, 1)) return "Tomorrow";
   return null;
 }
+
+const num = (v) => { const n = Number(v); return isFinite(n) ? n : 0; };
+
+// Normalize a timeline item's DISPLAY content across the two shapes: a stored `entry` carries content
+// top-level (description/kcal/macros/duration_min/...); a projected `occurrence` carries it under
+// `payload` with the schedule `name` as its title. The row DOM (Task 5) reads only this — so it never
+// has to know which shape it got.
+export function displayFields(item) {
+  const isOcc = item.origin === "occurrence";
+  const p = isOcc ? (item.payload || {}) : item;
+  const kind = item.kind || "food";
+  const activity = kind === "activity";
+  const listed = Array.isArray(p.items) ? p.items.map((i) => i && i.name).filter(Boolean).join(", ") : "";
+  const title = (isOcc ? (item.name || p.description) : p.description) || listed || (activity ? "Activity" : "Entry");
+  return {
+    kind, activity,
+    title: String(title),
+    kcal: num(p.kcal),
+    macros: p.macros || {},
+    duration_min: num(p.duration_min),
+    distance: p.distance != null ? num(p.distance) : null,
+    intensity: p.intensity || "",
+    note: p.note || "",
+    items: Array.isArray(p.items) ? p.items : [],
+  };
+}
+
+// The accept body: a planned one-off entry is accepted by id; a projected occurrence is accepted by
+// its (schedule_id, scheduled_date) identity. Exactly what POST /api/plan/accept branches on (plan.ts).
+export function acceptBody(item) {
+  if (item.origin === "occurrence") return { schedule_id: item.schedule_id, scheduled_date: item.scheduled_date };
+  return { entry_id: item.id };
+}
+
+// The ghosted/badge/accept decision for a timeline row. `planned` iff the server tagged it planned
+// (a one-off planned entry OR a projected occurrence). "Ate it" for food, "Did it" for activity.
+export function plannedState(item) {
+  if (item.state !== "planned") return { planned: false, ghosted: false, badge: null, accept: null };
+  const activity = (item.kind || "food") === "activity";
+  return {
+    planned: true,
+    ghosted: true,
+    badge: "unconfirmed",
+    accept: { label: activity ? "Did it" : "Ate it", body: acceptBody(item) },
+  };
+}
+
+// A stable render/de-dupe key. Entries and occurrences can never collide (entries are namespaced;
+// occurrences use their "{scheduleId}:{date}" synthetic id, which contains a colon an entry id never has).
+export function itemKey(item) {
+  return item.origin === "occurrence" ? String(item.id) : "entry:" + String(item.id);
+}
