@@ -7,7 +7,10 @@ import {
   getUid, getEmail, ok, err, dayKey, ensureProfile, dayIntakeTotals,
   type App, type RouteDeps,
 } from "./helpers";
+import { PlanSchedule, PlanOverride, ScheduleRecurrence } from "../schema";
 import type { Entry, Macros } from "../schema";
+import type { DataStore } from "../ports";
+import { projectOccurrences, localInstantUTC, type Occurrence } from "../domain/schedule";
 
 function num(v: unknown): number {
   const n = Number(v);
@@ -20,6 +23,33 @@ function macrosOf(m: any): Macros {
     protein: num(m?.protein), carbs: num(m?.carbs), fat: num(m?.fat),
     fiber: num(m?.fiber), sugar: num(m?.sugar), sodium: num(m?.sodium), sat_fat: num(m?.sat_fat),
   };
+}
+
+// Find the single override for (schedule_id, scheduled_date), or null. Shared by occurrence edit/delete.
+export async function findOverride(store: DataStore, scheduleId: string, date: string): Promise<(PlanOverride & { id: string }) | null> {
+  try {
+    const { items } = await store.list<PlanOverride & { id: string }>("plan_overrides", {
+      where: [
+        { field: "schedule_id", op: "==", value: scheduleId },
+        { field: "scheduled_date", op: "==", value: date },
+      ],
+      limit: 1,
+    });
+    return items[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Upsert the override for (schedule_id, scheduled_date): update if one exists, else create. MUST
+// remain a true upsert — the projector indexes overrides last-wins on this key, so a duplicate row
+// would make behavior order-dependent (Task 4 review carry-forward).
+export async function upsertOverride(
+  store: DataStore, scheduleId: string, date: string, patch: Record<string, unknown>,
+): Promise<PlanOverride> {
+  const existing = await findOverride(store, scheduleId, date);
+  if (existing) return await store.update<PlanOverride>("plan_overrides", existing.id, patch as Partial<PlanOverride>);
+  return await store.create<PlanOverride>("plan_overrides", patch as Omit<PlanOverride, "id">);
 }
 
 export async function registerPlan(app: App, deps: RouteDeps): Promise<void> {
@@ -120,5 +150,78 @@ export async function registerPlan(app: App, deps: RouteDeps): Promise<void> {
     } catch (e) {
       return err(c, msgOf(e), 502);
     }
+  });
+
+  // ---- Schedule CRUD (the Plan-tab manager). Editing a schedule directly is inherently "all".
+  const ScheduleCreate = PlanSchedule.omit({ id: true, user: true, created_at: true, updated_at: true });
+
+  app.get("/api/plan/schedules", async (c) => {
+    const uid = getUid(c);
+    const store = platform.data.forUser(uid);
+    let items: PlanSchedule[] = [];
+    try {
+      ({ items } = await store.list<PlanSchedule>("plan_schedules", { limit: 500 }));
+    } catch {
+      items = [];
+    }
+    return ok(c, { schedules: items });
+  });
+
+  app.post("/api/plan/schedules", async (c) => {
+    const uid = getUid(c);
+    await ensureProfile(platform, uid, getEmail(c));
+    const b = await c.req.json().catch(() => ({}));
+    const parsed = ScheduleCreate.safeParse(b);
+    if (!parsed.success) return err(c, parsed.error.issues[0]?.message || "invalid schedule", 400);
+    const store = platform.data.forUser(uid);
+    const now = new Date().toISOString();
+    try {
+      const schedule = await store.create<PlanSchedule>("plan_schedules", {
+        ...parsed.data, user: uid, created_at: now, updated_at: now,
+      } as Omit<PlanSchedule, "id">);
+      return ok(c, { schedule });
+    } catch (e) {
+      return err(c, msgOf(e), 502);
+    }
+  });
+
+  app.patch("/api/plan/schedules/:id", async (c) => {
+    const uid = getUid(c);
+    const store = platform.data.forUser(uid);
+    const id = c.req.param("id");
+    const rec = await store.get<PlanSchedule>("plan_schedules", id);
+    if (!rec) return err(c, "not found", 404);
+    if (rec.user !== uid) return err(c, "forbidden", 403);
+    const b = await c.req.json().catch(() => ({}));
+    const parsed = ScheduleCreate.partial().safeParse(b);
+    if (!parsed.success) return err(c, parsed.error.issues[0]?.message || "invalid patch", 400);
+    try {
+      const schedule = await store.update<PlanSchedule>("plan_schedules", id, {
+        ...parsed.data, updated_at: new Date().toISOString(),
+      } as Partial<PlanSchedule>);
+      return ok(c, { schedule });
+    } catch (e) {
+      return err(c, msgOf(e), 502);
+    }
+  });
+
+  app.delete("/api/plan/schedules/:id", async (c) => {
+    const uid = getUid(c);
+    const store = platform.data.forUser(uid);
+    const id = c.req.param("id");
+    const rec = await store.get<PlanSchedule>("plan_schedules", id);
+    if (!rec) return err(c, "not found", 404);
+    if (rec.user !== uid) return err(c, "forbidden", 403);
+    // Cascade: remove this schedule's per-occurrence overrides.
+    try {
+      const { items } = await store.list<PlanOverride & { id: string }>("plan_overrides", {
+        where: [{ field: "schedule_id", op: "==", value: id }], limit: 1000,
+      });
+      for (const o of items) await store.delete("plan_overrides", o.id);
+    } catch {
+      /* best-effort cascade */
+    }
+    await store.delete("plan_schedules", id);
+    return ok(c, { deleted: id });
   });
 }
