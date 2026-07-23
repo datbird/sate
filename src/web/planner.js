@@ -40,3 +40,35 @@ export function expandWindow(win, direction, step = 14) {
   if (direction === "past") return { from: addDays(win.from, -s), to: win.to };
   return { from: win.from, to: win.to };
 }
+
+// Group timeline items into day buckets. Default order is DESCENDING — the Home timeline shows the
+// furthest-future day at the top and scrolls DOWN into the past (spec §4.3: scroll up = more future).
+// Within a day, items are ordered newest-first too. Grouping keys on the item's server-provided `day`
+// (YYYY-MM-DD), falling back to logged_at's date, so no tz/Date parsing is needed here.
+export function groupByDay(items, opts = {}) {
+  const desc = opts.descending !== false;
+  const map = new Map();
+  for (const it of items || []) {
+    const day = it.day || String(it.logged_at || "").slice(0, 10);
+    if (!day) continue;
+    if (!map.has(day)) map.set(day, []);
+    map.get(day).push(it);
+  }
+  const days = [...map.keys()].sort(); // ascending YYYY-MM-DD (lexicographic == chronological)
+  if (desc) days.reverse();
+  const cmp = (a, b) => {
+    const x = String(a.logged_at || ""), y = String(b.logged_at || "");
+    const r = x < y ? -1 : x > y ? 1 : 0;
+    return desc ? -r : r;
+  };
+  return days.map((day) => ({ day, items: map.get(day).slice().sort(cmp) }));
+}
+
+// Relative-day label for a divider. Returns null for any other day so the caller can format the
+// absolute date (lib.dayLabel) — planner.js stays locale/Date-format free.
+export function dayHeading(day, todayLocal) {
+  if (day === todayLocal) return "Today";
+  if (day === addDays(todayLocal, -1)) return "Yesterday";
+  if (day === addDays(todayLocal, 1)) return "Tomorrow";
+  return null;
+}
