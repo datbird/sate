@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { client } from "./mem.ts";
+import { client, TEST_EMAIL } from "./mem.ts";
 
 test("POST /api/plan/entry creates a planned entry that is excluded from totals", async () => {
   const { req } = client();
@@ -93,5 +93,23 @@ test("POST /api/plan/accept 400s the occurrence branch (phase 2)", async () => {
     method: "POST",
     body: JSON.stringify({ schedule_id: "s1", scheduled_date: "2026-07-24" }),
   });
+  assert.equal(res.status, 400);
+});
+
+test("POST /api/plan/accept 403s an entry owned by another user", async () => {
+  const { req, platform } = client();
+  // Seed a planned entry whose `user` is someone else, into the caller's own store.
+  const store = platform.data.forUser(TEST_EMAIL); // the caller
+  const rec = await store.create("entries", {
+    user: "someone-else@example.com", kind: "food", status: "planned",
+    description: "not yours", kcal: 300, logged_at: "2026-07-24T12:00:00.000Z", day: "2026-07-24",
+  });
+  const res = await req("/api/plan/accept", { method: "POST", body: JSON.stringify({ entry_id: rec.id }) });
+  assert.equal(res.status, 403);
+});
+
+test("POST /api/plan/accept 400s when entry_id is missing", async () => {
+  const { req } = client();
+  const res = await req("/api/plan/accept", { method: "POST", body: JSON.stringify({}) });
   assert.equal(res.status, 400);
 });
