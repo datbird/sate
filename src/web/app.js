@@ -19,6 +19,7 @@ import {
 // time, so the router + cross-view openView() can find them. Home is fully implemented; the rest are
 // stubs the other agents fill in (they keep this exact registration shape).
 import "./views/home.js";
+import "./views/plan.js";
 import "./views/coach.js";
 import "./views/history.js";
 import "./views/compose.js";

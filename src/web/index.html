@@ -22,6 +22,7 @@
       <!-- Header tabs (wide screens). Same [data-view] contract as the bottom bar. -->
       <nav class="tabs">
         <button data-view="home" class="active" type="button">Home</button>
+        <button data-view="plan" type="button">Plan</button>
         <button data-view="coach" type="button">Coach</button>
         <button data-view="history" type="button">History</button>
       </nav>
@@ -102,6 +103,11 @@
         <ul class="entries" id="feed"></ul>
       </section>
 
+      <!-- PLAN (owned by views/plan.js) -->
+      <section id="view-plan" class="view" hidden>
+        <div id="planRoot" class="view-empty">Plan loads here.</div>
+      </section>
+
       <!-- COACH (owned by coach.js) -->
       <section id="view-coach" class="view" hidden>
         <div id="coachRoot" class="view-empty">Coach loads here.</div>
@@ -121,6 +127,10 @@
       <button data-view="home" class="active" type="button" aria-label="Home">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>
         <span>Home</span>
+      </button>
+      <button data-view="plan" type="button" aria-label="Plan">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M8 3v3M16 3v3M3 9.5h18"/><path d="M8.5 14l2 2 3.5-4"/></svg>
+        <span>Plan</span>
       </button>
       <button data-view="coach" type="button" aria-label="Coach">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-12.3 7.6L3 21l1.9-5.7A8.5 8.5 0 1 1 21 11.5z"/></svg>
