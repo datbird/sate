@@ -972,3 +972,18 @@ button.link.danger { color: var(--danger); }
 .plansheet .wchip.on { border-color: var(--brand); color: var(--brand-ink, #fff); background: var(--brand); }
 .plansheet .planseams { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; }
 .plansheet .planseams button[disabled] { opacity: .5; cursor: default; }
+
+/* ---- Planner: "Your Plan" card ---- */
+.yourplan .plan-kcal { margin: 2px 0 10px; }
+.yourplan .plan-kcal strong { font-size: 30px; font-weight: 800; }
+.yourplan .plan-kcal small { color: var(--muted); font-size: 13px; }
+.yourplan .plan-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.yourplan .plan-chip {
+  padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line);
+  font-size: 12px; font-weight: 600; color: var(--ink); white-space: nowrap;
+}
+.yourplan .plan-meta { color: var(--muted); font-size: 13px; margin-top: 8px; }
+.yourplan .plan-actions { display: flex; gap: 16px; margin-top: 12px; }
+.yourplan .plan-actions button[disabled] { opacity: .5; cursor: default; }
+.fullplan-text p { margin: 0 0 12px; line-height: 1.5; }
+.fullplan-text p:last-child { margin-bottom: 0; }

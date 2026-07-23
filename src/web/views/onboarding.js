@@ -373,6 +373,9 @@ async function obPlan() {
   try {
     const r = await api("/api/nutritionist", { method: "POST", json: { mode: "plan" } });
     if (box) box.textContent = r.reply || "(no plan)";
+    // Persist the setup narrative so the Plan tab's "Show full plan" can render it (spec §2.4). Best-
+    // effort: a failed save must not break onboarding. refreshMe() is already called on finish.
+    if (r.reply) { try { await api("/api/goals", { method: "PATCH", json: { plan_summary: r.reply } }); } catch (_) {} }
   } catch (e) {
     if (box) box.textContent = (e && e.message) || "Couldn’t generate a plan right now.";
   }
