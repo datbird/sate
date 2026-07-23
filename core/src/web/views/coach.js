@@ -18,7 +18,7 @@
 "use strict";
 
 import {
-  $, $$, el, api, me, registerView, onViewChange, toast, isNative,
+  $, $$, el, api, me, registerView, onViewChange, toast, isNative, refreshMe, fmt,
 } from "../lib.js";
 
 // ---------------------------------------------------------------- persistent view state
@@ -118,6 +118,7 @@ async function coachSend(preset) {
       COACH.history.push({ role: "user", text: msg || "(shared a photo to discuss)" });
       COACH.history.push({ role: "assistant", text: r.reply || "" });
     }
+    if (!isPlan && r.plan_change) renderPlanChange(r.plan_change);
     secondOpinionBtn(reqBody);
   } catch (e) {
     thinking.classList.remove("dots");
@@ -152,6 +153,55 @@ function secondOpinionBtn(reqBody) {
     scrollLog();
   });
   logEl.appendChild(bar);
+}
+
+// ============================================================ inline plan-change confirm (spec §10)
+// A coach reply may carry a validated plan_change proposal. Show an Apply/Dismiss card — NEVER a silent
+// rewrite. Apply → POST /api/plan/apply (deterministic recompute + persist) → refreshMe() so the Plan
+// card + Home rings reflect the new goals. Dismiss changes nothing.
+const METHOD_LABEL = { calories: "Calories", carb: "Carb-focused", protein: "High-protein", fat: "Low-fat", balanced: "Balanced", heart: "Heart-healthy" };
+const ACTIVITY_LABEL = { sedentary: "Sedentary", light: "Light", moderate: "Moderate", active: "Active", athlete: "Athlete" };
+
+function planChangeSummary(ch) {
+  const parts = [];
+  if (ch.goal_kcal) parts.push(fmt(ch.goal_kcal) + " kcal");
+  if (ch.method) parts.push(METHOD_LABEL[ch.method] || ch.method);
+  if (ch.activity_level) parts.push(ACTIVITY_LABEL[ch.activity_level] || ch.activity_level);
+  if (ch.weight_goal) parts.push(Math.round(ch.weight_goal.target_lb) + " lb by " + ch.weight_goal.target_date);
+  return parts.join(" · ");
+}
+
+function renderPlanChange(change) {
+  if (!logEl || !change) return;
+  const card = el("div", { class: "planchange" });
+  const label = el("div", { class: "pc-label" },
+    el("strong", { text: "Update your plan: " }),
+    el("span", { text: planChangeSummary(change) }));
+
+  const apply = el("button", { class: "primary small", type: "button", text: "Apply" });
+  const dismiss = el("button", { class: "link", type: "button", text: "Dismiss" });
+  const actions = el("div", { class: "pc-actions" }, apply, dismiss);
+
+  apply.addEventListener("click", async () => {
+    apply.disabled = true; dismiss.disabled = true;
+    try {
+      await api("/api/plan/apply", { method: "POST", json: change });
+      await refreshMe(); // Plan card + Home rings read the new goals on their next render.
+      card.innerHTML = "";
+      card.classList.add("done");
+      card.appendChild(el("div", { class: "pc-done", text: "✓ Plan updated — " + planChangeSummary(change) }));
+      toast("Plan updated");
+    } catch (e) {
+      apply.disabled = false; dismiss.disabled = false;
+      toast((e && e.message) || "Could not update your plan");
+    }
+    scrollLog();
+  });
+  dismiss.addEventListener("click", () => { card.remove(); });
+
+  card.append(label, actions);
+  logEl.appendChild(card);
+  scrollLog();
 }
 
 // ============================================================ photo attach (discussion only)

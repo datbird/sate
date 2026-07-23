@@ -442,6 +442,13 @@ dialog input { width: 120px; padding: 8px 10px; border: 1px solid var(--line); b
 .coachbar input { flex: 1; min-width: 0; }
 .cmsg-img { display: block; margin-top: 8px; max-width: 220px; width: 100%; border-radius: 10px; }
 
+/* ---- Coach: inline plan-change confirm (spec §10) ---- */
+.planchange { align-self: flex-start; max-width: 88%; margin: 2px 0 8px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--brand) 40%, var(--line)); border-radius: 14px; background: color-mix(in srgb, var(--brand) 8%, transparent); }
+.planchange .pc-label { font-size: 14px; line-height: 1.35; }
+.planchange .pc-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+.planchange.done { border-color: var(--line); background: transparent; }
+.planchange .pc-done { font-size: 13.5px; color: var(--muted); }
+
 /* Coach tab — a viewport-locked chat: the view is pinned between the header (--coach-top) and the
    bottom tab bar (--coach-bottom, set in JS), the log fills the middle and scrolls, and messages sit
    at the BOTTOM (rising up as they arrive), with the composer fixed just below. */
