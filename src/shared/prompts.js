@@ -283,6 +283,39 @@ function normalizeRecipe(obj) {
   };
 }
 
+// ---- coach plan-edit trailer (spec §10) --------------------------------
+// The nutritionist appends a machine-readable trailer proposing a plan change, e.g.:
+//   <<PLAN_CHANGE>>{"goal_kcal":1800,"method":"protein","weight_goal":{"target_lb":180,"target_date":"2026-10-01"}}
+// splitPlanChange strips the marker AND everything after it from visibleText (so no JSON — malformed
+// or not — ever reaches the UI) and returns the RAW parsed object (or null). It does NOT validate the
+// fields; the route validates them against the real GOAL_METHODS/ACTIVITY_LEVELS enums. First marker
+// wins. Pure + defensive.
+var PLAN_CHANGE_MARKER = "<<PLAN_CHANGE>>";
+
+function splitPlanChange(raw) {
+  var text = raw == null ? "" : String(raw);
+  var idx = text.indexOf(PLAN_CHANGE_MARKER);
+  if (idx === -1) return { visibleText: text.trim(), planChange: null };
+  var visible = text.slice(0, idx).replace(/\s+$/, "");
+  var after = text.slice(idx + PLAN_CHANGE_MARKER.length);
+  // If the model emitted a SECOND marker, only the first one's JSON counts — truncate before the next
+  // marker so lastIndexOf("}") can't span into a later object and corrupt the parse (first wins).
+  var next = after.indexOf(PLAN_CHANGE_MARKER);
+  if (next !== -1) after = after.slice(0, next);
+  var planChange = null;
+  var start = after.indexOf("{");
+  var end = after.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    try {
+      var parsed = JSON.parse(after.slice(start, end + 1));
+      if (parsed && typeof parsed === "object" && !(parsed instanceof Array)) planChange = parsed;
+    } catch (e) {
+      planChange = null;
+    }
+  }
+  return { visibleText: visible, planChange: planChange };
+}
+
 const PROMPTS = {
   vision_estimate: { system: NUTRITION_SYSTEM, jsonMode: true },
   text_parse: { system: NUTRITION_SYSTEM, jsonMode: true },
@@ -377,4 +410,5 @@ module.exports = {
   buildRecipeExpandMsg,
   normalizeRecipeIdeas,
   normalizeRecipe,
+  splitPlanChange,
 };
