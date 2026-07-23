@@ -23,6 +23,7 @@ import {
   webLookup,
   nutritionist,
   resolveDefaultModel,
+  allergiesLine,
   type AIImage,
   type AIMessage,
 } from "../ai/index";
@@ -318,6 +319,10 @@ export async function registerCoach(app: App, deps: RouteDeps): Promise<void> {
     const plan = nutrition.computePlan(inp);
     const recent = await recentIntake(store, 7);
     const context = nutrition.contextText(inp, plan, recent);
+    // Remembered dietary restrictions/allergies steer the coach too (spec §7.3), read server-side
+    // from the profile — never from the request body.
+    const alLine = allergiesLine(profile.allergies);
+    const contextWithAllergies = alLine ? context + "\n" + alLine : context;
 
     const image: AIImage | undefined =
       body.image && body.image.data
@@ -330,7 +335,7 @@ export async function registerCoach(app: App, deps: RouteDeps): Promise<void> {
     try {
       reply = await nutritionist(platform, {
         mode,
-        context,
+        context: contextWithAllergies,
         message: typeof body.message === "string" ? body.message : undefined,
         history,
         image,
