@@ -89,7 +89,16 @@ function firesOn(s: PlanSchedule, unit: RecurrenceUnit, interval: number, d: str
       const diff = daysBetween(s.active_from, d);
       return diff >= 0 && diff % interval === 0;
     }
-    // "weekly" and "monthly" are added in Tasks 2 and 3.
+    case "weekly": {
+      const days = s.recurrence.by_weekday && s.recurrence.by_weekday.length
+        ? s.recurrence.by_weekday
+        : [weekdayOf(s.active_from)];
+      if (!days.includes(weekdayOf(d))) return false;
+      if (interval === 1) return true;
+      const weeks = Math.floor(daysBetween(s.active_from, d) / 7);
+      return weeks >= 0 && weeks % interval === 0;
+    }
+    // "monthly" is added in Task 3.
     default:
       return false;
   }
