@@ -933,3 +933,25 @@ body.sheet-open { position: fixed; left: 0; right: 0; width: 100%; overflow: hid
 .sheet-body { display: block; }
 .primary.danger { background: var(--danger); }
 button.link.danger { color: var(--danger); }
+
+/* ---- Planner: ghosted planned/occurrence timeline rows + accept affordance ---- */
+.entry.planned { display: flex; align-items: stretch; gap: 0; opacity: .78; padding-right: 10px; }
+.entry.planned .entry-main {
+  flex: 1 1 auto; width: auto; cursor: default;
+  border: 1px dashed color-mix(in srgb, var(--muted) 55%, var(--line));
+  background: repeating-linear-gradient(-45deg, transparent, transparent 7px, color-mix(in srgb, var(--muted) 6%, transparent) 7px, color-mix(in srgb, var(--muted) 6%, transparent) 14px);
+}
+.entry.planned .t { font-weight: 600; }
+.badge-unconfirmed {
+  display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
+  color: var(--muted); background: color-mix(in srgb, var(--muted) 16%, transparent);
+  vertical-align: middle;
+}
+.accept-btn {
+  align-self: center; margin-left: 8px; flex: none; white-space: nowrap;
+  padding: 7px 12px; border-radius: 10px; font-weight: 700; font-size: 13px;
+  color: var(--brand-ink, #fff); background: var(--brand); border: 1px solid var(--brand); cursor: pointer;
+}
+.accept-btn:active { transform: translateY(1px); }
+.accept-btn:disabled { opacity: .6; cursor: default; }

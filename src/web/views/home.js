@@ -14,9 +14,9 @@
 "use strict";
 
 import {
-  $, $$, api, APP, me, registerView, openView, view, toast,
+  $, $$, api, APP, me, registerView, openView, view, toast, busy,
   statRing, ringEl, lineChart, sparkBars, feedRow, dayDivider, tripleRingCard,
-  fmt, modeOf, METRIC, RC, todayISO,
+  fmt, modeOf, METRIC, RC, todayISO, timeOf, el, esc,
 } from "../lib.js";
 import {
   timelineWindow, expandWindow, groupByDay, dayHeading, displayFields, plannedState, itemKey, addDays,
@@ -24,6 +24,13 @@ import {
 
 // View-local UI state (mirrors v1 HOME): which slice + window + chart the dashboard is showing.
 const HOME = { scope: "all", range: "day", chart: "ring", weight: null };
+
+// Type glyphs for planned rows (occurrences aren't real entries, so they don't flow through feedRow's
+// icon path). Copied from lib's TICON to keep planner rows visually identical to logged rows.
+const TL_ICON = {
+  n: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v7a2 2 0 0 0 4 0V3"/><path d="M10 12v9"/><ellipse cx="16" cy="6.4" rx="2.2" ry="3.4"/><path d="M16 9.8V21"/></svg>',
+  a: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4" r="1"/><path d="M4 17l5 1 .75-1.5"/><path d="M15 21v-4l-4-3 1-6"/><path d="M7 12V9l5-1 3 3 3 1"/></svg>',
+};
 
 // ============================================================ render entry point
 // Called by showView('home') on every show. Weight is its own data source (delegated); all other
@@ -212,13 +219,64 @@ function renderTimeline() {
 }
 
 // One timeline row: a logged stored entry uses the existing swipe feedRow; planned items (one-off
-// entries + occurrences) get the ghosted accept row (Task 5). Until Task 5, planned rows fall back to
-// a plain read-only feedRow so the merge is verifiable on its own.
+// entries + occurrences) get the ghosted accept row (Task 5).
 function timelineRowEl(it) {
   if (it.state === "logged" && it.origin === "entry") {
     return feedRow(it, { onEdit: (e) => openView("editentry", e), onDelete: (e) => deleteEntry(e.id) });
   }
-  return feedRow(it, {}); // TEMP (Task 5 replaces with plannedRowEl)
+  return plannedRowEl(it);
+}
+
+// A ghosted/dashed planned row: type icon + title/subline + the intended kcal, an "unconfirmed" badge,
+// and the accept button. All display data + the accept decision come from the tested pure helpers, so
+// this is a trivial template (no jsdom needed to trust it).
+function plannedRowEl(it) {
+  const d = displayFields(it);
+  const st = plannedState(it);
+  const timeStr = timeOf(it.logged_at);
+  const sub = d.activity
+    ? [timeStr, d.duration_min ? Math.round(d.duration_min) + " min" : "", d.intensity, d.note].filter(Boolean).join(" · ")
+    : [timeStr, d.note].filter(Boolean).join(" · ");
+  const kcalHtml = d.activity
+    ? '<span class="ekcal out">−' + fmt(d.kcal) + "<small> cal</small></span>"
+    : '<span class="ekcal">' + fmt(d.kcal) + "<small> kcal</small></span>";
+  const main = el("div", { class: "entry-main", html:
+    '<span class="ticon ' + (d.activity ? "a" : "n") + '">' + TL_ICON[d.activity ? "a" : "n"] + "</span>" +
+    '<span class="etext"><span class="t">' + esc(d.title) +
+    '<span class="badge-unconfirmed">' + esc(st.badge) + "</span></span>" +
+    '<span class="s">' + esc(sub) + "</span></span>" +
+    kcalHtml,
+  });
+  const row = el("div", { class: "entry planned" }, main);
+  const acceptBtn = el("button", { class: "accept-btn", type: "button", text: st.accept.label,
+    onClick: (ev) => { ev.stopPropagation(); acceptItem(it, row); } });
+  row.appendChild(acceptBtn);
+  return row;
+}
+
+// Manual confirm. POST /api/plan/accept with the pure acceptBody; on success the item becomes logged.
+// Totals ALWAYS come from the server — we take the accept response and re-fetch /api/stats; we never
+// sum the timeline.
+async function acceptItem(it, rowEl) {
+  const st = plannedState(it);
+  if (!st.accept) return;
+  const btn = rowEl.querySelector(".accept-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  busy("Confirming…");
+  try {
+    const r = await api("/api/plan/accept", { method: "POST", json: st.accept.body });
+    toast(((it.kind || "food") === "activity") ? "Logged it." : "Marked eaten.");
+    // Replace the planned item with the server's materialized/flipped logged entry (keyed de-dupe),
+    // then re-render the list and refresh the stat card from the server.
+    if (it.origin === "occurrence") TL.byKey.delete(itemKey(it));
+    if (r && r.entry) TL.byKey.set(itemKey({ ...r.entry, origin: "entry", state: "logged" }), { ...r.entry, origin: "entry", state: "logged" });
+    renderTimeline();
+    const stats = await api("/api/stats?range=" + HOME.range).catch(() => null);
+    if (stats) renderStats(stats);
+  } catch (e) {
+    toast(e.message);
+    if (btn) { btn.disabled = false; btn.textContent = st.accept.label; }
+  }
 }
 
 async function deleteEntry(id) {
