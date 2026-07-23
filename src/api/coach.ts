@@ -387,11 +387,13 @@ export async function registerCoach(app: App, deps: RouteDeps): Promise<void> {
     }
     if (!fn) return err(c, "fn is required", 400);
 
-    // TODO(phase2): run these against the configured SECOND-OPINION model (per-function pickModel +
-    // role:"second"). Phase 1 re-runs on the instance-default provider/model via resolveDefaultModel.
+    // A second opinion runs the STRONGER second-opinion model ("Latest Pro"), distinct from the
+    // standard model ("Latest Flash") the primary estimate used — that difference is the whole point.
+    // resolveDefaultModel(…, "second") returns it (settings default_second_model, else the built-in
+    // gemini-pro-latest). Pro is vision-capable, so it covers photo re-estimates too.
     try {
       if (fn === "activity_estimate") {
-        const { provider, model } = await resolveDefaultModel(platform, "ai");
+        const { provider, model } = await resolveDefaultModel(platform, "second");
         // Reproduce the primary activity path's grounding (v1 estimateActivity 'second'): the known-
         // activities MET reference block + the person's body weight, so the burn is grounded + scaled.
         let userMsg = text;
@@ -415,15 +417,15 @@ export async function registerCoach(app: App, deps: RouteDeps): Promise<void> {
         return ok(c, { items: r.items, total: r.total, note: r.note, provider, model });
       }
       if (fn === "web_lookup") {
-        const { provider, model } = await resolveDefaultModel(platform, "ai");
+        const { provider, model } = await resolveDefaultModel(platform, "second");
         // v1 webEstimate 'second' prepends the curated "Preferred sources" hint to the query.
         const hint = await sourcesHint(platform);
-        const r = await webLookup(platform, text, hint);
+        const r = await webLookup(platform, text, hint, "second");
         return ok(c, { items: r.items, total: r.total, note: r.note, provider, model });
       }
-      // text_parse / vision_estimate: estimateNutrition selects the prompt by image presence.
-      const category = image ? "vision" : "ai";
-      const { provider, model } = await resolveDefaultModel(platform, category);
+      // text_parse / vision_estimate: estimateNutrition selects the prompt by image presence. Both run
+      // on the second-opinion (Pro) model; Pro handles vision, so no separate vision category is needed.
+      const { provider, model } = await resolveDefaultModel(platform, "second");
       // Ground on the user's known foods (v1 estimate 'text_parse' searchByText + referenceBlock), the
       // same block entries.ts's primary path passes via `known` — so the re-run is anchored, not bare.
       const g = await foodGrounding(platform, text);
