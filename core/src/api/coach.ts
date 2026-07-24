@@ -409,18 +409,26 @@ export async function registerCoach(app: App, deps: RouteDeps): Promise<void> {
       return err(c, String((e as Error)?.message || e), 502);
     }
 
-    // Persist a proposed weight goal via the same weight_goals path (cap 3, lb→kg) as /api/weight/goals.
+    // Persist a proposed weight goal with REPLACE semantics: a coach-set goal REDEFINES the user's
+    // goal, so it becomes their SOLE weight goal — it then unambiguously drives the plan (goals order
+    // by target_date, earliest drives calories), with no divergent leftover and no cap-3 silent skip.
+    // Create the new goal FIRST so a mid-op failure never leaves the user goal-less, THEN clear the
+    // goals that existed before. lb→kg matches POST /api/weight/goals.
     if (change.weight_goal) {
       try {
-        const { items } = await store.list<WeightGoal>("weight_goals", { limit: 10 });
-        if (items.length < 3) {
-          await store.create<WeightGoal>("weight_goals", {
-            user: uid,
-            target_kg: lbToKg(change.weight_goal.target_lb),
-            target_date: change.weight_goal.target_date,
-            start_kg: inp.curKg,
-            start_date: todayStr(),
-          } as Omit<WeightGoal, "id">);
+        const prior = await store.list<WeightGoal>("weight_goals", { limit: 50 });
+        const oldIds = prior.items
+          .map((g) => (g as WeightGoal & { id?: string }).id)
+          .filter((x): x is string => !!x);
+        await store.create<WeightGoal>("weight_goals", {
+          user: uid,
+          target_kg: lbToKg(change.weight_goal.target_lb),
+          target_date: change.weight_goal.target_date,
+          start_kg: inp.curKg,
+          start_date: todayStr(),
+        } as Omit<WeightGoal, "id">);
+        for (const gid of oldIds) {
+          try { await store.delete("weight_goals", gid); } catch { /* leave it; the new goal is already set */ }
         }
       } catch {
         /* non-fatal — the goals/targets already persisted */

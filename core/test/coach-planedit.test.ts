@@ -136,6 +136,22 @@ test("POST /api/plan/apply with a weight_goal recomputes the deficit AND persist
   assert.equal(Math.round(wg.goals[0].target_lb), 180);
 });
 
+test("POST /api/plan/apply REPLACES existing weight goals (coach goal becomes the sole goal)", async () => {
+  const { req, platform } = client();
+  await seedProfile(platform);
+  // Pre-seed two existing weight goals via the normal path.
+  await req("/api/weight/goals", { method: "POST", body: JSON.stringify({ target_lb: 190, target_date: "2027-03-01" }) });
+  await req("/api/weight/goals", { method: "POST", body: JSON.stringify({ target_lb: 185, target_date: "2027-06-01" }) });
+  const before = await (await req("/api/weight/goals")).json();
+  assert.equal(before.goals.length, 2, "two goals seeded");
+  // The coach sets a new goal via apply → it REPLACES the whole set (no append, no cap-3 skip).
+  const res = await req("/api/plan/apply", { method: "POST", body: JSON.stringify({ weight_goal: { target_lb: 175, target_date: "2027-09-01" } }) });
+  assert.equal(res.status, 200);
+  const after = await (await req("/api/weight/goals")).json();
+  assert.equal(after.goals.length, 1, "prior goals cleared — coach goal is the sole goal");
+  assert.equal(Math.round(after.goals[0].target_lb), 175);
+});
+
 test("POST /api/plan/apply changes activity_level and re-derives calories", async () => {
   const { req, platform } = client();
   await seedProfile(platform);
