@@ -67,11 +67,16 @@ export function validatePlanChange(raw: unknown): PlanChange | null {
   const out: PlanChange = {};
   let has = false;
   if (num(b.goal_kcal) > 0) { out.goal_kcal = Math.round(num(b.goal_kcal)); has = true; }
-  if (b.method != null && (GOAL_METHODS as readonly string[]).includes(String(b.method))) {
-    out.method = String(b.method) as GoalMethod; has = true;
+  // Normalize case/whitespace before the enum check — the model is told to emit lowercase, but a
+  // capitalized "Protein" shouldn't silently drop a real change. The stored value is always a canonical
+  // lowercase enum member.
+  const method = b.method != null ? String(b.method).trim().toLowerCase() : "";
+  if (method && (GOAL_METHODS as readonly string[]).includes(method)) {
+    out.method = method as GoalMethod; has = true;
   }
-  if (b.activity_level != null && (ACTIVITY_LEVELS as readonly string[]).includes(String(b.activity_level))) {
-    out.activity_level = String(b.activity_level) as ActivityLevel; has = true;
+  const activity = b.activity_level != null ? String(b.activity_level).trim().toLowerCase() : "";
+  if (activity && (ACTIVITY_LEVELS as readonly string[]).includes(activity)) {
+    out.activity_level = activity as ActivityLevel; has = true;
   }
   const wg = b.weight_goal;
   if (wg && typeof wg === "object" && num(wg.target_lb) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(String(wg.target_date || ""))) {
@@ -393,9 +398,13 @@ export async function registerCoach(app: App, deps: RouteDeps): Promise<void> {
       plan_summary: summary,
     };
     if (change.activity_level) patch.activity_level = change.activity_level;
+    // No id means ensureProfile hit a creation race and returned an unsaved draft — persisting is
+    // impossible, so fail honestly rather than 200-with-nothing-saved (the client would falsely toast
+    // "Plan updated"). Rare + transient: the normal path always has an id.
     const pid = (profile as Profile & { id?: string }).id;
+    if (!pid) return err(c, "profile unavailable — please try again", 503);
     try {
-      if (pid) await store.update<Profile>("profiles", pid, patch);
+      await store.update<Profile>("profiles", pid, patch);
     } catch (e) {
       return err(c, String((e as Error)?.message || e), 502);
     }

@@ -61,6 +61,18 @@ test("POST /api/nutritionist keeps valid fields and drops invalid ones in a MIXE
   } finally { (globalThis as any).fetch = orig; }
 });
 
+test("POST /api/nutritionist normalizes trailer enum case (Protein/Sedentary → canonical lowercase)", async () => {
+  const orig = (globalThis as any).fetch;
+  try {
+    const { req, platform } = client();
+    stubGemini(platform, 'Ok.\n<<PLAN_CHANGE>>{"method":"Protein","activity_level":"SEDENTARY"}');
+    const res = await req("/api/nutritionist", { method: "POST", body: JSON.stringify({ mode: "chat", message: "x" }) });
+    const body = await res.json();
+    // A capitalized enum from the model must not silently drop a real change — it's canonicalized.
+    assert.deepEqual(body.plan_change, { method: "protein", activity_level: "sedentary" });
+  } finally { (globalThis as any).fetch = orig; }
+});
+
 test("POST /api/nutritionist with no trailer returns plan_change null and a clean reply", async () => {
   const orig = (globalThis as any).fetch;
   try {

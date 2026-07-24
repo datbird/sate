@@ -145,6 +145,9 @@ function secondOpinionBtn(reqBody) {
       thinking.textContent = r.reply || "(no reply)";
       thinking.insertBefore(el("div", { class: "second-tag", text: "Second opinion" + (r.model ? " · " + r.model : "") }), thinking.firstChild);
       bar.remove();
+      // A second opinion runs the nutritionist too, so it can also carry a plan-change proposal —
+      // surface the same inline Apply/Dismiss card rather than silently dropping it.
+      if (r.plan_change) renderPlanChange(r.plan_change);
     } catch (e) {
       thinking.classList.remove("dots");
       thinking.textContent = (e && e.message) || "Second opinion unavailable";
