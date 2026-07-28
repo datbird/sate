@@ -11,6 +11,7 @@ import {
   ok,
   err,
   dayKey,
+  tzOf,
   ensureProfile,
   type App,
   type RouteDeps,
@@ -389,7 +390,7 @@ export async function registerCheckins(app: App, deps: RouteDeps): Promise<void>
       workouts?: unknown;
       tz_offset_min?: number;
     };
-    const tz = num(body.tz_offset_min);
+    const tz = tzOf(c, body.tz_offset_min);
     const workouts = Array.isArray(body.workouts) ? (body.workouts as Record<string, unknown>[]).slice(0, 500) : [];
 
     let added = 0;

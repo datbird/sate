@@ -4,7 +4,7 @@
 // middleware; per-user data is data.forUser(uid), the shared foods KB is data.instance(). v1's
 // user_email maps to the Firebase uid.
 
-import { getUid, ok, err, dayKey, foodGrounding, type App, type RouteDeps } from "./helpers";
+import { getUid, ok, err, dayKey, tzOf, foodGrounding, type App, type RouteDeps } from "./helpers";
 import { resolveDefaultModel, estimateNutrition, webLookup } from "../ai/index";
 import * as foodsKb from "../kb/foods";
 import type { Entry, Food, FoodItem, Macros } from "../schema";
@@ -521,9 +521,9 @@ export async function registerFoods(app: App, deps: RouteDeps): Promise<void> {
       provider,
       model,
       logged_at: body.logged_at,
-      tz_offset_min: body.tz_offset_min,
+      tz_offset_min: tzOf(c, body.tz_offset_min),
     });
-    const totals = await dayTotals(platform.data.forUser(uid), entry.day || dayKey(entry.logged_at, body.tz_offset_min ?? 0));
+    const totals = await dayTotals(platform.data.forUser(uid), entry.day || dayKey(entry.logged_at, tzOf(c, body.tz_offset_min)));
     return ok(c, { entry, totals });
   });
 
@@ -555,9 +555,9 @@ export async function registerFoods(app: App, deps: RouteDeps): Promise<void> {
       total,
       items,
       logged_at: b.logged_at,
-      tz_offset_min: b.tz_offset_min,
+      tz_offset_min: tzOf(c, b.tz_offset_min),
     });
-    const totals = await dayTotals(platform.data.forUser(uid), entry.day || dayKey(entry.logged_at, b.tz_offset_min ?? 0));
+    const totals = await dayTotals(platform.data.forUser(uid), entry.day || dayKey(entry.logged_at, tzOf(c, b.tz_offset_min)));
     return ok(c, { entry, totals });
   });
 }

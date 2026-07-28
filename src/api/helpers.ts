@@ -42,6 +42,21 @@ export function dayKey(loggedAtISO: string, tzOffsetMin = 0): string {
   return new Date(t).toISOString().slice(0, 10);
 }
 
+// The ONE way a write handler resolves the caller's tz. The SPA's shared api() helper appends
+// ?tz=<getTimezoneOffset()> to EVERY request, but most write callers (the compose sheet especially)
+// send no tz_offset_min in the JSON body — so reading the body alone silently fell back to UTC and
+// bucketed anything logged after 19:00 US-Central onto TOMORROW's date. Prefer an explicit body value
+// (callers that move an entry to a chosen day depend on it), else the query param, else UTC.
+// Read routes take tz straight off the query; writes MUST use this.
+export function tzOf(c: Context<AppVars>, bodyTz?: unknown): number {
+  if (bodyTz !== undefined && bodyTz !== null && bodyTz !== "") {
+    const n = Number(bodyTz);
+    if (isFinite(n)) return n;
+  }
+  const q = Number(c.req.query("tz"));
+  return isFinite(q) ? q : 0;
+}
+
 // ---- planning honesty rule -------------------------------------------------
 // A planned entry (status:"planned") carries INTENDED content but counts toward NO total until it is
 // accepted (status→"logged"). Entries created before the Planner have no status field → treated as
