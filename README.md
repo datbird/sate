@@ -2,9 +2,9 @@
 
 The **platform-agnostic heart of Sate**, shared byte-for-byte between the two deployments:
 
-- **`sate`** (public / open-source) — **canonical home of `core/`**. Also ships the self-hosted
-  PocketBase edition, which consumes only `src/shared/` (copied to `pb_hooks/shared/` at build).
-- **`sate-cloud`** (private) — the hosted product: Firestore + Firebase-Auth adapters, Cloud Run.
+- **`sate`** (public / open-source) — **canonical home of `core/`**. Also ships the **Hosted**
+  (self-hosted) PocketBase edition, which consumes only `src/shared/` (copied to `pb_hooks/shared/` at build).
+- **`sate-cloud`** (private) — the **Cloud** edition: Firestore + Firebase-Auth adapters, Cloud Run.
   Runs the full core.
 
 **Edit core here, in the public repo.** Then re-split and push it, and pull it there:
@@ -42,7 +42,7 @@ test/           node:test suites, bundled through esbuild by `npm test`
 **⚠ `src/shared/` has its own `package.json` pinning `{"type":"commonjs"}`.** `core/package.json`
 declares `"type": "module"`, so without that scoping file Node and esbuild read these as ESM and
 `module.exports` breaks. PocketBase's goja ignores package.json entirely and was never affected —
-so the failure appears only on the hosted side. Any new shared CJS belongs under that directory.
+so the failure appears only on the Cloud side. Any new shared CJS belongs under that directory.
 
 ## Ports (the contract)
 | Port | Cloud adapter (`sate-cloud`) |
@@ -53,7 +53,7 @@ so the failure appears only on the hosted side. Any new shared CJS belongs under
 | `Secrets` | Secret Manager |
 
 > **There is no second full adapter set today.** A SQLite/local-auth adapter (`sate/server/`) was
-> built and proven in July 2026, then **deleted** — the self-hosted edition deliberately keeps its
+> built and proven in July 2026, then **deleted** — the Hosted edition deliberately keeps its
 > PocketBase implementation rather than re-platforming onto core. Recover it from history if that
 > direction ever revives. The two editions therefore share `src/shared/`, not the whole core.
 
