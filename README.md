@@ -143,10 +143,15 @@ self-hosted server doesn't need:
 
 > **[github.com/datbird/sate-ios](https://github.com/datbird/sate-ios)** — the native iOS shell.
 
-The shell is a *generic client*: it asks for your instance address on first launch, stores it, and
-loads it in the webview (the native bridge follows, so plugins keep working). It doesn't bundle the
-SPA — the server serves it same-origin so your auth proxy's login flow works unchanged. Build it in
-Xcode against your own Apple team and bundle identifier.
+The shell is a *generic client*: it loads a Sate instance in the webview (the native bridge follows,
+so plugins keep working) and doesn't bundle the SPA — your server serves it same-origin, so your auth
+proxy's login flow works unchanged.
+
+The published TestFlight build defaults to Sate **Cloud**, the managed edition; to point it at your
+own server, tap **"Self-Hosted Sate user →"** on the sign-in screen and enter your instance address
+(or "Switch instance" in the account menu later). If you're building it yourself in Xcode against
+your own Apple team and bundle identifier, set `SATE_URL` at `cap sync` time to prefill your own
+instance instead.
 
 ## Configuration
 
@@ -261,8 +266,8 @@ Dockerfile copies to `pb_hooks/shared/`, so both editions compute identical numb
 identical prompts. Prompt drift between editions is invisible and would silently change AI
 answers — sharing that text is the whole point.
 
-The rest of `core/` targets a separate hosted deployment built on the same modules. It's kept
-here because this repo is canonical for it; you can ignore it when self-hosting.
+The rest of `core/` targets **Sate Cloud**, the managed edition, built on the same modules. It's
+kept here because this repo is canonical for it; you can ignore it when self-hosting.
 
 ## License
 
