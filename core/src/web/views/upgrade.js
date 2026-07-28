@@ -1,6 +1,6 @@
 // Sate v2 SPA — Upgrade / checkout (NEW screen). Owned by the upgrade agent.
 //
-// This is the HOSTED-edition monetization surface. It shows the paid plans and starts Stripe
+// This is the CLOUD-edition monetization surface. It shows the paid plans and starts Stripe
 // checkout, reflects the trial countdown from /api/me.entitlements.expiring[sate_hosted], and lets
 // the user switch edition (hosted ⇄ self-host). It also self-mounts a subtle trial banner in the
 // shell (top of #app) that reads the same entitlement state on every view change: a countdown while
@@ -61,21 +61,23 @@ async function checkout(plan) {
   } catch (e) { toast(e.message); }
 }
 
-// Switch edition (hosted ⇄ selfhost). Server starts the new edition's trial if never trialed. After
+// Switch edition. The wire values are "hosted" (= the CLOUD edition) and "selfhost" (= HOSTED,
+// self-run); they are persisted + SKU-tied so they keep their legacy names. Display text says
+// Cloud / Hosted. Server starts the new edition's trial if never trialed. After
 // the switch we refresh /api/me so the banner + menu reflect the new state, then re-sync the banner.
 async function switchEdition(edition, ctrl) {
-  const toHosted = edition === "hosted";
+  const toCloud = edition === "hosted"; // wire value "hosted" IS the Cloud edition
   const okGo = await confirmDialog(
-    toHosted
-      ? "Switch to the Hosted edition? Cloud AI is included and just works."
-      : "Switch to the Self-host edition? You'll run your own Docker and bring your own AI keys.",
-    { title: toHosted ? "Switch to Hosted" : "Switch to Self-host", confirmLabel: "Switch" },
+    toCloud
+      ? "Switch to the Cloud edition? AI is included and just works."
+      : "Switch to the Hosted edition? You'll run your own Docker and bring your own AI keys.",
+    { title: toCloud ? "Switch to Cloud" : "Switch to Hosted", confirmLabel: "Switch" },
   );
   if (!okGo) return;
   try {
     await api("/api/edition", { method: "POST", json: { edition } });
     await refreshMe();
-    toast(toHosted ? "Now on the Hosted edition" : "Now on the Self-host edition");
+    toast(toCloud ? "Now on the Cloud edition" : "Now on the Hosted edition");
     if (ctrl) ctrl.close();
     ensureBanner();
   } catch (e) { toast(e.message); }

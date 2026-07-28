@@ -197,13 +197,14 @@ export function hasSku(sku) {
   const skus = (APP.me && APP.me.entitlements && APP.me.entitlements.skus) || [];
   return skus.includes(sku) || skus.includes("god") || skus.includes("friends_and_family");
 }
-// The trial/paid expiry the plane reports for the hosted SKU, or null when the grant is permanent.
+// The trial/paid expiry the plane reports for the `sate_hosted` SKU (which is the CLOUD edition's
+// subscription — legacy name, do not rename), or null when the grant is permanent.
 export function hostedExpiry(m = me()) {
   const exp = m && m.entitlements && m.entitlements.expiring;
   return (exp && exp.sate_hosted) || null;
 }
 // Permanent (non-trial) access — the god / friends-and-family super-SKUs, or a real non-expiring
-// paid hosted grant. These users are entitled forever, so they must NEVER be shown a trial offer, a
+// paid `sate_hosted` (Cloud) grant. These users are entitled forever, so must NEVER see a trial offer, a
 // trial countdown, a "trial ended — AI paused" nag, or an upgrade prompt.
 //
 // The plane's `permanent` list is authoritative: a sku can appear in BOTH `skus` and `expiring` when

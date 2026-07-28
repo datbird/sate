@@ -364,7 +364,7 @@ async function obSaveThenPlan() {
   obGo();
 }
 
-// ---- plan: AI narrative (POST /api/nutritionist mode:plan). Hosted AI "just works" when entitled;
+// ---- plan: AI narrative (POST /api/nutritionist mode:plan). Cloud AI "just works" when entitled;
 // if it's unavailable the error surfaces inline rather than blocking Finish. ----
 async function obPlan() {
   if (OB._planned) return;
