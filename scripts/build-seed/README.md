@@ -1,6 +1,6 @@
 # Bulk food-seed builder
 
-Regenerates `pb_migrations/1720000004_foods_bulk.js` — the ~1,800-row predefined food
+Regenerates `pb_migrations/1720000004_foods_bulk.js` — the ~1,830-row predefined food
 database — from **USDA FoodData Central**. All USDA FDC data is **public domain**
 (`usa.gov/publicdomain/label/1.0`), so the generated seed is safe to redistribute in this
 MIT-licensed image with no attribution or share-alike obligations.

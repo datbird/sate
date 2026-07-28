@@ -2,11 +2,21 @@
 
 The **platform-agnostic heart of Sate**, shared byte-for-byte between the two deployments:
 
-- **`sate`** (public / open-source) — self-hostable, SQLite + local-auth adapters, Docker.
-- **`sate-cloud`** (private) — the hosted product, Firestore + Firebase-Auth adapters, Cloud Run.
+- **`sate`** (public / open-source) — **canonical home of `core/`**. Also ships the self-hosted
+  PocketBase edition, which consumes only `src/shared/` (copied to `pb_hooks/shared/` at build).
+- **`sate-cloud`** (private) — the hosted product: Firestore + Firebase-Auth adapters, Cloud Run.
+  Runs the full core.
 
-`core/` is vendored into each repo via **git subtree** and kept in exact sync. Do core work in one
-place, `git subtree push` it, `git subtree pull` in the other — identical on both sides.
+**Edit core here, in the public repo.** Then re-split and push it, and pull it there:
+
+```bash
+bash scripts/dist-core.sh                                   # in sate: split core/ → core-dist, push
+git subtree pull --prefix=core core-src core-dist --squash  # in sate-cloud
+diff -rq core/src ../sate/core/src                          # MUST be empty before deploying
+```
+
+`diff` being empty is the gate — a stale vendored subtree has silently masked a real bug before,
+by typechecking old code while new code shipped.
 
 ## The rule
 **Core depends only on interfaces (`ports/`), never on a platform SDK.** No `firebase-admin`, no
@@ -15,23 +25,42 @@ implement the ports; core is handed a `Platform` bundle at startup and runs anyw
 
 ```
 src/
-  domain/     pure business logic — nutrition engine, food/activity/goal math (no I/O)
-  ai/         prompts, provider adapters (Claude/OpenAI/Gemini REST), routing, usage limits
-  schema/     zod schemas + inferred types — Entry, Food, Measurement, WeightGoal, Profile
-  ports/      the interfaces: DataStore, Auth, FileStorage, Secrets  (+ the Platform bundle)
-  api/        Hono route handlers — call ports, return data (added in a later phase)
-  web/        the SPA — views/components/styles; talk to the DataStore port (added later)
-  seed/       USDA food seed + activities (added later)
+  domain/       pure business logic — nutrition engine, recurrence projector (no I/O)
+  ai/           provider adapters (Claude/OpenAI/Gemini/OpenRouter REST), routing, usage limits
+  schema/       zod schemas + inferred types — Entry, Food, Measurement, WeightGoal, Profile, plans
+  ports/        the interfaces: DataStore, Auth, FileStorage, Secrets  (+ the Platform bundle)
+  api/          Hono route handlers — entries, foods, weight, coach, plan, recipes, admin, account
+  web/          the SPA — app shell, lib.js kit, views/*  (framework-free ES modules)
+  kb/           food + activity knowledge-base retrieval
+  entitlements/ feature gating against the shared entitlements plane
+  shared/       ⚠ plain CommonJS, consumed by BOTH editions — nutrition math, the AI prompt
+                registry, barcode normalization. PocketBase's goja runtime requires these
+                directly, so they must stay dependency-free CJS.
+test/           node:test suites, bundled through esbuild by `npm test`
 ```
 
+**⚠ `src/shared/` has its own `package.json` pinning `{"type":"commonjs"}`.** `core/package.json`
+declares `"type": "module"`, so without that scoping file Node and esbuild read these as ESM and
+`module.exports` breaks. PocketBase's goja ignores package.json entirely and was never affected —
+so the failure appears only on the hosted side. Any new shared CJS belongs under that directory.
+
 ## Ports (the contract)
-| Port | Cloud adapter | Self-host adapter |
-|------|---------------|-------------------|
-| `DataStore` (get/list/**watch**/create/update/delete/batch) | Firestore (offline cache + `onSnapshot`) | SQLite (+ poll/SSE for `watch`) |
-| `Auth` (verify token → user) | Firebase `verifyIdToken` | local email / header |
-| `FileStorage` | GCS | local disk |
-| `Secrets` | Secret Manager | env vars |
+| Port | Cloud adapter (`sate-cloud`) |
+|------|------------------------------|
+| `DataStore` (get/list/**watch**/create/update/delete/batch, `forUser` + `instance`) | Firestore |
+| `Auth` (verify token → user) | Firebase `verifyIdToken` |
+| `FileStorage` | GCS |
+| `Secrets` | Secret Manager |
+
+> **There is no second full adapter set today.** A SQLite/local-auth adapter (`sate/server/`) was
+> built and proven in July 2026, then **deleted** — the self-hosted edition deliberately keeps its
+> PocketBase implementation rather than re-platforming onto core. Recover it from history if that
+> direction ever revives. The two editions therefore share `src/shared/`, not the whole core.
 
 ## Status
-Scaffolded 2026-07-15 (Phase 1). Ported so far: the deterministic **nutrition engine**
-(`domain/nutrition.ts`) verbatim from the original PocketBase `pb_hooks/nutrition.js`.
+Live. Core carries the full API surface (diary, foods, weight, coach, admin, account,
+entitlements), the AI layer, the SPA, and the Planner (planned-vs-logged entries, recurrence
+schedules, timeline, recipes, coach-driven plan edits). Test suite runs with `npm test`.
+
+`domain/nutrition.ts` is still the original PocketBase engine, now re-exported from
+`shared/nutrition.js` so both editions compute byte-identical numbers.

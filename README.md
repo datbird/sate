@@ -3,10 +3,10 @@
 **Self-hosted AI calorie counting, by chat or photo.** Describe a meal ("two eggs and toast")
 or snap a photo, and Sate estimates the calories + macros and logs them against your daily goal.
 
-Sate is **bring-your-own-AI**: you supply your own **Claude, OpenAI, and/or Gemini** API keys,
-and an admin panel lets you choose which provider + model handles each task. It's a single
-small Docker image built on [PocketBase](https://pocketbase.io) — SQLite storage, a built-in
-admin dashboard, and JavaScript hooks, with no external services.
+Sate is **bring-your-own-AI**: you supply your own **Claude, OpenAI, Gemini and/or OpenRouter**
+API keys, and an admin panel lets you choose which provider + model handles each task. It's a
+single small Docker image built on [PocketBase](https://pocketbase.io) — SQLite storage, a
+built-in admin dashboard, and JavaScript hooks, with no external services.
 
 Access is gated by **your auth proxy** — designed for [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
 email allow-lists, but it works with anything that injects an authenticated-email header
@@ -18,25 +18,38 @@ email allow-lists, but it works with anything that injects an authenticated-emai
 
 - 💬 **Log by chat** — natural-language meals parsed into items + calories + macros.
 - 📷 **Log by photo** — point a vision model at your plate.
+- 📸 **Barcode & QR scanning** — camera scan → local food DB → Open Food Facts / USDA lookup, cached.
+- 🔎 **Food database + web search** — ~1,950 seeded USDA foods, searchable, with a web-grounded
+  fallback for anything missing.
+- 🏃 **Activity logging** — presets with MET-based burn, free-text AI estimates, or an Apple Health
+  import; exercise can optionally add back to your calorie budget.
+- ⚖️ **Weight & goals** — dated weigh-in history, target weights with pace warnings, and a
+  deterministic calorie/macro engine (Mifflin-St Jeor → TDEE → targets).
 - 🎯 **Goals & daily ring** — calories and protein/carbs/fat vs your targets.
-- 🧠 **AI recap** — a friendly daily summary + one practical tip.
-- 🔀 **Multi-provider, per-function routing** — e.g. Gemini for photos, Claude for chat.
+- 🧠 **AI recap & coach** — a daily summary plus a stat-aware nutrition coach grounded on your
+  real numbers.
+- 🔀 **Multi-provider, per-function routing** — e.g. Gemini for photos, Claude for coaching.
+- 💸 **Per-provider usage limits** — cap monthly spend by token count or dollar budget.
 - 🔐 **Keys encrypted at rest** (AES-256-GCM); shown only by their last 4 characters.
 - 👤 **Admin vs user roles**, both derived from the auth-proxy email.
 
 ## How the AI is configured
 
-There are four **functions**, each independently routable to a provider + model in the Admin tab:
+There are seven **functions**, each independently routable to a provider + model in the Admin tab:
 
 | Function | What it does | Needs vision? |
 |----------|--------------|---------------|
 | `vision_estimate` | Food **photo** → items + calories | ✅ |
 | `text_parse` | Meal **text** → items + calories | — |
-| `chat` | Conversational coaching / Q&A | — |
+| `web_lookup` | Web-search-grounded lookup for foods the DB doesn't cover | — |
+| `activity_estimate` | Activity text → calories burned | — |
 | `daily_summary` | End-of-day recap + tip | — |
+| `nutritionist` | Nutrition coach — plans and Q&A, grounded on your computed targets | — |
+| `checkin` | Proactive check-in messages | — |
 
-Admins paste their own API keys and set the model id per function (free-text, so you can use
-any model your key supports). Defaults are Claude models.
+Admins paste their own API keys and pick the model per function from a live, per-provider model
+list (with an "Other…" option for any id your key supports). The seeded default is
+`google` / `gemini-2.5-flash` for every function; re-route them freely.
 
 ## Quick start (Docker)
 
@@ -220,14 +233,36 @@ generates a throwaway encryption key if you didn't set one.
 ## Architecture
 
 ```
-pb_migrations/   SQLite schema as code (profiles, entries, providers, function_config)
+pb_migrations/   SQLite schema as code (profiles, entries, foods, activities,
+                 measurements, weight_goals, providers, function_config, settings, …)
 pb_hooks/
-  main.pb.js     custom /api/sate/* routes: identity, logging, chat, admin
-  providers.js   Claude / OpenAI / Gemini adapters over $http.send
-  functions.js   prompts, key encryption, per-function config resolution
-pb_public/       framework-free SPA (chat log, history, admin) — served at /
+  main.pb.js     thin /api/sate/* route registrations (each handler require()s a module)
+  api.js         all request logic: identity, logging, entries, stats, weight,
+                 search, and the barcode/online lookup chain
+  providers.js   Claude / OpenAI / Gemini / OpenRouter adapters over $http.send
+  functions.js   function registry, prompts, per-function config, key encryption
+  nutrition.js   deterministic engine — BMR → TDEE → goal calories → macro targets
+  ailimits.js    usage tracking, per-provider token/$ caps, token→dollar pricing
+  foods.js       food knowledge base — retrieval + prompt grounding
+  activities.js  activity knowledge base — the exercise counterpart to foods.js
+  kb.js          retrieval primitives shared by foods.js and activities.js
+  backup.js      backup & restore — local zips, external PocketBase, Firestore
+  shared/        copied in at build time from core/src/shared (see below)
+pb_public/       framework-free SPA — served at /
 Dockerfile       Alpine + PocketBase binary + the above
 ```
+
+### What `core/` is doing in this repo
+
+`core/` is **`@sate/core`** — runtime-agnostic TypeScript that is *not* used by this self-hosted
+PocketBase edition at runtime, with one exception: **`core/src/shared/`** holds plain
+CommonJS modules (the nutrition engine, the AI prompt registry, barcode normalization) that the
+Dockerfile copies to `pb_hooks/shared/`, so both editions compute identical numbers and send
+identical prompts. Prompt drift between editions is invisible and would silently change AI
+answers — sharing that text is the whole point.
+
+The rest of `core/` targets a separate hosted deployment built on the same modules. It's kept
+here because this repo is canonical for it; you can ignore it when self-hosting.
 
 ## License
 

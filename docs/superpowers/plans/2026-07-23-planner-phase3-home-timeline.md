@@ -6,7 +6,7 @@
 
 **Architecture:** Frontend-only, in the framework-free SPA under `core/src/web`. The riskiest logic — window math, day grouping, the ghosted/accept-state decision, entry-vs-occurrence display normalization, and the plan-an-event request builder — lands in a new **pure, import-free** module `core/src/web/planner.js` (the counterpart to Phase 2's pure `domain/schedule.ts`). It imports nothing, touches no DOM, and is unit-tested directly by the existing esbuild+`node:test` harness. `lib.js` is NOT importable under node (it runs a `window.visualViewport` IIFE at module load), so the pure module must stand alone. The DOM glue in `views/home.js` and a new overlay `views/planevent.js` is deliberately thin: it calls the pure helpers, uses `lib.js`'s `api()`/`sheet()`/`feedRow()`/`openView()`, and is verified by explicit LIVE steps on sate.health (there is no jsdom/browser harness in this repo, and none is introduced).
 
-**Tech Stack:** Framework-free ES modules (browser) + the existing esbuild-bundle + native `node:test` harness for the pure module. Hono API already built and on `v2` (Phase 2). No new runtime or dev dependencies. The deployed SPA is content-hash-fingerprinted by sate-cloud's `scripts/build-web.mjs` (bundles `app.js` + its `lib.js`/`views/*` graph → `app.<hash>.js`, immutable cache; `index.html` is `no-store`).
+**Tech Stack:** Framework-free ES modules (browser) + the existing esbuild-bundle + native `node:test` harness for the pure module. Hono API already built (Phase 2). No new runtime or dev dependencies. The deployed SPA is content-hash-fingerprinted by sate-cloud's `scripts/build-web.mjs` (bundles `app.js` + its `lib.js`/`views/*` graph → `app.<hash>.js`, immutable cache; `index.html` is `no-store`).
 
 ## Global Constraints
 
