@@ -4,7 +4,7 @@
 // phase 2. All routes are non-AI. Ported onto the shared ports; identity is the Firebase uid.
 
 import {
-  getUid, getEmail, ok, err, dayKey, ensureProfile, dayIntakeTotals,
+  getUid, getEmail, ok, err, dayKey, tzOf, ensureProfile, dayIntakeTotals,
   type App, type RouteDeps,
 } from "./helpers";
 import { PlanSchedule, PlanOverride, ScheduleRecurrence } from "../schema";
@@ -65,7 +65,7 @@ export async function registerPlan(app: App, deps: RouteDeps): Promise<void> {
     const kind: Entry["kind"] = b.kind === "activity" ? "activity" : "food";
     const store = platform.data.forUser(uid);
     const logged_at = b.logged_at ? new Date(b.logged_at).toISOString() : new Date().toISOString();
-    const tz = num(b.tz_offset_min);
+    const tz = tzOf(c, b.tz_offset_min);
     const day = dayKey(logged_at, tz);
     const draft: Record<string, any> = {
       user: uid,

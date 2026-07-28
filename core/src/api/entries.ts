@@ -7,7 +7,7 @@
 
 import type { Context } from "hono";
 import {
-  getUid, getEmail, ok, err, dayKey, ensureProfile, foodGrounding, dayIntakeTotals,
+  getUid, getEmail, ok, err, dayKey, tzOf, ensureProfile, foodGrounding, dayIntakeTotals,
   type App, type AppVars, type RouteDeps,
 } from "./helpers";
 import {
@@ -661,7 +661,7 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
     try {
       const { est, provider, model, coverageOk } = await estimateFoodText(platform, instance, text, { deep: !!b.deep });
       const logged_at = b.logged_at ? new Date(b.logged_at).toISOString() : new Date().toISOString();
-      const tz = num(b.tz_offset_min);
+      const tz = tzOf(c, b.tz_offset_min);
       const day = dayKey(logged_at, tz);
       const entry = await store.create<Entry>("entries", {
         user: uid,
@@ -714,7 +714,7 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
       /* usage bump is best-effort */
     }
     const logged_at = b.logged_at ? new Date(b.logged_at).toISOString() : new Date().toISOString();
-    const tz = num(b.tz_offset_min);
+    const tz = tzOf(c, b.tz_offset_min);
     const day = dayKey(logged_at, tz);
     const entry = await store.create<Entry>("entries", {
       user: uid,
@@ -760,7 +760,7 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
       const names = (est.items || []).map((i) => (i && i.name ? String(i.name) : "")).filter(Boolean);
       const summary = names.length ? names.slice(0, 4).join(", ") + (names.length > 4 ? "…" : "") : "";
       const logged_at = b.logged_at ? new Date(b.logged_at).toISOString() : new Date().toISOString();
-      const tz = num(b.tz_offset_min);
+      const tz = tzOf(c, b.tz_offset_min);
       const day = dayKey(logged_at, tz);
       const entry = await store.create<Entry>("entries", {
         user: uid,
@@ -799,7 +799,7 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
     const durationIn = num(b.duration_min);
     const distance = num(b.distance);
     const logged_at = b.logged_at ? new Date(b.logged_at).toISOString() : new Date().toISOString();
-    const tz = num(b.tz_offset_min);
+    const tz = tzOf(c, b.tz_offset_min);
     const day = dayKey(logged_at, tz);
     try {
       // Preset path — deterministic burn from the seeded MET, no AI call.
@@ -1004,7 +1004,7 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
     const label = item.brand ? item.name + " (" + item.brand + ")" : item.name;
     const total = macrosOf(item);
     const logged_at = b.logged_at ? new Date(b.logged_at).toISOString() : new Date().toISOString();
-    const tz = num(b.tz_offset_min);
+    const tz = tzOf(c, b.tz_offset_min);
     const day = dayKey(logged_at, tz);
     const entry = await store.create<Entry>("entries", {
       user: uid,
@@ -1062,7 +1062,7 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
     }
     if (!minutes || minutes <= 0) return err(c, "duration_min (or start+end) required", 400);
     if (!avgHr) return err(c, "avg_hr required", 400);
-    const tz = num(b.tz_offset_min);
+    const tz = tzOf(c, b.tz_offset_min);
 
     // Overlap guard — scan the day(s) the window touches for an activity that intersects it.
     if (!b.confirm_overlap && isFinite(startMs) && isFinite(endMs)) {
@@ -1364,7 +1364,7 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
       if (b.logged_at !== undefined) {
         const ts = new Date(String(b.logged_at));
         if (!isNaN(ts.getTime())) {
-          const tz = b.tz_offset_min !== undefined ? num(b.tz_offset_min) : num(rec.tz_offset_min);
+          const tz = b.tz_offset_min !== undefined ? num(b.tz_offset_min) : tzOf(c, rec.tz_offset_min);
           patch.logged_at = ts.toISOString();
           patch.tz_offset_min = tz;
           patch.day = dayKey(patch.logged_at, tz);
@@ -1404,7 +1404,7 @@ export async function registerEntries(app: App, deps: RouteDeps): Promise<void> 
     if (rec.user !== uid) return err(c, "forbidden", 403);
     const b = (await c.req.json().catch(() => ({}))) as { logged_at?: string; tz_offset_min?: number };
     const logged_at = b.logged_at ? new Date(b.logged_at).toISOString() : new Date().toISOString();
-    const tz = num(b.tz_offset_min);
+    const tz = tzOf(c, b.tz_offset_min);
     const day = dayKey(logged_at, tz);
     // Strip identity/timestamp fields from the source; carry everything else (content) through.
     const { id: _id, logged_at: _la, tz_offset_min: _tz, day: _day, created: _cr, ...content } =
