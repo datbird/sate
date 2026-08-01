@@ -346,18 +346,24 @@ async function logPhotoDataUrl(dataUrl, label) {
   } catch (e) { toast(e.message); return false; }
 }
 
-// ============================================================ Barcode scanner (web, html5-qrcode via CDN)
-const QR_CDN = "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js";
+// ============================================================ Barcode scanner (web, html5-qrcode)
+// Served from our own origin, NOT a CDN. This used to load html5-qrcode@2.3.8 from unpkg.com with no
+// Subresource Integrity and no CSP — meaning unpkg (or anyone who could impersonate it) could execute
+// arbitrary script on a page that holds the user's Firebase session and their health data. The file is
+// byte-identical to upstream 2.3.8 (verified sha256 against the registry) and lives in
+// core/src/web/vendor/, copied into the bundle by scripts/build-web.mjs. Same-origin means no third
+// party is in the trust path, and no SRI hash to maintain.
+const QR_LIB = "/vendor/html5-qrcode.min.js";
 let scanner = null;
 let scanBusy = false;
 
 // Load html5-qrcode on demand (web camera). Native shells could ship a Capacitor barcode plugin; on
-// web this CDN lib is the only path. Returns true once window.Html5Qrcode is available.
+// web this lib is the only path. Returns true once window.Html5Qrcode is available.
 function ensureQrLib() {
   if (window.Html5Qrcode) return Promise.resolve(true);
   return new Promise((resolve) => {
     const s = document.createElement("script");
-    s.src = QR_CDN;
+    s.src = QR_LIB;
     s.onload = () => resolve(!!window.Html5Qrcode);
     s.onerror = () => resolve(false);
     document.head.appendChild(s);

@@ -414,6 +414,12 @@ export async function registerCoach(app: App, deps: RouteDeps): Promise<void> {
     // by target_date, earliest drives calories), with no divergent leftover and no cap-3 silent skip.
     // Create the new goal FIRST so a mid-op failure never leaves the user goal-less, THEN clear the
     // goals that existed before. lb→kg matches POST /api/weight/goals.
+    // Track whether the weight goal actually landed. Previously any failure here was swallowed and the
+    // response still echoed `applied: change` including the weight_goal — so the coach card said
+    // "applied" and the user's goal set was unchanged, with no error anywhere. The macro/kcal targets
+    // above HAVE persisted at this point, so failing the whole request would be a lie in the other
+    // direction; instead report precisely which part landed.
+    let weightGoalApplied = true;
     if (change.weight_goal) {
       try {
         const prior = await store.list<WeightGoal>("weight_goals", { limit: 50 });
@@ -430,13 +436,16 @@ export async function registerCoach(app: App, deps: RouteDeps): Promise<void> {
         for (const gid of oldIds) {
           try { await store.delete("weight_goals", gid); } catch { /* leave it; the new goal is already set */ }
         }
-      } catch {
-        /* non-fatal — the goals/targets already persisted */
+      } catch (e) {
+        // Non-fatal: the calorie/macro targets already persisted. But do NOT claim the goal applied.
+        console.error("[plan/apply] weight goal persist failed:", e);
+        weightGoalApplied = false;
       }
     }
 
     return ok(c, {
-      applied: change,
+      applied: weightGoalApplied ? change : { ...change, weight_goal: undefined },
+      ...(weightGoalApplied ? {} : { partial: true, failed: ["weight_goal"] }),
       plan: { bmr: plan.bmr, tdee: plan.tdee, targets, warnings: plan.warnings },
       goals: { kcal: targets.kcal, protein: targets.protein, carbs: targets.carbs, fat: targets.fat, sodium: targets.sodium },
       plan_summary: summary,

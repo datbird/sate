@@ -19,6 +19,27 @@ export function normKey(name: string, brand: string): string {
   return norm(name) + "|" + norm(brand);
 }
 
+// The `foods` collection is INSTANCE-scoped and self-growing: any signed-in user's logging can add
+// rows, and those rows are later interpolated into OTHER users' AI grounding block ("Known foods from
+// the database") and autocomplete. That makes a food name an attacker-influenceable string inside
+// someone else's system prompt — a cross-tenant prompt-injection channel.
+//
+// The grounding block is line-oriented, so newlines are the lever that lets injected text escape its
+// row and pose as instructions. Strip every control character (newlines, tabs, CR, and the Unicode
+// line/paragraph separators), collapse runs of whitespace, and cap the length so no single row can
+// dominate the block. Applied at the single point of entry into the KB, so it covers every writer:
+// manual add, AI self-growth, web lookup, and barcode import.
+const MAX_KB_NAME = 120;
+export function sanitizeKbText(value: unknown, max = MAX_KB_NAME): string {
+  return String(value ?? "")
+    // C0 controls + DEL + C1 controls + the Unicode line/paragraph separators.
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
 // A parsed AI/import nutrition line the KB can absorb (a NutritionItem-shaped object).
 export interface FoodUpsertItem {
   name?: string;
@@ -91,7 +112,7 @@ export async function upsertItems(
   if (!Array.isArray(items)) return;
   const src = source || "ai";
   for (const item of items) {
-    const name = String((item && item.name) || "").trim();
+    const name = sanitizeKbText((item && item.name) || "");
     if (!name || name.length < 2) continue;
     const key = normKey(name, "");
     let rec: Food | null = null;
@@ -116,7 +137,7 @@ export async function upsertItems(
           patch.sugar = num(item.sugar);
           patch.sodium = num(item.sodium);
           patch.sat_fat = num(item.sat_fat);
-          if (item.qty) patch.serving_desc = String(item.qty);
+          if (item.qty) patch.serving_desc = sanitizeKbText(item.qty, 80);
           patch.source = "web";
         }
         await store.update<Food>(COLL, rec.id, patch);
@@ -129,7 +150,7 @@ export async function upsertItems(
       await store.create<Food>(COLL, {
         name,
         brand: "",
-        serving_desc: String((item && item.qty) || "1 serving"),
+        serving_desc: sanitizeKbText((item && item.qty) || "1 serving", 80),
         kcal: num(item.kcal),
         protein: num(item.protein),
         carbs: num(item.carbs),
@@ -176,9 +197,10 @@ export async function upsertFoodRecord(
   total: FoodTotal,
   source: string,
 ): Promise<void> {
-  const nm = String(name || "").trim();
+  const nm = sanitizeKbText(name);
   if (!nm) return;
-  const br = String(brand || "").trim();
+  const br = sanitizeKbText(brand, 80);
+  const serv = sanitizeKbText(serving, 80);
   const key = normKey(nm, br);
   let rec: Food | null = null;
   try {
@@ -194,7 +216,7 @@ export async function upsertFoodRecord(
     const patch: Partial<Food> = { usage_count: num(rec.usage_count) + 1 };
     const protect = !!rec.verified || rec.source === "seed";
     if (!protect) {
-      patch.serving_desc = serving;
+      patch.serving_desc = serv;
       patch.kcal = num(total.kcal);
       patch.protein = num(total.protein);
       patch.carbs = num(total.carbs);
@@ -216,7 +238,7 @@ export async function upsertFoodRecord(
     await store.create<Food>(COLL, {
       name: nm,
       brand: br,
-      serving_desc: serving,
+      serving_desc: serv,
       kcal: num(total.kcal),
       protein: num(total.protein),
       carbs: num(total.carbs),

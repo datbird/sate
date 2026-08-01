@@ -29,15 +29,42 @@ export class MemStore {
     return this.colls.get(n)!;
   }
   async get(coll: string, id: string) { return this.c(coll).get(id) ?? null; }
+  // Mirrors the Firestore adapter's pagination contract: an opaque cursor of the last row's orderBy
+  // values plus its id, and a nextCursor emitted ONLY when the page came back full. The fake used to
+  // slice to `limit` and return no cursor — the same defect the real adapter had — which is exactly
+  // why no test noticed that /api/stats silently truncated every month/year window at 500 entries.
+  // A fake that is more permissive than the port it stands in for cannot catch a port violation.
   async list(coll: string, spec: any = {}) {
     let items = [...this.c(coll).values()].map((d) => ({ ...d }));
     for (const w of spec.where ?? []) items = items.filter((d) => match(d, w));
-    for (const o of (spec.orderBy ?? []).slice().reverse()) {
+    const order = (spec.orderBy ?? []) as { field: string; dir?: string }[];
+    for (const o of order.slice().reverse()) {
       const dir = o.dir === "desc" ? -1 : 1;
       items.sort((a, b) => (a[o.field] < b[o.field] ? -dir : a[o.field] > b[o.field] ? dir : 0));
     }
-    if (spec.limit) items = items.slice(0, spec.limit);
-    return { items };
+    // Total order, so a cursor is unambiguous (Firestore appends an implicit __name__ ordering).
+    items.sort((a, b) => {
+      for (const o of order) {
+        const dir = o.dir === "desc" ? -1 : 1;
+        if (a[o.field] < b[o.field]) return -dir;
+        if (a[o.field] > b[o.field]) return dir;
+      }
+      return String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0;
+    });
+    if (spec.cursor) {
+      const after = JSON.parse(Buffer.from(String(spec.cursor), "base64url").toString("utf8")) as unknown[];
+      const idx = items.findIndex((d) => {
+        const key = [...order.map((o) => d[o.field]), d.id];
+        return JSON.stringify(key) === JSON.stringify(after);
+      });
+      if (idx >= 0) items = items.slice(idx + 1);
+    }
+    if (!spec.limit) return { items };
+    const page = items.slice(0, spec.limit);
+    if (page.length < spec.limit) return { items: page };
+    const last = page[page.length - 1]!;
+    const key = [...order.map((o) => last[o.field]), last.id];
+    return { items: page, nextCursor: Buffer.from(JSON.stringify(key), "utf8").toString("base64url") };
   }
   async create(coll: string, data: Doc, id?: string) {
     const _id = id ?? `id${++this.seq}`;
