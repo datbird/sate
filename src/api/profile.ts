@@ -295,9 +295,24 @@ export async function registerProfile(app: App, deps: RouteDeps): Promise<void> 
     const pid = (profile as Profile & { id?: string }).id;
     // Defense-in-depth ownership check (forUser already isolates the user, but v1 kept the guard).
     if (pid && profile.user && profile.user !== uid) return err(c, "forbidden", 403);
-    const updated: Profile = pid
-      ? await store.update<Profile>("profiles", pid, patch as Partial<Profile>)
-      : ({ ...profile, ...patch } as Profile);
+    // No id means ensureProfile's create failed (race or validation) and handed back an unsaved
+    // draft. Merging in memory and returning it produced a 200 with the new goals echoed back while
+    // NOTHING was persisted — the user sets a goal, sees it accepted, and it is gone on next load.
+    // Create the profile for real instead, and surface a failure as a failure.
+    let updated: Profile;
+    if (pid) {
+      updated = await store.update<Profile>("profiles", pid, patch as Partial<Profile>);
+    } else {
+      try {
+        updated = await store.create<Profile & { id?: string }>(
+          "profiles",
+          { ...profile, ...patch, user: uid } as Omit<Profile, "id">,
+        );
+      } catch (e) {
+        console.error("[goals] profile has no id and create failed:", e);
+        return err(c, "could not save profile", 500);
+      }
+    }
 
     return ok(c, profileView(updated));
   });

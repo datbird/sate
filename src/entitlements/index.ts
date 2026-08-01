@@ -69,6 +69,12 @@ async function fetchFlag(cfg: PlaneConfig, featureId: string): Promise<FlagRespo
   const res = await fetch(`${cfg.url}/flags/${encodeURIComponent(featureId)}`, {
     headers: await planeHeaders(cfg),
   });
+  // 404 = "no such flag" (a real answer → deny). Any OTHER non-2xx is a plane FAILURE: throw so the
+  // caller's catch fails closed, and — critically — never reach the cache line below. Parsing an
+  // error body as a FlagResponse would cache `{enabled: undefined}` for the full TTL.
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`entitlements plane /flags returned ${res.status}`);
+  }
   const value = res.status === 404 ? null : ((await res.json()) as FlagResponse);
   flagCache.set(featureId, { value, expiresAt: Date.now() + TTL_MS });
   return value;
@@ -80,6 +86,15 @@ async function fetchEntitlements(cfg: PlaneConfig, email: string): Promise<Entit
   const res = await fetch(`${cfg.url}/entitlements/${encodeURIComponent(email)}`, {
     headers: await planeHeaders(cfg),
   });
+  // A non-2xx is a plane FAILURE, not "this user holds nothing". Without this check an HTTP 401/500
+  // JSON error body was parsed as an EntitlementResponse and cached for the full 60s TTL as a valid
+  // EMPTY entitlement set — which reads identically to "no entitlements" at every call site. That is
+  // the exact ambiguity getEntitlements()'s `ok` flag exists to prevent (a transient read failure must
+  // never look like a legitimate empty grant, or registration re-provisions a trial to a permanent
+  // holder). Throw BEFORE the cache write so the caller's catch fails closed and nothing is poisoned.
+  if (!res.ok) {
+    throw new Error(`entitlements plane /entitlements returned ${res.status}`);
+  }
   const value = (await res.json()) as EntitlementResponse;
   entCache.set(email, { value, expiresAt: Date.now() + TTL_MS });
   return value;

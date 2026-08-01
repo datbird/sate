@@ -17,6 +17,7 @@ import {
   type RouteDeps,
 } from "./helpers";
 import { checkinDecide } from "../ai/index";
+import { checkFeature, FEATURES } from "../entitlements/index";
 import * as nutrition from "../domain/nutrition";
 import type { DataStore, Platform } from "../ports";
 import type {
@@ -242,11 +243,24 @@ async function generateCheckinFor(
   } catch {
     return null;
   }
+
+  // Stamp the cooldown as soon as the PAID model call succeeds — not only when it yields a check-in.
+  // The stamp is what the `checkin_freq` gap above is measured against, so stamping it only on
+  // `worthwhile` meant every "not worthwhile" answer left the cooldown untouched and the next cron
+  // tick (3h) billed again: a user who chose "sparse" (44h gap) still cost 8 model calls a day. The
+  // frequency setting throttled the OUTPUT while the SPEND ran at the cron's cadence. The cooldown
+  // must measure "when did we last spend", so it is stamped here, before the worthwhile branch.
+  try {
+    await store.update<Profile>("profiles", profile.id, { checkin_last_at: new Date().toISOString() });
+  } catch {
+    /* cooldown stamp best-effort */
+  }
+
   if (!decision.worthwhile) return null;
   const message = decision.message.trim();
   if (!message) return null;
 
-  const created = await store.create<Checkin>("checkins", {
+  return await store.create<Checkin>("checkins", {
     user: uid,
     topic: (decision.topic || "Check-in").slice(0, 120),
     message: message.slice(0, 2000),
@@ -254,12 +268,6 @@ async function generateCheckinFor(
     notified: false,
     created: new Date().toISOString(),
   });
-  try {
-    await store.update<Profile>("profiles", profile.id, { checkin_last_at: new Date().toISOString() });
-  } catch {
-    /* cooldown stamp best-effort */
-  }
-  return created;
 }
 
 // Fan-out generation for the cron: evaluate each opted-in user's profile and create a check-in when
@@ -273,8 +281,19 @@ export async function runCheckins(
   if (!(await checkinsEnabled(platform))) return { evaluated: 0, created: 0 };
   let evaluated = 0;
   let created = 0;
+  let skipped_unentitled = 0;
   for (const { uid, profile } of users) {
     if (!uid || !profile || !profile.checkin_enabled) continue;
+    // Entitlement gate. This is the ONLY AI call site reached without passing through the requireAI
+    // middleware — the cron authenticates with a service key, not a user bearer, so nothing upstream
+    // has checked whether THIS user may spend on AI. Without it, `checkin_enabled` (set by PATCH
+    // /api/goals, which has no AI gate) was sufficient on its own to bill the operator's key
+    // indefinitely. Fails CLOSED: checkFeature swallows plane errors and returns false, so an
+    // unreachable plane skips the batch rather than spending blind.
+    if (!(await checkFeature(platform, FEATURES.AI, profile.email || ""))) {
+      skipped_unentitled++;
+      continue;
+    }
     evaluated++;
     try {
       const ci = await generateCheckinFor(platform, uid, profile, false);
@@ -282,6 +301,9 @@ export async function runCheckins(
     } catch {
       /* one user's failure shouldn't abort the fleet-wide run */
     }
+  }
+  if (skipped_unentitled) {
+    console.warn(`[checkins] skipped ${skipped_unentitled} unentitled profile(s)`);
   }
   return { evaluated, created };
 }
