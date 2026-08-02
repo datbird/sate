@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sate — Privacy</title>
+<style>
+  :root { color-scheme: light dark; --fg:#111; --muted:#666; --bg:#fff; --line:#e5e5e5; --accent:#16a34a; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e8e8e8; --muted:#9a9a9a; --bg:#111; --line:#2a2a2a; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         padding: max(24px, env(safe-area-inset-top)) 20px 60px; }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h2 { font-size: 18px; margin: 34px 0 8px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+  p, li { color: var(--fg); }
+  ul { padding-left: 20px; }
+  li { margin: 5px 0; }
+  code { background: color-mix(in srgb, var(--fg) 8%, transparent); padding: 1px 5px; border-radius: 4px; font-size: 13.5px; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 34px 0; }
+  a { color: var(--accent); }
+  .note { border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; color: var(--muted); font-size: 14.5px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Privacy</h1>
+  <p class="sub">How Sate handles your data. Last updated 1 August 2026.</p>
+
+  <p>Sate is a nutrition and activity tracker. It necessarily holds health information about you.
+  This page describes exactly what is stored, what leaves the service, and how to get it back or
+  erase it.</p>
+
+  <h2>What Sate stores</h2>
+  <ul>
+    <li>Meals you log — description, photo (when you use the camera), estimated calories and macros.</li>
+    <li>Activity you log or import — type, duration, distance, calories burned.</li>
+    <li>Body data you provide — weight and weigh-in history, height, date of birth, biological sex,
+        activity level. These are the inputs to the calorie and macro targets.</li>
+    <li>Your goals, plans and scheduled meals.</li>
+    <li>Coach conversations and check-in messages.</li>
+    <li>Your email address and sign-in identity.</li>
+  </ul>
+
+  <h2>Apple Health</h2>
+  <p>On iOS, and only if you connect it, Sate reads workouts, active energy, walking/running and
+  cycling distance, heart rate, body mass, date of birth and biological sex. Heart rate is read so a
+  period of activity can be turned into a logged workout. Sate writes back only your weigh-ins, and
+  only if you switch that on. Nothing else is written to Apple Health.</p>
+
+  <h2>What is sent to other services</h2>
+  <ul>
+    <li><strong>AI provider (Google Gemini).</strong> When you log by text or photo, the meal text or
+      image is sent for estimation. When you use the coach, it also receives the figures it is
+      advising on: your first name, sex, age, height, current weight, activity level, calculated
+      energy needs, your weight goals and your recent average intake. Photo and text estimation do
+      <em>not</em> include your name or identifiers.</li>
+    <li><strong>Nutrition databases.</strong> Barcode and food lookups query Open Food Facts, USDA
+      FoodData Central and similar services. These receive the barcode or the search term — not your
+      identity or your health data.</li>
+    <li><strong>Sign-in.</strong> Handled by Firebase Authentication (Google). Sate sees your email
+      address and a user identifier.</li>
+    <li><strong>Payments.</strong> Handled by Stripe. Sate never sees or stores card details.</li>
+    <li><strong>Entitlements.</strong> Your email address is checked against a shared subscription
+      service to determine which features your plan includes.</li>
+  </ul>
+  <p class="note">Sate does not sell your data, does not share it for advertising, and contains no
+  advertising or analytics trackers.</p>
+
+  <h2>Where it is stored</h2>
+  <p>In Google Cloud (Firestore and Cloud Run) in the United States, under an account controlled by
+  the operator of this instance. Your records are stored under your own user identifier and are not
+  readable by other users of the app.</p>
+
+  <h2>How long it is kept</h2>
+  <p>Until you delete it. Sate does not expire your history — a food diary is only useful with its
+  past intact.</p>
+
+  <h2>Getting your data out, and deleting it</h2>
+  <p>In the app, open <strong>Settings → Your data</strong>:</p>
+  <ul>
+    <li><strong>Download my data</strong> gives you a single JSON file containing every record stored
+      under your account.</li>
+    <li><strong>Delete my account data</strong> permanently erases your meals, activity, weigh-ins,
+      goals, plans and coach messages. It cannot be undone. It does not delete your sign-in identity,
+      so signing in again gives you a fresh, empty account.</li>
+  </ul>
+  <p>Deleting your data does not remove foods you contributed to the shared food database, because
+  those entries are shared reference data rather than a record about you.</p>
+
+  <h2>Self-hosting</h2>
+  <p>Sate is also available as an open-source, self-hosted edition. If you run your own instance,
+  your data lives on your own infrastructure and this page does not apply to it — you are the
+  operator, and you supply your own AI provider keys.</p>
+
+  <hr>
+  <p class="sub">Questions about your data, or want it removed on your behalf? Contact the operator of
+  this instance.</p>
+</main>
+</body>
+</html>
