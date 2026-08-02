@@ -98,9 +98,14 @@
           </button>
         </div>
 
-        <!-- day-grouped infinite feed -->
+        <!-- The timeline is its OWN scroll container. It grows infinitely in BOTH directions, so
+             anything rendered above it in page flow (the stat card, scope tabs, Log/Plan) becomes
+             unreachable: getting back to them means scrolling up through the future, which loads
+             more future. Scoping the scroll here keeps the controls permanently on screen. -->
         <h3 class="section" id="feedlbl">Log</h3>
-        <ul class="entries" id="feed"></ul>
+        <div class="feedscroll" id="feedscroll">
+          <ul class="entries" id="feed"></ul>
+        </div>
         <!-- "Jump to today": the timeline scrolls freely into the past and future, so there is always
              a way back. Shown only while Today is off-screen. -->
         <button type="button" id="jumpToday" class="jump-today" hidden aria-label="Jump to today">

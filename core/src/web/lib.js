@@ -326,6 +326,21 @@ export function initPullToRefresh(onRefresh) {
   const EASE = "transform .3s cubic-bezier(.22,1,.36,1)";
 
   const blocked = () => busy || $("#app")?.hidden || document.body.classList.contains("sheet-open");
+
+  // Is the touch inside a scrollable region that is NOT already at its top? Views can own their own
+  // scroll container (Home's timeline does), and the page itself then barely scrolls — so testing
+  // window.scrollY alone would arm the pull on every downward drag inside that list and make it
+  // impossible to scroll. Walk up from the touch target and let the inner scroller win.
+  function insideScrolledRegion(target) {
+    for (let el = target; el && el !== document.body; el = el.parentElement) {
+      if (!(el instanceof Element)) continue;
+      const oy = getComputedStyle(el).overflowY;
+      if ((oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight + 1) {
+        return el.scrollTop > 0; // at its very top → let the page-level pull take over
+      }
+    }
+    return false;
+  }
   const pageEls = () => [document.getElementById("topbar"), document.getElementById("app")].filter(Boolean);
 
   // Move header + content together. `animate` drives the spring-back; during a drag we want the
@@ -363,7 +378,7 @@ export function initPullToRefresh(onRefresh) {
   }
 
   window.addEventListener("touchstart", (e) => {
-    if (blocked() || window.scrollY > 0) { pulling = false; return; }
+    if (blocked() || window.scrollY > 0 || insideScrolledRegion(e.target)) { pulling = false; return; }
     startY = e.touches[0].clientY; pulling = true; dist = 0; pull = 0;
   }, { passive: true });
 
