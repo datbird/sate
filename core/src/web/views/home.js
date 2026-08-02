@@ -177,10 +177,13 @@ function initTimeline() {
   TL.loading = false;
   loadSlice(TL.win.from, TL.win.to, TL.seq).then(() => {
     renderTimeline();
-    // Center Today on open (BE ledger pattern): bring the "Today" divider to the top of the viewport.
-    const today = $('#feed [data-day="' + TL.today + '"]');
-    if (today && typeof today.scrollIntoView === "function") today.scrollIntoView({ block: "start" });
+    // Today is the home position — bring it to the top of the viewport, clear of the sticky header.
+    recenterToday();
     fillViewportIfNeeded();
+    // Re-assert after the backfill has settled: filling the PAST adds content below Today and must
+    // not move it, but a late layout shift (images, fonts, a slow slice) otherwise leaves the user
+    // a few hundred pixels off. Cheap, and it makes "tap Home = see today" reliably true.
+    setTimeout(recenterToday, 60);
   });
 }
 
@@ -202,12 +205,29 @@ function renderTimeline() {
   const ul = $("#feed");
   const anchor = anchorInfo(ul);
   const groups = groupByDay([...TL.byKey.values()]); // descending: future day → today → past day
-  ul.innerHTML = "";
-  if (!groups.length) {
-    ul.innerHTML = '<li class="hint" style="color:var(--muted);font-size:13px;padding:10px 2px">Nothing here yet — <b>Log</b> what you ate or <b>Plan</b> an event.</li>';
-    return;
+  // Today ALWAYS gets a row, even with nothing on it. It is the timeline's anchor: recenterToday
+  // needs an element to scroll to, and a user who opens Home should see where "now" is rather than a
+  // bare hint with no sense of position. Splice it into the descending order.
+  if (!groups.some((g) => g.day === TL.today)) {
+    const idx = groups.findIndex((g) => g.day < TL.today); // first day older than today
+    groups.splice(idx === -1 ? groups.length : idx, 0, { day: TL.today, items: [] });
   }
+  ul.innerHTML = "";
   for (const g of groups) {
+    if (!g.items.length) {
+      // The empty Today marker.
+      const divider = document.createElement("li");
+      divider.className = "daydiv";
+      divider.dataset.day = g.day;
+      divider.innerHTML = '<span>Today</span>';
+      ul.appendChild(divider);
+      const empty = document.createElement("li");
+      empty.className = "hint";
+      empty.style.cssText = "color:var(--muted);font-size:13px;padding:10px 2px";
+      empty.innerHTML = "Nothing yet today — <b>Log</b> what you ate or <b>Plan</b> an event.";
+      ul.appendChild(empty);
+      continue;
+    }
     const divider = dayDivider(g.items[0].logged_at);
     // Prefer the pure relative heading; fall back to lib.dayLabel's absolute format.
     const rel = dayHeading(g.day, TL.today);
@@ -285,6 +305,28 @@ async function deleteEntry(id) {
   catch (e) { toast(e.message); }
 }
 
+// ---- programmatic scrolling ------------------------------------------------------------------
+// Our own scrolls (centering Today, restoring the anchor after a re-render) fire scroll events that
+// are indistinguishable from the user's. Feeding them back into the infinite-scroll triggers created
+// a runaway: centre Today -> scroll event -> "near top" -> extendFuture -> prepend future above today
+// -> restoreAnchor scrollBy -> scroll event -> ... straight out to the +365 bound. Suppress our own.
+let _progUntil = 0;
+function programmatic(fn) {
+  _progUntil = Date.now() + 400;
+  fn();
+}
+const isProgrammatic = () => Date.now() < _progUntil;
+
+// Put Today at the top of the viewport, just under the sticky header. This is the timeline's home
+// position: past below, future above.
+function recenterToday() {
+  const el = $('#feed [data-day="' + TL.today + '"]');
+  if (!el) return;
+  const header = document.getElementById("topbar");
+  const offset = (header ? header.getBoundingClientRect().height : 0) + 8;
+  programmatic(() => window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + window.scrollY - offset) }));
+}
+
 // ---- scroll-anchor preservation (keep the viewport steady across a re-render) ----
 function anchorInfo(ul) {
   const kids = Array.from(ul.children);
@@ -299,7 +341,7 @@ function restoreAnchor(ul, anchor) {
   const el2 = ul.querySelector('[data-day="' + anchor.day + '"]');
   if (!el2) return;
   const delta = el2.getBoundingClientRect().top - anchor.top;
-  if (delta) window.scrollBy(0, delta);
+  if (delta) programmatic(() => window.scrollBy(0, delta));
 }
 
 // ---- bidirectional infinite scroll: near the top → more future; near the bottom → more past ----
@@ -347,8 +389,12 @@ const addDays1 = (ymd, n = 1) => new Date(Date.parse(ymd + "T00:00:00Z") + n * 8
 // counters/bounds as manual scrolling (both directions latched → no-op).
 function fillViewportIfNeeded() {
   if (document.body.offsetHeight > window.innerHeight + 200) return; // already fills the viewport
+  // PAST ONLY — deliberately. The future is inherently sparse (planned items only), so "keep filling
+  // until the screen is full" chases it forever: one recurring schedule yields a fresh occurrence in
+  // every 14-day slice, the empty-slice latch never trips, and the backfill walks out to the +365
+  // bound with the user staring at next spring. Future content sits ABOVE Today and is reached by
+  // deliberately scrolling up, never by autofill.
   if (!TL.stopPast) extendPast();
-  else if (!TL.stopFuture) extendFuture();
 }
 
 // ============================================================ one-time control wiring
@@ -379,11 +425,19 @@ if (planBtn) planBtn.addEventListener("click", () =>
   openView("planevent", { scope: HOME.scope === "activity" ? "activity" : "nutrition" }));
 
 // Bidirectional infinite scroll: near the top loads more future, near the bottom loads more past.
+let _lastScrollY = 0;
 window.addEventListener("scroll", () => {
+  const y = window.scrollY;
+  const goingUp = y < _lastScrollY;
+  _lastScrollY = y;
   const home = $("#view-home");
   if (!home || home.hidden || HOME.scope === "weight") return;
-  if (window.scrollY <= 400) extendFuture();                                              // near top → future
-  else if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 500) extendPast(); // near bottom → past
+  if (isProgrammatic()) return; // our own centering/anchor scroll — not a user gesture
+  // Direction matters. "scrollY <= 400" is TRUE at rest when Today sits near the top, so testing
+  // position alone made every stray scroll event pull in more future. Expanding the future now
+  // requires the user to actually be scrolling UP toward it.
+  if (goingUp && y <= 400) extendFuture();
+  else if (!goingUp && window.innerHeight + y >= document.body.offsetHeight - 500) extendPast();
 }, { passive: true });
 
 // ============================================================ register with the router
