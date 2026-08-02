@@ -97,6 +97,50 @@ export function open() {
     checkinSection || null);
   form.addEventListener("submit", (e) => e.preventDefault());
 
+  // ---- your data: export + account deletion.
+  // Health data must not be a one-way door — a user can take their record with them, and erase it.
+  const exportBtn = el("button", { type: "button", class: "primary small" }, "Download my data");
+  const deleteBtn = el("button", { type: "button", class: "danger-btn" }, "Delete my account data");
+  const dataSection = el("div", { class: "wgsection" },
+    el("div", { class: "wglabel" }, "Your data"),
+    el("label", { class: "checkrow", style: { marginBottom: "0" } },
+      el("span", {}, "Download or delete everything",
+        el("small", {}, "Deleting is permanent — it removes your meals, activity, weigh-ins, goals and " +
+          "plans. It does not delete your sign-in; signing in again starts a fresh, empty account."))),
+    el("div", { class: "healthactions", style: { marginTop: "10px" } }, exportBtn, deleteBtn));
+
+  exportBtn.addEventListener("click", async () => {
+    exportBtn.disabled = true;
+    try {
+      const data = await api("/api/account/export");
+      // Build the file client-side from the API response; no new endpoint, no server-side temp file.
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = el("a", { href: url, download: `sate-export-${(data.exported_at || "").slice(0, 10)}.json` });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      toast("Export downloaded");
+    } catch (er) { toast(er.message); }
+    exportBtn.disabled = false;
+  });
+
+  deleteBtn.addEventListener("click", async () => {
+    // Two-step, and the second step requires typing — this is unrecoverable.
+    if (!window.confirm("Delete all of your Sate data? This cannot be undone.")) return;
+    const typed = window.prompt('Type DELETE to confirm erasing every meal, weigh-in, goal and plan:');
+    if (typed !== "DELETE") { toast("Not deleted"); return; }
+    deleteBtn.disabled = true;
+    try {
+      await api("/api/account", { method: "DELETE", json: { confirm: "DELETE" } });
+      toast("Your data has been deleted");
+      location.reload();
+    } catch (er) { toast(er.message); deleteBtn.disabled = false; }
+  });
+
+  form.appendChild(dataSection);
+
   // Save is a PINNED footer — always visible while the body scrolls.
   const s = sheet({ title: "Settings", body: form, footer: saveBtn });
 
