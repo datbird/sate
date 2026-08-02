@@ -107,7 +107,9 @@ export function open() {
       el("span", {}, "Download or delete everything",
         el("small", {}, "Deleting is permanent — it removes your meals, activity, weigh-ins, goals and " +
           "plans. It does not delete your sign-in; signing in again starts a fresh, empty account."))),
-    el("div", { class: "healthactions", style: { marginTop: "10px" } }, exportBtn, deleteBtn));
+    el("div", { class: "healthactions", style: { marginTop: "10px" } }, exportBtn, deleteBtn),
+    el("div", { style: { marginTop: "10px", fontSize: "12.5px" } },
+      el("a", { href: "/privacy.html", target: "_blank", rel: "noopener" }, "Privacy — what Sate stores and what it sends")));
 
   exportBtn.addEventListener("click", async () => {
     exportBtn.disabled = true;
