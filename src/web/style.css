@@ -970,6 +970,19 @@ button.link.danger { color: var(--danger); }
 .plansheet .planrow .field { flex: 1 1 0; }
 .plansheet .field-lbl { font-size: 12px; color: var(--muted); margin: 12px 2px 6px; font-weight: 600; }
 .plansheet .weekdays { display: flex; gap: 6px; }
+/* The timeline's own scroll viewport. Height is whatever is left between the controls above and the
+   tab bar below, computed at runtime into --feedh (JS measures the block above; CSS cannot). The
+   fallback keeps it usable if that measurement has not run yet. */
+.feedscroll {
+  position: relative; /* also makes it the offsetParent for anything inside */
+  height: var(--feedh, 46vh);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain; /* don't chain scroll to the page when hitting either end */
+  scrollbar-width: thin;
+}
+.feedscroll > .entries { margin: 0; }
+
 /* Trailing spacer so the oldest loaded day can still be scrolled to the top of the viewport, and so
    the near-bottom infinite-scroll trigger has room to fire before the user hits a hard stop. */
 .tl-tail { height: 55vh; list-style: none; pointer-events: none; }

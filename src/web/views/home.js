@@ -246,6 +246,7 @@ function renderTimeline() {
   tail.setAttribute("aria-hidden", "true");
   frag.appendChild(tail);
   ul.appendChild(frag);
+  sizeFeedViewport();
   restoreAnchor(ul, anchor);
   syncJumpToday();
 }
@@ -326,6 +327,24 @@ async function deleteEntry(id) {
   catch (e) { toast(e.message); }
 }
 
+// The timeline's scroll viewport (see index.html): the feed scrolls INSIDE this, not the page, so the
+// stat card / scope tabs / Log+Plan stay on screen no matter how far the timeline is scrolled.
+const feedScroll = () => document.getElementById("feedscroll");
+
+// Size the viewport to whatever vertical space is left under the controls and above the tab bar.
+// CSS can't express "the rest of the screen after an element whose height depends on content", so it
+// is measured here and published as --feedh. Re-run on resize and whenever the card changes height.
+function sizeFeedViewport() {
+  const box = feedScroll();
+  if (!box) return;
+  const top = box.getBoundingClientRect().top;      // everything above the feed, already laid out
+  const tabbar = document.getElementById("tabbar");
+  const tabH = tabbar && !tabbar.hidden ? tabbar.getBoundingClientRect().height : 0;
+  const h = Math.max(220, window.innerHeight - top - tabH - 8);
+  document.documentElement.style.setProperty("--feedh", h + "px");
+}
+window.addEventListener("resize", sizeFeedViewport);
+
 // ---- programmatic scrolling ------------------------------------------------------------------
 // Our own scrolls (centering Today, restoring the anchor after a re-render) fire scroll events that
 // are indistinguishable from the user's. Feeding them back into the infinite-scroll triggers created
@@ -341,14 +360,16 @@ const isProgrammatic = () => Date.now() < _progUntil;
 // Put Today at the top of the viewport, just under the sticky header. This is the timeline's home
 // position: past below, future above.
 function recenterToday(smooth) {
+  const box = feedScroll();
   const el = $('#feed [data-day="' + TL.today + '"]');
-  if (!el) return;
-  const header = document.getElementById("topbar");
-  const offset = (header ? header.getBoundingClientRect().height : 0) + 8;
-  const top = Math.max(0, el.getBoundingClientRect().top + window.scrollY - offset);
+  if (!box || !el) return;
+  // Position within the container's own scroll space. NOT offsetTop — that is measured from the
+  // nearest POSITIONED ancestor, which here is the page, so it included the stat card's height and
+  // overshot ~2 weeks into the past. Deriving it from the two rects is independent of offsetParent.
+  const top = Math.max(0, box.scrollTop + (el.getBoundingClientRect().top - box.getBoundingClientRect().top) - 4);
   // Smooth only for the explicit "Today" tap — a smooth animation on open/backfill would fight the
   // programmatic-scroll suppression window and land late.
-  programmatic(() => window.scrollTo(smooth ? { top, behavior: "smooth" } : { top }));
+  programmatic(() => box.scrollTo(smooth ? { top, behavior: "smooth" } : { top }));
   if (smooth) setTimeout(syncJumpToday, 500);
 }
 
@@ -364,10 +385,10 @@ function syncJumpToday() {
     btn.classList.remove("on");
     return;
   }
-  const r = row.getBoundingClientRect();
-  const header = document.getElementById("topbar");
-  const top = header ? header.getBoundingClientRect().height : 0;
-  const offScreen = r.bottom < top || r.top > window.innerHeight;
+  const box = feedScroll();
+  if (!box) { btn.hidden = true; return; }
+  const r = row.getBoundingClientRect(), b = box.getBoundingClientRect();
+  const offScreen = r.bottom < b.top || r.top > b.bottom;
   btn.hidden = false;
   btn.classList.toggle("on", offScreen);
   // Keep it out of the tab order (and off assistive tech) while it is invisible.
@@ -389,7 +410,8 @@ function restoreAnchor(ul, anchor) {
   const el2 = ul.querySelector('[data-day="' + anchor.day + '"]');
   if (!el2) return;
   const delta = el2.getBoundingClientRect().top - anchor.top;
-  if (delta) programmatic(() => window.scrollBy(0, delta));
+  const box = feedScroll();
+  if (delta && box) programmatic(() => box.scrollBy(0, delta));
 }
 
 // ---- bidirectional infinite scroll: near the top → more future; near the bottom → more past ----
@@ -436,7 +458,8 @@ const addDays1 = (ymd, n = 1) => new Date(Date.parse(ymd + "T00:00:00Z") + n * 8
 // one more extend, and extend* re-invokes this after render, so it self-terminates via the same
 // counters/bounds as manual scrolling (both directions latched → no-op).
 function fillViewportIfNeeded() {
-  if (document.body.offsetHeight > window.innerHeight + 200) return; // already fills the viewport
+  const box = feedScroll();
+  if (!box || box.scrollHeight > box.clientHeight + 200) return; // already fills the viewport
   // PAST ONLY — deliberately. The future is inherently sparse (planned items only), so "keep filling
   // until the screen is full" chases it forever: one recurring schedule yields a fresh occurrence in
   // every 14-day slice, the empty-slice latch never trips, and the backfill walks out to the +365
@@ -477,20 +500,23 @@ if (planBtn) planBtn.addEventListener("click", () =>
 
 // Bidirectional infinite scroll: near the top loads more future, near the bottom loads more past.
 let _lastScrollY = 0;
-window.addEventListener("scroll", () => {
-  const y = window.scrollY;
-  const goingUp = y < _lastScrollY;
-  _lastScrollY = y;
-  const home = $("#view-home");
-  if (!home || home.hidden || HOME.scope === "weight") return;
-  syncJumpToday();
-  if (isProgrammatic()) return; // our own centering/anchor scroll — not a user gesture
-  // Direction matters. "scrollY <= 400" is TRUE at rest when Today sits near the top, so testing
-  // position alone made every stray scroll event pull in more future. Expanding the future now
-  // requires the user to actually be scrolling UP toward it.
-  if (goingUp && y <= 400) extendFuture();
-  else if (!goingUp && window.innerHeight + y >= document.body.offsetHeight - 500) extendPast();
-}, { passive: true });
+{
+  const box = feedScroll();
+  if (box) box.addEventListener("scroll", () => {
+    const y = box.scrollTop;
+    const goingUp = y < _lastScrollY;
+    _lastScrollY = y;
+    const home = $("#view-home");
+    if (!home || home.hidden || HOME.scope === "weight") return;
+    syncJumpToday();
+    if (isProgrammatic()) return; // our own centering/anchor scroll — not a user gesture
+    // Direction matters. "near the top" is TRUE at rest when Today sits near the top, so testing
+    // position alone made every stray scroll event pull in more future. Expanding the future now
+    // requires the user to actually be scrolling UP toward it.
+    if (goingUp && y <= 400) extendFuture();
+    else if (!goingUp && box.clientHeight + y >= box.scrollHeight - 500) extendPast();
+  }, { passive: true });
+}
 
 // ============================================================ register with the router
 registerView("home", { container: "#view-home", render });
