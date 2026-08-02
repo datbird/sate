@@ -513,8 +513,10 @@ let _lastScrollY = 0;
     // Direction matters. "near the top" is TRUE at rest when Today sits near the top, so testing
     // position alone made every stray scroll event pull in more future. Expanding the future now
     // requires the user to actually be scrolling UP toward it.
-    if (goingUp && y <= 400) extendFuture();
-    else if (!goingUp && box.clientHeight + y >= box.scrollHeight - 500) extendPast();
+    // Generous pre-fetch margins: start the next chunk well before the edge so a fast scroll keeps
+    // moving instead of stalling at a hard stop while it loads.
+    if (goingUp && y <= 700) extendFuture();
+    else if (!goingUp && box.clientHeight + y >= box.scrollHeight - 700) extendPast();
   }, { passive: true });
 }
 

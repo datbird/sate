@@ -327,17 +327,22 @@ export function initPullToRefresh(onRefresh) {
 
   const blocked = () => busy || $("#app")?.hidden || document.body.classList.contains("sheet-open");
 
-  // Is the touch inside a scrollable region that is NOT already at its top? Views can own their own
-  // scroll container (Home's timeline does), and the page itself then barely scrolls — so testing
-  // window.scrollY alone would arm the pull on every downward drag inside that list and make it
-  // impossible to scroll. Walk up from the touch target and let the inner scroller win.
+  // Does the touch start inside a region that owns its own scrolling? If so that region owns the
+  // GESTURE — unconditionally, including when it happens to sit at scrollTop 0.
+  //
+  // This deliberately does NOT check scrollTop. It used to: "at its very top → let the page-level
+  // pull take over". That is wrong for an infinite list. Scrolling up through Home's timeline
+  // reaches the top of what is currently loaded, and the natural next drag is another pull upward to
+  // load more — but at that instant scrollTop is 0, so the page-refresh gesture hijacked it and
+  // dragged the whole screen down instead of loading the next chunk. Reported from the device.
+  //
+  // Pull-to-refresh is still reachable everywhere that is genuinely page-level (the stat card, the
+  // Plan/Coach/History views); it simply never steals a drag that began inside a scroller.
   function insideScrolledRegion(target) {
     for (let el = target; el && el !== document.body; el = el.parentElement) {
       if (!(el instanceof Element)) continue;
       const oy = getComputedStyle(el).overflowY;
-      if ((oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight + 1) {
-        return el.scrollTop > 0; // at its very top → let the page-level pull take over
-      }
+      if ((oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight + 1) return true;
     }
     return false;
   }
