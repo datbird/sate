@@ -69,9 +69,14 @@ async function main() {
     return;
   }
 
+  // Firebase Web SDK, loaded from gstatic at a PINNED version (esbuild keeps https: imports external).
+  // Bumped 10.14.1 -> 12.17.0 on 2026-08-01; every auth API destructured below was verified present in
+  // that build first. Pin deliberately — an unpinned "latest" would let a third party change the code
+  // running on a page that holds the user's session and health data.
+  const FB = "12.17.0";
   const [{ initializeApp }, authMod] = await Promise.all([
-    import("https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js"),
-    import("https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js"),
+    import(`https://www.gstatic.com/firebasejs/${FB}/firebase-app.js`),
+    import(`https://www.gstatic.com/firebasejs/${FB}/firebase-auth.js`),
   ]);
   const { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut,
           signInWithCredential, OAuthProvider, GoogleAuthProvider } = authMod;
