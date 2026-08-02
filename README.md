@@ -30,7 +30,10 @@ src/
   schema/       zod schemas + inferred types — Entry, Food, Measurement, WeightGoal, Profile, plans
   ports/        the interfaces: DataStore, Auth, FileStorage, Secrets  (+ the Platform bundle)
   api/          Hono route handlers — entries, foods, weight, coach, plan, recipes, admin, account
-  web/          the SPA — app shell, lib.js kit, views/*  (framework-free ES modules)
+  web/          the SPA — app shell, lib.js kit, views/*  (framework-free ES modules),
+                privacy.html, and vendor/ (self-hosted third-party libs — html5-qrcode; served
+                from our own origin rather than a CDN, so no third party can inject script into
+                a page holding the user's session)
   kb/           food + activity knowledge-base retrieval
   entitlements/ feature gating against the shared entitlements plane
   shared/       ⚠ plain CommonJS, consumed by BOTH editions — nutrition math, the AI prompt
@@ -48,9 +51,31 @@ so the failure appears only on the Cloud side. Any new shared CJS belongs under 
 | Port | Cloud adapter (`sate-cloud`) |
 |------|------------------------------|
 | `DataStore` (get/list/**watch**/create/update/delete/batch, `forUser` + `instance`) | Firestore |
-| `Auth` (verify token → user) | Firebase `verifyIdToken` |
-| `FileStorage` | GCS |
+| `Auth` (verify token → user) | Firebase `verifyIdToken` (modular `firebase-admin/auth`) |
+| `FileStorage` | GCS — **wired but currently unused**: nothing calls `platform.files` |
 | `Secrets` | Secret Manager |
+
+### ⚠ `list()` pagination is part of the contract, not an optimisation
+
+`QuerySpec.cursor` and `Page.nextCursor` are **load-bearing**. Callers page like this, and an adapter
+that ignores them does not fail — it silently returns a truncated answer:
+
+```ts
+let cursor; const out = [];
+for (;;) {
+  const page = await store.list("entries", { where, orderBy, limit: 500, cursor });
+  out.push(...page.items);
+  if (!page.nextCursor || !page.items.length) break;
+  cursor = page.nextCursor;
+}
+```
+
+An adapter **must** return `nextCursor` whenever a page comes back full, and honour an incoming
+`cursor`. The Firestore adapter did neither until 2026-08-01, so `GET /api/stats` quietly aggregated
+at most the oldest 500 rows of any month/year window — no error, just wrong totals. The in-memory
+test fake had the *same* gap, which is exactly why no test caught it: **a fake more permissive than
+the port it stands in for cannot catch a port violation.** `core/test/pagination.test.ts` now pins
+both halves of the contract.
 
 > **There is no second full adapter set today.** A SQLite/local-auth adapter (`sate/server/`) was
 > built and proven in July 2026, then **deleted** — the Hosted edition deliberately keeps its
@@ -58,9 +83,13 @@ so the failure appears only on the Cloud side. Any new shared CJS belongs under 
 > direction ever revives. The two editions therefore share `src/shared/`, not the whole core.
 
 ## Status
-Live. Core carries the full API surface (diary, foods, weight, coach, admin, account,
-entitlements), the AI layer, the SPA, and the Planner (planned-vs-logged entries, recurrence
-schedules, timeline, recipes, coach-driven plan edits). Test suite runs with `npm test`.
+Live. Core carries the full API surface (diary, foods, weight, coach, admin, account +
+export/deletion, entitlements), the AI layer, the SPA, and the Planner (planned-vs-logged entries,
+recurrence schedules, timeline, recipes, coach-driven plan edits). Test suite runs with `npm test`.
+
+**Cloud-only surfaces.** The Planner and account export/deletion are registered in core but are
+reached only by the Cloud edition — Hosted serves its own `pb_public` SPA and its own `pb_hooks`
+routes. Additions to `src/shared/` must stay goja-safe so the PocketBase build keeps compiling.
 
 `domain/nutrition.ts` is still the original PocketBase engine, now re-exported from
 `shared/nutrition.js` so both editions compute byte-identical numbers.
