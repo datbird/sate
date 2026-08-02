@@ -154,11 +154,27 @@ export type Activity = z.infer<typeof Activity>;
 export const RECURRENCE_UNITS = ["daily", "weekly", "monthly"] as const;
 export type RecurrenceUnit = (typeof RECURRENCE_UNITS)[number];
 
+// Monthly anchor — WHICH day of the month the schedule lands on. Ported from BalanceEngine's
+// RecurrenceAnchor (`packages/shared/src/types/budget.ts`), keeping the kinds that mean something for
+// meals and workouts and dropping the ones that don't: BE's `semimonth`/`quartermonth` units and its
+// `biz-begin`/`biz-end` anchors are pay-period concepts (a paycheck lands on the last business day;
+// dinner does not). "Weekdays only" is already expressible as weekly + by_weekday [1..5].
+//   dom          → a fixed date, clamped into short months (31st → 30th in April, 28/29th in Feb)
+//   nth-weekday  → "1st Monday", "3rd Friday", "last Saturday"  (n: 1..4, or -1 = last)
+//   end          → the last day of the month, whatever length it is
+export const MONTHLY_ANCHOR_KINDS = ["dom", "nth-weekday", "end"] as const;
+export type MonthlyAnchorKind = (typeof MONTHLY_ANCHOR_KINDS)[number];
+
 export const ScheduleRecurrence = z.object({
   unit: z.enum(RECURRENCE_UNITS),
   interval: z.number().int().positive().default(1), // >= 1 ("every 2 weeks" = weekly / 2)
   by_weekday: z.array(z.number().int().min(0).max(6)).optional(), // 0..6 (Sun..Sat), weekly only
   day_of_month: z.number().int().min(1).max(31).optional(), // 1..31, monthly only (default = anchor DOM)
+  // Monthly anchor. Absent ⇒ "dom", which is exactly the previous behaviour, so every schedule
+  // written before this field existed keeps projecting identically.
+  anchor: z.enum(MONTHLY_ANCHOR_KINDS).optional(),
+  nth: z.number().int().min(-1).max(4).optional(), // nth-weekday: 1..4 = first..fourth, -1 = last
+  nth_weekday: z.number().int().min(0).max(6).optional(), // nth-weekday: 0=Sun … 6=Sat
 });
 export type ScheduleRecurrence = z.infer<typeof ScheduleRecurrence>;
 

@@ -970,6 +970,12 @@ button.link.danger { color: var(--danger); }
 .plansheet .planrow .field { flex: 1 1 0; }
 .plansheet .field-lbl { font-size: 12px; color: var(--muted); margin: 12px 2px 6px; font-weight: 600; }
 .plansheet .weekdays { display: flex; gap: 6px; }
+/* Recurrence interval row — "Every [2] weeks" — and the monthly anchor selects. */
+.intervalrow { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.intervalrow select { flex: 0 1 auto; min-width: 0; }
+.num-sm { width: 84px; flex: 0 0 auto; }
+.hint-inline { color: var(--muted); font-size: 14px; }
+
 .plansheet .wchip { flex: 1 1 0; padding: 8px 0; border-radius: 9px; border: 1px solid var(--line); background: transparent; color: var(--muted); font-weight: 700; cursor: pointer; }
 .plansheet .wchip.on { border-color: var(--brand); color: var(--brand-ink, #fff); background: var(--brand); }
 .plansheet .planseams { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; }

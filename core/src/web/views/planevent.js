@@ -41,6 +41,7 @@ export function open(args = {}) {
     kcal: "", macros: { protein: "", carbs: "", fat: "" }, duration_min: "", distance: "", intensity: "", note: "",
     date: todayISO(), time: sched ? (sched.time_of_day || "12:00") : "12:00",
     repeat: "none", interval: 1, by_weekday: [], day_of_month: undefined,
+    anchor: undefined, nth: undefined, nth_weekday: undefined, // monthly anchor (see planner.buildPlanRequest)
   };
   if (sched) prefillFromSchedule(sched);
   planCtrl = sheet({
@@ -59,6 +60,10 @@ function prefillFromSchedule(s) {
   F.interval = Math.max(1, Number(r.interval) || 1);
   F.by_weekday = Array.isArray(r.by_weekday) ? r.by_weekday.slice() : [];
   F.day_of_month = r.day_of_month;
+  // Anchor is absent on schedules created before it existed — that means "dom", the old behaviour.
+  F.anchor = r.anchor || "dom";
+  F.nth = r.nth;
+  F.nth_weekday = r.nth_weekday;
   F.date = s.active_from || todayISO();
   const p = s.payload || {};
   F.kcal = p.kcal != null ? String(p.kcal) : "";
@@ -132,9 +137,32 @@ function kindBtn(key, label) {
   return b;
 }
 
-// Weekly → weekday chips; monthly → a day-of-month note (defaults to the chosen date's DOM server-side).
+const UNIT_NOUN = { daily: ["day", "days"], weekly: ["week", "weeks"], monthly: ["month", "months"] };
+const NTH_OPTS = [[1, "first"], [2, "second"], [3, "third"], [4, "fourth"], [-1, "last"]];
+
+// Repeat detail. Every unit gets the **interval** control ("every 2 weeks") — the projector has always
+// supported `interval`, and buildPlanRequest has always sent it, but no input ever set it, so it was
+// permanently stuck at 1 and "every other week" was unreachable from the app.
+// Weekly adds weekday chips; monthly adds the anchor picker (day-of-month / nth weekday / last day).
 function renderRepeatExtra(host) {
   host.innerHTML = "";
+  if (F.repeat === "none") return;
+
+  // ---- interval: "Every [N] day|week|month(s)"
+  const nouns = UNIT_NOUN[F.repeat] || ["", ""];
+  const intervalInput = el("input", {
+    type: "number", min: "1", max: "365", step: "1", inputmode: "numeric",
+    value: String(F.interval || 1), class: "num-sm", id: "planInterval",
+  });
+  const nounEl = el("span", { class: "hint-inline", text: (F.interval || 1) === 1 ? nouns[0] : nouns[1] });
+  intervalInput.addEventListener("input", () => {
+    const n = Math.max(1, Math.min(365, Math.floor(Number(intervalInput.value) || 1)));
+    F.interval = n;
+    nounEl.textContent = n === 1 ? nouns[0] : nouns[1];
+  });
+  host.append(el("div", { class: "field-lbl", text: "Every" }),
+    el("div", { class: "intervalrow" }, intervalInput, nounEl));
+
   if (F.repeat === "weekly") {
     const row = el("div", { class: "weekdays" });
     WEEKDAYS.forEach(([label, dow]) => {
@@ -147,7 +175,41 @@ function renderRepeatExtra(host) {
     });
     host.append(el("div", { class: "field-lbl", text: "On" }), row);
   } else if (F.repeat === "monthly") {
-    host.append(el("div", { class: "hint", text: "Repeats monthly on day " + Number(F.date.slice(8, 10)) + " (clamped to shorter months)." }));
+    const chosenDom = Number(F.date.slice(8, 10));
+    const anchorSel = el("select", { id: "planAnchor" },
+      el("option", { value: "dom", ...(F.anchor === "dom" || !F.anchor ? { selected: "" } : {}) }, "On day " + chosenDom),
+      el("option", { value: "nth-weekday", ...(F.anchor === "nth-weekday" ? { selected: "" } : {}) }, "On a weekday of the month"),
+      el("option", { value: "end", ...(F.anchor === "end" ? { selected: "" } : {}) }, "On the last day of the month"));
+    const nthHost = el("div", { id: "nthHost" });
+
+    const renderNth = () => {
+      nthHost.innerHTML = "";
+      if (F.anchor !== "nth-weekday") return;
+      const nSel = el("select", {}, ...NTH_OPTS.map(([v, l]) =>
+        el("option", { value: String(v), ...(Number(F.nth) === v ? { selected: "" } : {}) }, l)));
+      const wSel = el("select", {}, ...WEEKDAYS.map(([label, dow]) =>
+        el("option", { value: String(dow), ...(Number(F.nth_weekday) === dow ? { selected: "" } : {}) }, label)));
+      nSel.addEventListener("change", () => { F.nth = Number(nSel.value); });
+      wSel.addEventListener("change", () => { F.nth_weekday = Number(wSel.value); });
+      nthHost.append(el("div", { class: "intervalrow" }, nSel, wSel));
+    };
+
+    anchorSel.addEventListener("change", () => {
+      F.anchor = anchorSel.value;
+      // Seed sensible defaults from the date already chosen, so the picker opens on something true.
+      if (F.anchor === "nth-weekday") {
+        if (!F.nth) F.nth = Math.min(4, Math.ceil(chosenDom / 7));
+        if (F.nth_weekday === undefined) F.nth_weekday = new Date(Date.UTC(
+          Number(F.date.slice(0, 4)), Number(F.date.slice(5, 7)) - 1, chosenDom)).getUTCDay();
+      }
+      renderNth();
+    });
+
+    host.append(el("div", { class: "field-lbl", text: "Which day" }), anchorSel, nthHost);
+    renderNth();
+    if (!F.anchor || F.anchor === "dom") {
+      host.append(el("div", { class: "hint", text: "Day " + chosenDom + " is clamped in shorter months (the 31st fires on the 30th, or the 28th in February)." }));
+    }
   }
 }
 

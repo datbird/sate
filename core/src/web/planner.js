@@ -161,8 +161,19 @@ export function buildPlanRequest(form, tzOffsetMin) {
     if (form.repeat === "weekly" && Array.isArray(form.by_weekday) && form.by_weekday.length) {
       recurrence.by_weekday = form.by_weekday.slice();
     }
-    if (form.repeat === "monthly" && form.day_of_month) {
-      recurrence.day_of_month = Number(form.day_of_month);
+    if (form.repeat === "monthly") {
+      // Monthly anchor. "dom" is the default and is left implicit so schedules created before
+      // anchors existed keep the exact same shape on the wire.
+      const anchor = form.anchor || "dom";
+      if (anchor === "end") {
+        recurrence.anchor = "end";
+      } else if (anchor === "nth-weekday") {
+        recurrence.anchor = "nth-weekday";
+        recurrence.nth = Number(form.nth);
+        recurrence.nth_weekday = Number(form.nth_weekday);
+      } else if (form.day_of_month) {
+        recurrence.day_of_month = Number(form.day_of_month);
+      }
     }
     return {
       method: "POST", path: "/api/plan/schedules",
@@ -192,6 +203,7 @@ export function buildPlanRequest(form, tzOffsetMin) {
 // ============================================================ Plan-tab pure helpers (phase 4)
 // Weekday labels (0..6 = Sun..Sat), matching the projector's getUTCDay() convention.
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DOW_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 // "HH:mm" (24h) → a friendly "7:30am" / "12:00pm" / "12:00am". Returns "" for a missing/blank time.
 function prettyTime(time) {
@@ -222,8 +234,18 @@ export function recurrenceSummary(schedule) {
       base = iv === 1 ? "Weekly on " + label : "Every " + iv + " weeks on " + label;
     }
   } else if (r.unit === "monthly") {
-    const dom = Number(r.day_of_month) || Number(String(schedule.active_from || "").slice(8, 10)) || 1;
-    base = (iv === 1 ? "Monthly on day " : "Every " + iv + " months on day ") + dom;
+    const every = iv === 1 ? "Monthly" : "Every " + iv + " months";
+    const kind = r.anchor || "dom";
+    if (kind === "end") {
+      base = every + " on the last day";
+    } else if (kind === "nth-weekday") {
+      const n = Number(r.nth);
+      const ord = n === -1 ? "last" : n === 1 ? "first" : n === 2 ? "second" : n === 3 ? "third" : "fourth";
+      base = every + " on the " + ord + " " + (DOW_FULL[Number(r.nth_weekday)] || "day");
+    } else {
+      const dom = Number(r.day_of_month) || Number(String(schedule.active_from || "").slice(8, 10)) || 1;
+      base = every + " on day " + dom;
+    }
   }
   const t = prettyTime(schedule && schedule.time_of_day);
   return t ? (base ? base + " · " + t : t) : base;
@@ -235,6 +257,30 @@ export function recurrenceSummary(schedule) {
 const _daysBetween = (a, b) => Math.round((ymdToUTC(b) - ymdToUTC(a)) / MS_DAY);
 const _weekdayOf = (ymd) => new Date(ymdToUTC(ymd)).getUTCDay();
 const _daysInMonth = (y, m0) => new Date(Date.UTC(y, m0 + 1, 0)).getUTCDate();
+const _weekdayOfYMD = (y, m0, day) => new Date(Date.UTC(y, m0, day)).getUTCDay();
+
+// Which day-of-month a monthly schedule lands on. MIRROR of domain/schedule.ts monthlyFiringDay —
+// keep the two byte-for-byte equivalent or the "Next: …" label will disagree with the timeline.
+// Returns 0 when the anchor cannot fire that month (e.g. a 5th Monday in a four-Monday month).
+function _monthlyFiringDay(r, activeFrom, y, m0) {
+  const dim = _daysInMonth(y, m0);
+  const kind = r.anchor || "dom";
+  if (kind === "end") return dim;
+  if (kind === "nth-weekday") {
+    const weekday = Number(r.nth_weekday), n = Number(r.nth);
+    if (!isFinite(weekday) || !isFinite(n) || n === 0) return 0;
+    if (n > 0) {
+      let seen = 0;
+      for (let day = 1; day <= dim; day++) if (_weekdayOfYMD(y, m0, day) === weekday && ++seen === n) return day;
+      return 0;
+    }
+    let seen = 0;
+    for (let day = dim; day >= 1; day--) if (_weekdayOfYMD(y, m0, day) === weekday && --seen === n) return day;
+    return 0;
+  }
+  const want = Math.max(1, Math.floor(Number(r.day_of_month) || Number(activeFrom.slice(8, 10))));
+  return Math.min(want, dim);
+}
 
 function firesOn(schedule, d) {
   const r = schedule.recurrence || {};
@@ -256,8 +302,8 @@ function firesOn(schedule, d) {
     const ay = Number(schedule.active_from.slice(0, 4)), am0 = Number(schedule.active_from.slice(5, 7)) - 1;
     const monthsDiff = (y - ay) * 12 + (m0 - am0);
     if (monthsDiff < 0 || monthsDiff % interval !== 0) return false;
-    const want = Math.max(1, Math.floor(Number(r.day_of_month) || Number(schedule.active_from.slice(8, 10))));
-    return Number(d.slice(8, 10)) === Math.min(want, _daysInMonth(y, m0));
+    const firing = _monthlyFiringDay(r, schedule.active_from, y, m0);
+    return firing > 0 && Number(d.slice(8, 10)) === firing;
   }
   return false;
 }
