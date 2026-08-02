@@ -305,6 +305,12 @@ export const isRendered = (name) => _rendered.has(name);
 
 // Pull-to-refresh: at the top of the page, a downward drag past the threshold re-renders the active
 // view. Touch-only (harmless on desktop); skipped while a sheet/overlay is open or the app is hidden.
+//
+// The PAGE moves with the finger — header and content translate down together and the spinner is
+// revealed in the gap that opens above them, which is what every native app does. Previously only
+// the fixed-position indicator moved while the whole screen sat still, so the gesture read as broken:
+// a lone circle drifting over a frozen page, with no sense that you were dragging anything.
+// The bottom tab bar deliberately does NOT move (it is chrome, not content — same as iOS).
 export function initPullToRefresh(onRefresh) {
   if (document.getElementById("ptrInd")) return; // once
   const ind = document.createElement("div");
@@ -313,23 +319,64 @@ export function initPullToRefresh(onRefresh) {
   ind.innerHTML = '<div class="ptr-spin"></div>';
   document.body.appendChild(ind);
 
-  let startY = 0, pulling = false, dist = 0, busy = false;
-  const THRESH = 68;
+  let startY = 0, pulling = false, dist = 0, busy = false, pull = 0;
+  const THRESH = 68;   // drag distance (raw) that arms the refresh
+  const MAX = 96;      // cap on how far the page can be dragged
+  const HOLD = 56;     // where the page rests while refreshing
+  const EASE = "transform .3s cubic-bezier(.22,1,.36,1)";
+
   const blocked = () => busy || $("#app")?.hidden || document.body.classList.contains("sheet-open");
-  const reset = () => { ind.style.transform = ""; ind.classList.remove("on", "ready", "spin"); dist = 0; };
+  const pageEls = () => [document.getElementById("topbar"), document.getElementById("app")].filter(Boolean);
+
+  // Move header + content together. `animate` drives the spring-back; during a drag we want the
+  // transform to track the finger with no transition at all.
+  //
+  // ⚠ At rest the transform is CLEARED, not set to translateY(0). A transformed element becomes the
+  // containing block for its position:fixed descendants, so a lingering identity transform would
+  // silently re-anchor sheets, overlays and the Coach tab's viewport lock to <main> instead of the
+  // viewport. Only ever transformed mid-gesture.
+  function setPage(y, animate) {
+    for (const el of pageEls()) {
+      el.style.transition = animate ? EASE : "";
+      el.style.transform = y ? `translateY(${y}px)` : "";
+    }
+    ind.style.transition = animate ? EASE : "";
+    ind.style.transform = y ? `translateX(-50%) translateY(${y}px)` : "";
+  }
+
+  // Return to rest, then strip the inline styles once the animation has finished so nothing is left
+  // behind on the elements (see the containing-block note above).
+  function settle() {
+    for (const el of pageEls()) {
+      el.style.transition = EASE;
+      el.style.transform = "translateY(0px)";
+    }
+    ind.style.transition = EASE;
+    ind.style.transform = "translateX(-50%) translateY(0px)";
+    ind.classList.remove("on", "ready", "spin");
+    setTimeout(() => {
+      if (pulling || busy) return; // a new gesture started — leave it alone
+      for (const el of pageEls()) { el.style.transition = ""; el.style.transform = ""; }
+      ind.style.transition = ""; ind.style.transform = "";
+    }, 320);
+    dist = 0; pull = 0;
+  }
 
   window.addEventListener("touchstart", (e) => {
     if (blocked() || window.scrollY > 0) { pulling = false; return; }
-    startY = e.touches[0].clientY; pulling = true; dist = 0;
+    startY = e.touches[0].clientY; pulling = true; dist = 0; pull = 0;
   }, { passive: true });
 
   window.addEventListener("touchmove", (e) => {
     if (!pulling) return;
-    if (window.scrollY > 0 || blocked()) { pulling = false; reset(); return; }
+    if (window.scrollY > 0 || blocked()) { pulling = false; settle(); return; }
     dist = e.touches[0].clientY - startY;
-    if (dist <= 0) { reset(); return; }
+    if (dist <= 0) { pull = 0; setPage(0, false); ind.classList.remove("on", "ready"); return; }
+    // Rubber-band: the page follows at half speed and asymptotically stops, so it feels tethered
+    // rather than dragged one-to-one off the screen.
+    pull = Math.min(dist * 0.5, MAX);
     ind.classList.add("on");
-    ind.style.transform = `translateX(-50%) translateY(${Math.min(dist * 0.5, 84)}px)`;
+    setPage(pull, false);
     ind.classList.toggle("ready", dist > THRESH);
   }, { passive: true });
 
@@ -339,11 +386,11 @@ export function initPullToRefresh(onRefresh) {
     if (dist > THRESH && !blocked()) {
       busy = true;
       ind.classList.add("spin");
-      ind.style.transform = "translateX(-50%) translateY(56px)";
+      setPage(HOLD, true); // hold the page open while the refresh runs
       try { await onRefresh(); } catch (_) {}
       busy = false;
     }
-    reset();
+    settle();
   }, { passive: true });
 }
 
