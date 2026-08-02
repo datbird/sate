@@ -164,7 +164,10 @@ const TL = {
 
 function initTimeline() {
   TL.today = todayISO();
-  TL.win = timelineWindow(TL.today);
+  // Asymmetric on purpose: 30 days of past, 14 of future. Today can only be scrolled UP to the top of
+  // the viewport if enough content sits BELOW it — with the old symmetric ±7/14 the browser clamped
+  // the scroll and today came to rest mid-screen. The past is also the side you actually read.
+  TL.win = timelineWindow(TL.today, 30, 14);
   TL.byKey = new Map();
   TL.emptyPast = 0;
   TL.emptyFuture = 0;
@@ -204,39 +207,57 @@ async function loadSlice(from, to, seq) {
 function renderTimeline() {
   const ul = $("#feed");
   const anchor = anchorInfo(ul);
-  const groups = groupByDay([...TL.byKey.values()]); // descending: future day → today → past day
-  // Today ALWAYS gets a row, even with nothing on it. It is the timeline's anchor: recenterToday
-  // needs an element to scroll to, and a user who opens Home should see where "now" is rather than a
-  // bare hint with no sense of position. Splice it into the descending order.
-  if (!groups.some((g) => g.day === TL.today)) {
-    const idx = groups.findIndex((g) => g.day < TL.today); // first day older than today
-    groups.splice(idx === -1 ? groups.length : idx, 0, { day: TL.today, items: [] });
-  }
+  // groupByDay stays the source of truth for ORDER WITHIN a day (tested pure helper); we then lay
+  // those groups onto a CONTINUOUS run of dates.
+  const byDay = new Map();
+  for (const g of groupByDay([...TL.byKey.values()])) byDay.set(g.day, g.items);
+
+  // Every day in the loaded window gets a row, whether or not anything happened on it — the calendar
+  // pattern BalanceEngine uses. Rendering only days that HAVE content made the timeline collapse to a
+  // few hundred pixels on a sparse account: there was nothing to scroll, so infinite scroll could
+  // never trigger and a plan a month out was unreachable. A continuous run always has height, so
+  // scrolling up genuinely walks into the future and down into the past, and Today is always present
+  // for the anchor and the Today chip.
   ul.innerHTML = "";
-  for (const g of groups) {
-    if (!g.items.length) {
-      // The empty Today marker.
-      const divider = document.createElement("li");
-      divider.className = "daydiv";
-      divider.dataset.day = g.day;
-      divider.innerHTML = '<span>Today</span>';
-      ul.appendChild(divider);
+  const frag = document.createDocumentFragment();
+  for (let day = TL.win.to; day >= TL.win.from; day = addDays(day, -1)) {
+    const items = byDay.get(day) || [];
+    const divider = items.length
+      ? dayDivider(items[0].logged_at)
+      : (() => { const li = document.createElement("li"); li.className = "daydiv"; li.innerHTML = "<span></span>"; return li; })();
+    const span = divider.querySelector("span");
+    // Prefer the pure relative heading (Today / Yesterday / Tomorrow); else an absolute date.
+    const rel = dayHeading(day, TL.today);
+    if (span) span.textContent = rel || absDayLabel(day);
+    divider.dataset.day = day;
+    divider.classList.toggle("empty", items.length === 0);
+    divider.classList.toggle("is-today", day === TL.today);
+    frag.appendChild(divider);
+    for (const it of items) frag.appendChild(timelineRowEl(it));
+    if (!items.length && day === TL.today) {
       const empty = document.createElement("li");
-      empty.className = "hint";
-      empty.style.cssText = "color:var(--muted);font-size:13px;padding:10px 2px";
+      empty.className = "hint dayempty";
       empty.innerHTML = "Nothing yet today — <b>Log</b> what you ate or <b>Plan</b> an event.";
-      ul.appendChild(empty);
-      continue;
+      frag.appendChild(empty);
     }
-    const divider = dayDivider(g.items[0].logged_at);
-    // Prefer the pure relative heading; fall back to lib.dayLabel's absolute format.
-    const rel = dayHeading(g.day, TL.today);
-    if (rel) { const span = divider.querySelector("span"); if (span) span.textContent = rel; }
-    divider.dataset.day = g.day;
-    ul.appendChild(divider);
-    for (const it of g.items) ul.appendChild(timelineRowEl(it));
   }
+  const tail = document.createElement("li");
+  tail.className = "tl-tail";
+  tail.setAttribute("aria-hidden", "true");
+  frag.appendChild(tail);
+  ul.appendChild(frag);
   restoreAnchor(ul, anchor);
+  syncJumpToday();
+}
+
+// "Mon, Aug 4" for a bare YYYY-MM-DD, without going through Date-parsing traps: the string is split
+// and rebuilt in UTC so the label can never slip a day relative to the timeline's own day keys.
+const _MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const _DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function absDayLabel(ymd) {
+  const y = Number(ymd.slice(0, 4)), m = Number(ymd.slice(5, 7)) - 1, d = Number(ymd.slice(8, 10));
+  const dow = new Date(Date.UTC(y, m, d)).getUTCDay();
+  return `${_DOW[dow]}, ${_MON[m]} ${d}`;
 }
 
 // One timeline row: a logged stored entry uses the existing swipe feedRow; planned items (one-off
@@ -319,12 +340,39 @@ const isProgrammatic = () => Date.now() < _progUntil;
 
 // Put Today at the top of the viewport, just under the sticky header. This is the timeline's home
 // position: past below, future above.
-function recenterToday() {
+function recenterToday(smooth) {
   const el = $('#feed [data-day="' + TL.today + '"]');
   if (!el) return;
   const header = document.getElementById("topbar");
   const offset = (header ? header.getBoundingClientRect().height : 0) + 8;
-  programmatic(() => window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + window.scrollY - offset) }));
+  const top = Math.max(0, el.getBoundingClientRect().top + window.scrollY - offset);
+  // Smooth only for the explicit "Today" tap — a smooth animation on open/backfill would fight the
+  // programmatic-scroll suppression window and land late.
+  programmatic(() => window.scrollTo(smooth ? { top, behavior: "smooth" } : { top }));
+  if (smooth) setTimeout(syncJumpToday, 500);
+}
+
+// "Jump to today" — visible only while the Today row is off-screen. The timeline scrolls freely in
+// both directions, so this is the one guaranteed way back to now, whatever put you elsewhere.
+function syncJumpToday() {
+  const btn = document.getElementById("jumpToday");
+  if (!btn) return;
+  const home = $("#view-home");
+  const row = $('#feed [data-day="' + TL.today + '"]');
+  if (!row || !home || home.hidden || HOME.scope === "weight") {
+    btn.hidden = true;
+    btn.classList.remove("on");
+    return;
+  }
+  const r = row.getBoundingClientRect();
+  const header = document.getElementById("topbar");
+  const top = header ? header.getBoundingClientRect().height : 0;
+  const offScreen = r.bottom < top || r.top > window.innerHeight;
+  btn.hidden = false;
+  btn.classList.toggle("on", offScreen);
+  // Keep it out of the tab order (and off assistive tech) while it is invisible.
+  btn.tabIndex = offScreen ? 0 : -1;
+  btn.setAttribute("aria-hidden", offScreen ? "false" : "true");
 }
 
 // ---- scroll-anchor preservation (keep the viewport steady across a re-render) ----
@@ -420,6 +468,9 @@ segControl("#charts", "chart", () => api("/api/stats?range=" + HOME.range).then(
 const logBtn = $("#logBtn");
 if (logBtn) logBtn.addEventListener("click", () =>
   openView("compose", { scope: HOME.scope === "activity" ? "activity" : "nutrition" }));
+const jumpBtn = $("#jumpToday");
+if (jumpBtn) jumpBtn.addEventListener("click", () => recenterToday(true));
+
 const planBtn = $("#planBtn");
 if (planBtn) planBtn.addEventListener("click", () =>
   openView("planevent", { scope: HOME.scope === "activity" ? "activity" : "nutrition" }));
@@ -432,6 +483,7 @@ window.addEventListener("scroll", () => {
   _lastScrollY = y;
   const home = $("#view-home");
   if (!home || home.hidden || HOME.scope === "weight") return;
+  syncJumpToday();
   if (isProgrammatic()) return; // our own centering/anchor scroll — not a user gesture
   // Direction matters. "scrollY <= 400" is TRUE at rest when Today sits near the top, so testing
   // position alone made every stray scroll event pull in more future. Expanding the future now
