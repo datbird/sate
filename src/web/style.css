@@ -970,6 +970,33 @@ button.link.danger { color: var(--danger); }
 .plansheet .planrow .field { flex: 1 1 0; }
 .plansheet .field-lbl { font-size: 12px; color: var(--muted); margin: 12px 2px 6px; font-weight: 600; }
 .plansheet .weekdays { display: flex; gap: 6px; }
+/* Trailing spacer so the oldest loaded day can still be scrolled to the top of the viewport, and so
+   the near-bottom infinite-scroll trigger has room to fire before the user hits a hard stop. */
+.tl-tail { height: 55vh; list-style: none; pointer-events: none; }
+
+/* Continuous-day timeline: every date in the loaded window renders, so empty days must be quiet.
+   The today marker stays prominent — it is the anchor the whole view is built around. */
+.daydiv.empty { opacity: .42; }
+.daydiv.empty span { font-weight: 500; }
+.daydiv.is-today span { color: var(--brand); font-weight: 700; }
+.daydiv.is-today { opacity: 1; }
+.dayempty { color: var(--muted); font-size: 13px; padding: 8px 2px 12px; }
+
+/* "Jump to today" — floats above the tab bar, only while Today is off-screen. The timeline is freely
+   scrollable in both directions, so there must always be one obvious way back to now. */
+.jump-today {
+  position: fixed; left: 50%; transform: translateX(-50%) translateY(6px);
+  bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 25;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 15px; border-radius: 999px; font: inherit; font-size: 13.5px; font-weight: 600;
+  color: var(--card); background: var(--brand); border: 0; cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0,0,0,.28);
+  opacity: 0; transition: opacity .18s ease, transform .18s ease;
+}
+.jump-today[hidden] { display: none; }
+.jump-today.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+.jump-today svg { width: 15px; height: 15px; }
+
 /* Recurrence interval row — "Every [2] weeks" — and the monthly anchor selects. */
 .intervalrow { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
 .intervalrow select { flex: 0 1 auto; min-width: 0; }
