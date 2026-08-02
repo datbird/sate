@@ -13,11 +13,16 @@ export type ScheduleKind = "food" | "activity";
 export type RecurrenceUnit = "daily" | "weekly" | "monthly";
 export type SchedulePayload = Record<string, unknown>;
 
+export type MonthlyAnchorKind = "dom" | "nth-weekday" | "end";
+
 export interface ScheduleRecurrence {
   unit: RecurrenceUnit;
   interval: number;        // >= 1 ("every 2 weeks" = weekly / 2)
   by_weekday?: number[];   // 0..6 (Sun..Sat), weekly only
   day_of_month?: number;   // 1..31, monthly only
+  anchor?: MonthlyAnchorKind; // monthly only; absent ⇒ "dom" (the pre-anchor behaviour)
+  nth?: number;            // nth-weekday: 1..4 = first..fourth, -1 = last
+  nth_weekday?: number;    // nth-weekday: 0=Sun … 6=Sat
 }
 
 export interface PlanSchedule {
@@ -72,6 +77,8 @@ function daysBetween(a: string, b: string): number { return Math.round((ymdToUTC
 function weekdayOf(ymd: string): number { return new Date(ymdToUTC(ymd)).getUTCDay(); }
 // Days in a calendar month (year, month0 = 0..11). Handles leap years.
 function daysInMonth(year: number, month0: number): number { return new Date(Date.UTC(year, month0 + 1, 0)).getUTCDate(); }
+// Weekday (0=Sun) of a y/m/d, in UTC — the same convention as weekdayOf() above.
+function weekdayOfYMD(year: number, month0: number, day: number): number { return new Date(Date.UTC(year, month0, day)).getUTCDay(); }
 
 // Compute logged_at (ISO UTC) for a local wall-clock (date + "HH:mm") in a tz whose getTimezoneOffset
 // is `tzOffsetMin`. Inverse of helpers.dayKey: dayKey(localInstantUTC(d,t,tz), tz) === d by construction
@@ -80,6 +87,41 @@ export function localInstantUTC(date: string, time: string, tzOffsetMin: number)
   const [h, m] = String(time || "00:00").split(":").map((x) => Number(x) || 0);
   const localAsUTC = ymdToUTC(date) + (h * 60 + m) * 60_000;
   return new Date(localAsUTC + (Number(tzOffsetMin) || 0) * 60_000).toISOString();
+}
+
+// Which day-of-month does a monthly schedule land on, for this year+month? Returns 0 when the anchor
+// cannot fire in that month. Mirrors BalanceEngine's `anchorFiringDates` for the anchor kinds Sate
+// carries. Pure integer/UTC date math — no locale, no Date.now().
+function monthlyFiringDay(s: PlanSchedule, y: number, m0: number): number {
+  const r = s.recurrence;
+  const dim = daysInMonth(y, m0);
+  const kind = r.anchor || "dom";
+
+  if (kind === "end") return dim; // "last day of the month", whatever its length
+
+  if (kind === "nth-weekday") {
+    const weekday = Number(r.nth_weekday);
+    const n = Number(r.nth);
+    if (!isFinite(weekday) || !isFinite(n) || n === 0) return 0;
+    if (n > 0) {
+      // Count matching weekdays forward from the 1st.
+      let seen = 0;
+      for (let day = 1; day <= dim; day++) {
+        if (weekdayOfYMD(y, m0, day) === weekday && ++seen === n) return day;
+      }
+      return 0; // e.g. a 5th Monday in a month that has only four — that month simply skips
+    }
+    // n < 0 counts back from the end: -1 = last, -2 = second-to-last.
+    let seen = 0;
+    for (let day = dim; day >= 1; day--) {
+      if (weekdayOfYMD(y, m0, day) === weekday && --seen === n) return day;
+    }
+    return 0;
+  }
+
+  // "dom": a fixed date, clamped into shorter months (the 31st fires on the 30th / 28th).
+  const wantDom = Math.max(1, Math.floor(Number(r.day_of_month) || Number(s.active_from.slice(8, 10))));
+  return Math.min(wantDom, dim);
 }
 
 // Does a schedule fire on the given calendar date? (Date is already known to be within active bounds.)
@@ -105,9 +147,8 @@ function firesOn(s: PlanSchedule, unit: RecurrenceUnit, interval: number, d: str
       const am0 = Number(s.active_from.slice(5, 7)) - 1;
       const monthsDiff = (y - ay) * 12 + (m0 - am0);
       if (monthsDiff < 0 || monthsDiff % interval !== 0) return false;
-      const wantDom = Math.max(1, Math.floor(Number(s.recurrence.day_of_month) || Number(s.active_from.slice(8, 10))));
-      const firingDom = Math.min(wantDom, daysInMonth(y, m0)); // day 31 → last day of a shorter month
-      return Number(d.slice(8, 10)) === firingDom;
+      const firingDom = monthlyFiringDay(s, y, m0);
+      return firingDom > 0 && Number(d.slice(8, 10)) === firingDom;
     }
     default:
       return false;
