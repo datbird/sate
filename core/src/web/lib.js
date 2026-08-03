@@ -447,6 +447,19 @@ export function sheet(opts = {}) {
   const ctrl = {
     root, body: bodyEl,
     setBody(content) { setContent(bodyEl, content); return ctrl; },
+    // Pin a footer AFTER construction. Sheets whose body is built by a callback (the plan-an-event
+    // form) only create their action button while rendering, so they cannot pass opts.footer up
+    // front — without this the button has to live inside the scrolling body, where the sheet's
+    // max-height clips it.
+    setFooter(content) {
+      if (!footEl) {
+        root.classList.add("sheet-hasfoot");
+        footEl = el("div", { class: "sheet-foot" });
+        root.appendChild(footEl);
+      }
+      setContent(footEl, content);
+      return ctrl;
+    },
     close() {
       if (ctrl._closed) return;
       ctrl._closed = true;

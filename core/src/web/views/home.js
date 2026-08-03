@@ -16,7 +16,7 @@
 import {
   $, $$, api, APP, me, registerView, openView, view, toast, busy,
   statRing, ringEl, lineChart, sparkBars, feedRow, dayDivider, tripleRingCard,
-  fmt, modeOf, METRIC, RC, todayISO, timeOf, el, esc,
+  fmt, modeOf, METRIC, RC, todayISO, timeOf, el, esc, onViewChange,
 } from "../lib.js";
 import {
   timelineWindow, expandWindow, groupByDay, dayHeading, displayFields, plannedState, itemKey, addDays,
@@ -337,13 +337,28 @@ const feedScroll = () => document.getElementById("feedscroll");
 function sizeFeedViewport() {
   const box = feedScroll();
   if (!box) return;
-  const top = box.getBoundingClientRect().top;      // everything above the feed, already laid out
+  // Publish the chrome heights; CSS (html.home-fixed) turns them into an exact-viewport layout and
+  // flex gives the leftover space to the feed. Measuring the CHROME rather than the feed is the
+  // robust order: the feed's own top moves as the stat card renders, so sizing off it raced the
+  // async stats fetch and left the page slightly too tall — which is what made it scroll.
+  const header = document.getElementById("topbar");
   const tabbar = document.getElementById("tabbar");
-  const tabH = tabbar && !tabbar.hidden ? tabbar.getBoundingClientRect().height : 0;
-  const h = Math.max(220, window.innerHeight - top - tabH - 8);
-  document.documentElement.style.setProperty("--feedh", h + "px");
+  const topH = header && !header.hidden ? header.getBoundingClientRect().height : 0;
+  const botH = tabbar && !tabbar.hidden ? tabbar.getBoundingClientRect().height : 0;
+  const root = document.documentElement;
+  root.style.setProperty("--chrome-top", topH + "px");
+  root.style.setProperty("--chrome-bottom", botH + "px");
+  // Fallback for anything still reading --feedh (and for non-fixed layouts).
+  const h = Math.max(220, window.innerHeight - box.getBoundingClientRect().top - botH - 8);
+  root.style.setProperty("--feedh", h + "px");
 }
 window.addEventListener("resize", sizeFeedViewport);
+
+// Only Home gets the fixed-height treatment; the other views scroll normally.
+onViewChange((name) => {
+  document.documentElement.classList.toggle("home-fixed", name === "home");
+  if (name === "home") requestAnimationFrame(sizeFeedViewport);
+});
 
 // ---- programmatic scrolling ------------------------------------------------------------------
 // Our own scrolls (centering Today, restoring the anchor after a re-render) fire scroll events that
