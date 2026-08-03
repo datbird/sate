@@ -1040,7 +1040,10 @@ html.home-fixed #view-home > .feedscroll { flex: 1 1 auto; min-height: 0; height
    scrollable in both directions, so there must always be one obvious way back to now. */
 .jump-today {
   position: fixed; left: 50%; transform: translateX(-50%) translateY(6px);
-  bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 25;
+  /* Sit clear of the tab bar using its MEASURED height (--chrome-bottom, published by home.js and
+     already inclusive of the safe-area inset) rather than a guessed constant — a hard-coded 64px
+     overlapped the bar on a 932pt device. */
+  bottom: calc(var(--chrome-bottom, 64px) + 12px); z-index: 25;
   display: inline-flex; align-items: center; gap: 6px;
   padding: 8px 15px; border-radius: 999px; font: inherit; font-size: 13.5px; font-weight: 600;
   color: var(--card); background: var(--brand); border: 0; cursor: pointer;

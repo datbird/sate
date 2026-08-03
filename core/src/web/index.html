@@ -106,12 +106,6 @@
         <div class="feedscroll" id="feedscroll">
           <ul class="entries" id="feed"></ul>
         </div>
-        <!-- "Jump to today": the timeline scrolls freely into the past and future, so there is always
-             a way back. Shown only while Today is off-screen. -->
-        <button type="button" id="jumpToday" class="jump-today" hidden aria-label="Jump to today">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
-          <span>Today</span>
-        </button>
       </section>
 
       <!-- PLAN (owned by views/plan.js) -->
@@ -189,6 +183,14 @@
     <div id="overlay"></div>
 
     <!-- Global activity + toast surfaces (driven by lib.js). -->
+    <!-- "Jump to today". Deliberately a child of <body>, NOT of #view-home: pull-to-refresh puts an
+         inline transform on #app, and a transformed ancestor becomes the containing block for its
+         position:fixed descendants — which parked this pill in the middle of the timeline instead
+         of above the tab bar, and let #app's overflow clip it. At body level nothing can capture it. -->
+    <button type="button" id="jumpToday" class="jump-today" hidden aria-label="Jump to today">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+      <span>Today</span>
+    </button>
     <div id="netbar" hidden></div>
     <div id="working" hidden><span class="spinner"></span><span class="wlabel">Working…</span></div>
     <div class="toast" id="toast" hidden></div>

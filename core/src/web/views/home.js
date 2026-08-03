@@ -382,10 +382,17 @@ function recenterToday(smooth) {
   // nearest POSITIONED ancestor, which here is the page, so it included the stat card's height and
   // overshot ~2 weeks into the past. Deriving it from the two rects is independent of offsetParent.
   const top = Math.max(0, box.scrollTop + (el.getBoundingClientRect().top - box.getBoundingClientRect().top) - 4);
-  // Smooth only for the explicit "Today" tap — a smooth animation on open/backfill would fight the
-  // programmatic-scroll suppression window and land late.
-  programmatic(() => box.scrollTo(smooth ? { top, behavior: "smooth" } : { top }));
-  if (smooth) setTimeout(syncJumpToday, 500);
+  // INSTANT, never smooth — including for the explicit tap. A smooth animation outlives the
+  // programmatic-suppression window, so its tail is read as a user gesture: that fires extendFuture,
+  // which re-renders the list and lets restoreAnchor pin the view back to where the animation
+  // started. On device that looked like the Today pill doing nothing at all (it jumped and snapped
+  // straight back). An instant scroll is already settled before any of that can run.
+  programmatic(() => box.scrollTo({ top }));
+  if (smooth) {
+    // Re-assert shortly after: a prefetch triggered by landing near the top re-renders the list, and
+    // this guarantees Today is still where we put it once that has settled.
+    setTimeout(() => { programmatic(() => box.scrollTo({ top: Math.max(0, box.scrollTop + (el.getBoundingClientRect().top - box.getBoundingClientRect().top) - 4) })); syncJumpToday(); }, 260);
+  }
 }
 
 // "Jump to today" — visible only while the Today row is off-screen. The timeline scrolls freely in
