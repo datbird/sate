@@ -977,6 +977,15 @@ button.link.danger { color: var(--danger); }
    thing that scrolls is the timeline. Without this the whole page scrolled — the scope tabs slid up
    under the header and the screen drifted, which is not what a dashboard should do.
    The two chrome heights are measured once by JS (safe-area insets make them device-dependent). */
+/* Stat-card footer folded INSIDE the ring card: "Set goals" · caption · settings, one row.
+   .ring-card is a wrapping flex row, so flex-basis:100% drops this onto its own line within the
+   same border as the ring and the legend. */
+.statfoot { flex: 0 0 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line); }
+.statfoot .subline { flex: 1 1 auto; margin: 0; text-align: center; }
+.statfoot .link, .statfoot .iconbtn { margin-top: 0; flex: 0 0 auto; }
+.statfoot .iconbtn { width: 30px; height: 30px; }
+
 /* ---- Home density -------------------------------------------------------------------------
    Home is a fixed screen, so every pixel spent above the timeline is a pixel the timeline loses.
    At default spacing the log got ~28% of the viewport; these trims (scoped to Home so no other
@@ -1032,6 +1041,9 @@ html.home-fixed #view-home > .feedscroll { flex: 1 1 auto; min-height: 0; height
    The today marker stays prominent — it is the anchor the whole view is built around. */
 .daydiv.empty { opacity: .42; }
 .daydiv.empty span { font-weight: 500; }
+/* Empty days keep the divider LOOK but not its spacing: at full .day-divider margins a quiet month
+   became ~2.5 screens of nothing to scroll past on the way to a real entry. */
+.daydiv.empty { margin: 6px 0 4px; }
 .daydiv.is-today span { color: var(--brand); font-weight: 700; }
 .daydiv.is-today { opacity: 1; }
 .dayempty { color: var(--muted); font-size: 13px; padding: 8px 2px 12px; }
@@ -1043,7 +1055,9 @@ html.home-fixed #view-home > .feedscroll { flex: 1 1 auto; min-height: 0; height
   /* Sit clear of the tab bar using its MEASURED height (--chrome-bottom, published by home.js and
      already inclusive of the safe-area inset) rather than a guessed constant — a hard-coded 64px
      overlapped the bar on a 932pt device. */
-  bottom: calc(var(--chrome-bottom, 64px) + 12px); z-index: 25;
+  /* Clear BOTH the tab bar and the Log/Plan row beneath the timeline — both measured, so this holds
+     on any device rather than depending on a guessed constant. */
+  bottom: calc(var(--chrome-bottom, 64px) + var(--home-actions, 0px) + 12px); z-index: 25;
   display: inline-flex; align-items: center; gap: 6px;
   padding: 8px 15px; border-radius: 999px; font: inherit; font-size: 13.5px; font-weight: 600;
   color: var(--card); background: var(--brand); border: 0; cursor: pointer;
