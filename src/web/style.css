@@ -977,6 +977,31 @@ button.link.danger { color: var(--danger); }
    thing that scrolls is the timeline. Without this the whole page scrolled — the scope tabs slid up
    under the header and the screen drifted, which is not what a dashboard should do.
    The two chrome heights are measured once by JS (safe-area insets make them device-dependent). */
+/* ---- Home density -------------------------------------------------------------------------
+   Home is a fixed screen, so every pixel spent above the timeline is a pixel the timeline loses.
+   At default spacing the log got ~28% of the viewport; these trims (scoped to Home so no other
+   view changes) bring it to roughly a third without making the stat card feel cramped. */
+html.home-fixed main#app { padding-top: 10px; }
+html.home-fixed #view-home > .seg.scope { padding-bottom: 2px; }
+html.home-fixed .statcard { padding: 12px; }
+html.home-fixed .stathead { margin-bottom: 10px; }
+html.home-fixed .statcard-actions .link,
+html.home-fixed .statcard .link { margin-top: 6px; }
+html.home-fixed #feedlbl { margin: 10px 0 6px; }
+html.home-fixed .trir-legend { gap: 9px; }
+html.home-fixed .subline { margin-top: 10px; }
+
+/* The timeline reads as its own surface — a quiet inset panel between the page and the card, so the
+   log is visibly a separate region from the dashboard above it. Theme-driven, so it holds up in
+   light mode too. */
+html.home-fixed #view-home > .feedscroll {
+  background: color-mix(in srgb, var(--card) 55%, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 2px 10px 0;
+  margin-bottom: 6px; /* let the rounded bottom edge read instead of dying into the tab bar */
+}
+
 /* Belt and braces: a sub-pixel rounding difference between the measured chrome and 100dvh still let
    the page drift 1px. On Home nothing outside the timeline is meant to move at all. The lock has to
    be on BOTH html and body — overflow set only on body does not reliably reach the viewport. */
