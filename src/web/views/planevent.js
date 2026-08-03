@@ -50,6 +50,7 @@ export function open(args = {}) {
     onClose: () => { planCtrl = null; editing = null; },
     body: (b) => renderForm(b),
   });
+  pinFooter(); // now that planCtrl exists (see the note in renderForm)
 }
 
 // Map an existing plan_schedule into the form state for edit mode. Recurrence unit → repeat;
@@ -125,10 +126,22 @@ function renderForm(host) {
     el("label", { class: "field" }, "Repeat", repeatSel),
     repeatExtra,
     fillHost,
-    el("div", { class: "sheet-actions", style: { marginTop: "8px" } }, saveBtn),
   );
+  // The save button is PINNED as the sheet footer, never appended to the body. Inside the body it
+  // scrolled with the content and the sheet's max-height clipped it clean in half — "Add to plan"
+  // was cut in two and you had to scroll to reach it. As a footer it stays visible however far the
+  // form grows (Activity fields, weekly chips, the monthly anchor picker).
+  // NB pinFooter() is called by the CALLER after sheet() returns: this function runs from the
+  // `body:` callback, i.e. while sheet() is still constructing, so planCtrl is not assigned yet.
+  pinFooter();
   renderRepeatExtra(repeatExtra);
   renderFill(fillHost);
+}
+
+// Move the current save button into the sheet's pinned footer. Safe to call repeatedly (every
+// re-render of the form makes a new button) and a no-op until the sheet exists.
+function pinFooter() {
+  if (planCtrl && saveBtn && typeof planCtrl.setFooter === "function") planCtrl.setFooter(saveBtn);
 }
 
 function kindBtn(key, label) {

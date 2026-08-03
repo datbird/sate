@@ -973,6 +973,22 @@ button.link.danger { color: var(--danger); }
 /* The timeline's own scroll viewport. Height is whatever is left between the controls above and the
    tab bar below, computed at runtime into --feedh (JS measures the block above; CSS cannot). The
    fallback keeps it usable if that measurement has not run yet. */
+/* Home is a FIXED-HEIGHT screen: header and tab bar are chrome, the controls sit still, and the only
+   thing that scrolls is the timeline. Without this the whole page scrolled — the scope tabs slid up
+   under the header and the screen drifted, which is not what a dashboard should do.
+   The two chrome heights are measured once by JS (safe-area insets make them device-dependent). */
+/* Belt and braces: a sub-pixel rounding difference between the measured chrome and 100dvh still let
+   the page drift 1px. On Home nothing outside the timeline is meant to move at all. The lock has to
+   be on BOTH html and body — overflow set only on body does not reliably reach the viewport. */
+html.home-fixed, html.home-fixed body { overflow: hidden; height: 100%; }
+html.home-fixed main#app {
+  height: calc(100dvh - var(--chrome-top, 0px) - var(--chrome-bottom, 0px));
+  overflow: hidden;
+  padding-bottom: 0;
+}
+html.home-fixed #view-home { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+html.home-fixed #view-home > .feedscroll { flex: 1 1 auto; min-height: 0; height: auto; }
+
 .feedscroll {
   position: relative; /* also makes it the offsetParent for anything inside */
   height: var(--feedh, 46vh);
