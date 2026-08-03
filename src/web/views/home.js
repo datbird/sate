@@ -62,8 +62,39 @@ async function render() {
 }
 
 // ============================================================ stat card
+// The "Set goals" / settings pair and the caption line are folded into ONE row INSIDE the ring
+// card, instead of stacking two more rows underneath it — that reclaims real height on a fixed
+// screen and visually groups them with the numbers they belong to.
+//
+// The buttons are MOVED, never recreated: app.js binds [data-open] listeners once at startup, so a
+// fresh copy would look identical and do nothing. And #statbody is wiped on every render, so they
+// have to be parked back outside before that happens or the next refresh destroys them.
+function parkStatActions() {
+  const actions = $(".statcard-actions");
+  const card = $(".statcard");
+  if (!actions || !card) return;
+  // The caption we folded in last time belongs to the render that is about to be thrown away.
+  // Drop it here, or every refresh stacks another one inside the row.
+  actions.querySelectorAll(".subline").forEach((n) => n.remove());
+  actions.classList.remove("statfoot");
+  if (actions.parentElement !== card) card.appendChild(actions);
+}
+function foldStatActions(body) {
+  const actions = $(".statcard-actions");
+  const ring = body.querySelector(".ring-card");
+  const subline = body.querySelector(":scope > .subline");
+  if (!actions || !ring) return;
+  if (subline) {
+    // caption goes between the two controls
+    actions.insertBefore(subline, actions.lastElementChild);
+  }
+  actions.classList.add("statfoot");
+  ring.appendChild(actions);
+}
+
 function renderStats(s) {
   const body = $("#statbody");
+  parkStatActions();
   const goals = s.goals || (me() && me().goals) || {};
   const inKcal = (s.in && s.in.kcal) || 0;
   const out = s.out || { kcal: 0, minutes: 0, workouts: 0 };
@@ -131,6 +162,7 @@ function renderStats(s) {
     } else {
       body.appendChild(sub(`net ${fmt(Math.round(inKcal - out.kcal))} kcal · ${s.range === "day" ? "today" : "this " + s.range}`));
     }
+    foldStatActions(body);
     return;
   }
 
@@ -143,6 +175,7 @@ function renderStats(s) {
   } else {
     body.appendChild(sub(`${s.range === "day" ? "Today" : "This " + s.range} · ring tracks ${METRIC[modeOf().primary].label} vs goal`));
   }
+  foldStatActions(body);
 }
 const sub = (text) => { const d = document.createElement("div"); d.className = "subline"; d.textContent = text; return d; };
 function htmlRow(a, b) { const d = document.createElement("div"); d.className = "avgrow"; d.innerHTML = `<span>${a}</span><span>${b}</span>`; return d; }
@@ -224,7 +257,11 @@ function renderTimeline() {
     const items = byDay.get(day) || [];
     const divider = items.length
       ? dayDivider(items[0].logged_at)
-      : (() => { const li = document.createElement("li"); li.className = "daydiv"; li.innerHTML = "<span></span>"; return li; })();
+      : (() => { const li = document.createElement("li"); li.innerHTML = "<span></span>"; return li; })();
+    // BOTH classes on EVERY row: `day-divider` carries the look (rules either side of the label),
+    // `daydiv` carries the timeline-only modifiers (.empty dimming, .is-today highlight). Splitting
+    // them by whether the day had entries meant today was highlighted only when it was EMPTY.
+    divider.classList.add("day-divider", "daydiv");
     const span = divider.querySelector("span");
     // Prefer the pure relative heading (Today / Yesterday / Tomorrow); else an absolute date.
     const rel = dayHeading(day, TL.today);
@@ -348,6 +385,9 @@ function sizeFeedViewport() {
   const root = document.documentElement;
   root.style.setProperty("--chrome-top", topH + "px");
   root.style.setProperty("--chrome-bottom", botH + "px");
+  // The Log/Plan row now sits below the timeline; the Today pill has to float above it.
+  const actions = document.getElementById("logplan");
+  root.style.setProperty("--home-actions", (actions ? Math.round(actions.getBoundingClientRect().height) + 10 : 0) + "px");
   // Fallback for anything still reading --feedh (and for non-fixed layouts).
   const h = Math.max(220, window.innerHeight - box.getBoundingClientRect().top - botH - 8);
   root.style.setProperty("--feedh", h + "px");
