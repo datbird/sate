@@ -116,18 +116,29 @@ async function priceMap(store: DataStore): Promise<Record<string, { in_usd: numb
     const { items } = await store.list<PriceRow>("ai_prices", { limit: 1000 });
     for (const r of items) m[r.provider + "|" + r.model] = { in_usd: r.in_usd, out_usd: r.out_usd };
   } catch {
-    /* no prices ⇒ $ caps simply not enforced */
+    // Unreadable prices leave the map empty, which makes every billed model "unpriced" — checkLimit
+    // then refuses. That is deliberate: a $ cap we cannot evaluate must block, not wave calls through.
   }
   return m;
 }
 
-function costOfRows(rows: UsageRow[], provider: string, pm: Record<string, { in_usd: number; out_usd: number }>): number {
+// Spend for the month, PLUS the models we could not price. A dollar cap that silently skips unpriced
+// usage is worse than no cap: it reads as enforced and bills without limit. The caller fails closed on
+// `unpriced`, so adding a model without an `ai_prices` row stops spend instead of hiding it.
+function costOfRows(
+  rows: UsageRow[],
+  provider: string,
+  pm: Record<string, { in_usd: number; out_usd: number }>,
+): { usd: number; unpriced: string[] } {
   let usd = 0;
+  const unpriced = new Set<string>();
   for (const r of rows) {
-    const p = pm[provider + "|" + (r.model || "")];
+    const model = r.model || "";
+    const p = pm[provider + "|" + model];
     if (p) usd += (r.input_tokens / 1e6) * p.in_usd + (r.output_tokens / 1e6) * p.out_usd;
+    else if ((r.input_tokens || 0) + (r.output_tokens || 0) > 0) unpriced.add(model || "(unnamed)");
   }
-  return usd;
+  return { usd, unpriced: [...unpriced].sort() };
 }
 
 async function limitFor(store: DataStore, provider: string): Promise<LimitRow | null> {
@@ -152,7 +163,15 @@ export async function checkLimit(store: DataStore, provider: string, _model: str
   if ((lim.out_cap || 0) > 0 && io.output >= lim.out_cap!)
     throw new Error(`${provider} monthly output-token limit reached — raise it in Admin › AI › Limits.`);
   if ((lim.usd_budget || 0) > 0) {
-    const spent = costOfRows(rows, provider, await priceMap(store));
+    const { usd: spent, unpriced } = costOfRows(rows, provider, await priceMap(store));
+    // FAIL CLOSED. If any model billed this month has no price row we cannot know the true spend, so
+    // the budget is unenforceable — refuse rather than let unpriced usage run free under a cap the
+    // operator believes is holding. The remedy is a one-row fix in Admin › AI › Prices.
+    if (unpriced.length)
+      throw new Error(
+        `${provider} has a $${lim.usd_budget!.toFixed(2)} monthly budget but no price for ${unpriced.join(", ")} — ` +
+          `spend cannot be measured. Add the model price in Admin › AI › Prices (or clear the budget and use a token cap).`,
+      );
     if (spent >= lim.usd_budget!)
       throw new Error(`${provider} monthly budget reached ($${spent.toFixed(2)}/$${lim.usd_budget!.toFixed(2)}) — raise it in Admin › AI › Limits.`);
   }
