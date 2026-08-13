@@ -10,6 +10,19 @@ export type Sex = (typeof SEXES)[number];
 export const GOAL_METHODS = ["calories", "carb", "protein", "fat", "balanced", "heart"] as const;
 export type GoalMethod = (typeof GOAL_METHODS)[number];
 
+// Which metric each tracking mode rings on. MIRRORS the SPA's MODES table in web/lib.js — the two
+// are kept in agreement by core/test/widget-modes.test.ts. Note carb→netcarbs and heart→sodium:
+// the primary is not simply the same-named macro.
+export type PrimaryMetric = "kcal" | "netcarbs" | "protein" | "fat" | "sodium";
+export const MODE_PRIMARY: Record<GoalMethod, PrimaryMetric> = {
+  calories: "kcal",
+  carb: "netcarbs",
+  protein: "protein",
+  fat: "fat",
+  balanced: "kcal",
+  heart: "sodium",
+};
+
 // Widget refresh cadence. Stored as an open string union rather than a boolean pair so an
 // iOS 18 push-driven "instant" tier can be added later without a data migration.
 export const WIDGET_UPDATE_MODES = ["app_only", "balanced", "frequent"] as const;
