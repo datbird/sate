@@ -9,8 +9,8 @@ import {
 } from "./helpers";
 import type { Platform } from "../ports";
 import {
-  GOAL_METHODS, ACTIVITY_LEVELS,
-  type Entry, type Profile, type GoalMethod, type ActivityLevel,
+  GOAL_METHODS, ACTIVITY_LEVELS, WIDGET_UPDATE_MODES,
+  type Entry, type Profile, type GoalMethod, type ActivityLevel, type WidgetUpdateMode,
 } from "../schema";
 import { getEntitlements } from "../entitlements/index";
 
@@ -110,6 +110,9 @@ function profileView(p: Profile) {
     checkin_freq: p.checkin_freq || "daily",
     plan_summary: p.plan_summary || "",
     allergies: p.allergies || "",
+    widget_updates: WIDGET_UPDATE_MODES.includes(p.widget_updates as WidgetUpdateMode)
+      ? (p.widget_updates as WidgetUpdateMode)
+      : "balanced",
   };
 }
 
@@ -237,6 +240,9 @@ export async function registerProfile(app: App, deps: RouteDeps): Promise<void> 
     const mode = b.track_mode ?? b.method;
     if (mode !== undefined && (GOAL_METHODS as readonly string[]).includes(String(mode))) {
       patch.method = String(mode) as GoalMethod;
+    }
+    if (WIDGET_UPDATE_MODES.includes(b.widget_updates as WidgetUpdateMode)) {
+      patch.widget_updates = b.widget_updates as WidgetUpdateMode;
     }
     if (b.net_exercise !== undefined) patch.net_exercise = !!b.net_exercise;
     if (b.show_weight_in_feed !== undefined) patch.show_weight_in_feed = !!b.show_weight_in_feed;

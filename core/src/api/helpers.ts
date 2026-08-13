@@ -127,6 +127,7 @@ export async function ensureProfile(platform: Platform, uid: string, email?: str
     // "unset" signal). Seed "" here too — the plan engine falls back to the sedentary multiplier.
     activity_level: "",
     method: "calories",
+    widget_updates: "balanced",
     net_exercise: true,
     show_weight_in_feed: false,
     health_sync: false,
