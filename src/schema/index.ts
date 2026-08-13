@@ -10,6 +10,11 @@ export type Sex = (typeof SEXES)[number];
 export const GOAL_METHODS = ["calories", "carb", "protein", "fat", "balanced", "heart"] as const;
 export type GoalMethod = (typeof GOAL_METHODS)[number];
 
+// Widget refresh cadence. Stored as an open string union rather than a boolean pair so an
+// iOS 18 push-driven "instant" tier can be added later without a data migration.
+export const WIDGET_UPDATE_MODES = ["app_only", "balanced", "frequent"] as const;
+export type WidgetUpdateMode = (typeof WIDGET_UPDATE_MODES)[number];
+
 export const ACTIVITY_LEVELS = ["sedentary", "light", "moderate", "active", "athlete"] as const;
 export type ActivityLevel = (typeof ACTIVITY_LEVELS)[number];
 
@@ -272,6 +277,7 @@ export const Profile = z.object({
   // and ensureProfile never seeded one, so a fresh profile read back "".
   activity_level: z.enum([...ACTIVITY_LEVELS, ""] as const).default(""),
   method: z.enum(GOAL_METHODS).default("calories"), // v1 track_mode
+  widget_updates: z.enum(WIDGET_UPDATE_MODES).default("balanced"),
   // Saved daily goals (what the ring counts down; stats echoes these back).
   goal_kcal: z.number().optional(),
   goal_protein: z.number().optional(),
