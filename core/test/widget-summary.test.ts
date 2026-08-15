@@ -8,6 +8,12 @@ function today(tzMin: number): string {
   return new Date(Date.now() - tzMin * 60000).toISOString().slice(0, 10);
 }
 
+// UTC-midnight calendar-date arithmetic — matches how widget.ts's weightBlock parses
+// start_date/target_date ("YYYY-MM-DDT00:00:00Z"), so test dates line up with its math exactly.
+function addDays(ymd: string, n: number): string {
+  return new Date(Date.parse(ymd + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+}
+
 async function seed(platform: any, email: string, day: string, rows: any[]) {
   const store = platform.data.forUser(email);
   for (const r of rows) {
@@ -155,6 +161,66 @@ test("weight is null with no measurements, and populated with them", async () =>
   assert.equal(b.weight.trend.length, 7);
   assert.ok(b.weight.current > 0);
   assert.equal(b.weight.pace, "none", "no goal set ⇒ pace none");
+});
+
+// Pace maths: expected weight at today's fraction of a WEIGHT-LOSS goal (start_kg=90 → target_kg=80,
+// start_date=day-10 → target_date=day+10) is a straight line, so at day (frac=0.5) expected = 85 kg.
+// aheadKg = expected - current while losing; behind ⇒ current is meaningfully ABOVE 85.
+test("weight pace is behind when current weight trails a weight-loss goal's linear path", async () => {
+  const { req, platform, email } = client();
+  const day = today(TZ);
+  const store = platform.data.forUser(email);
+  await store.create("profiles", { id: "me", method: "calories", goal_kcal: 2000 });
+  await store.create("measurements", { measured_at: new Date().toISOString(), weight_kg: 88 }); // 3kg over the 85kg expected point
+  await store.create("weight_goals", {
+    target_kg: 80, target_date: addDays(day, 10), start_kg: 90, start_date: addDays(day, -10),
+  });
+  const b = await (await req(`/api/widget/summary?tz=${TZ}`)).json();
+  assert.equal(b.weight.pace, "behind");
+});
+
+// Same goal/path (expected = 85 kg at day); ahead ⇒ current is meaningfully BELOW 85.
+test("weight pace is ahead when current weight beats a weight-loss goal's linear path", async () => {
+  const { req, platform, email } = client();
+  const day = today(TZ);
+  const store = platform.data.forUser(email);
+  await store.create("profiles", { id: "me", method: "calories", goal_kcal: 2000 });
+  await store.create("measurements", { measured_at: new Date().toISOString(), weight_kg: 82 }); // 3kg under the 85kg expected point
+  await store.create("weight_goals", {
+    target_kg: 80, target_date: addDays(day, 10), start_kg: 90, start_date: addDays(day, -10),
+  });
+  const b = await (await req(`/api/widget/summary?tz=${TZ}`)).json();
+  assert.equal(b.weight.pace, "ahead");
+});
+
+// Same goal/path (expected = 85 kg at day); on_track ⇒ current is within the ±0.25kg dead zone.
+test("weight pace is on_track when current weight is within the dead zone of a weight-loss goal's path", async () => {
+  const { req, platform, email } = client();
+  const day = today(TZ);
+  const store = platform.data.forUser(email);
+  await store.create("profiles", { id: "me", method: "calories", goal_kcal: 2000 });
+  await store.create("measurements", { measured_at: new Date().toISOString(), weight_kg: 85.1 }); // 0.1kg from the 85kg expected point
+  await store.create("weight_goals", {
+    target_kg: 80, target_date: addDays(day, 10), start_kg: 90, start_date: addDays(day, -10),
+  });
+  const b = await (await req(`/api/widget/summary?tz=${TZ}`)).json();
+  assert.equal(b.weight.pace, "on_track");
+});
+
+// A WEIGHT-GAIN goal (start_kg=70 → target_kg=80, same window ⇒ expected = 75kg at day) checks the
+// direction logic isn't inverted: gaining FASTER than planned (current above expected) must read
+// "ahead", not "behind".
+test("weight pace direction is not inverted for a weight-gain goal", async () => {
+  const { req, platform, email } = client();
+  const day = today(TZ);
+  const store = platform.data.forUser(email);
+  await store.create("profiles", { id: "me", method: "calories", goal_kcal: 2000 });
+  await store.create("measurements", { measured_at: new Date().toISOString(), weight_kg: 78 }); // 3kg over the 75kg expected point
+  await store.create("weight_goals", {
+    target_kg: 80, target_date: addDays(day, 10), start_kg: 70, start_date: addDays(day, -10),
+  });
+  const b = await (await req(`/api/widget/summary?tz=${TZ}`)).json();
+  assert.equal(b.weight.pace, "ahead", "gaining faster than the plan must read ahead, not behind");
 });
 
 // THE INVARIANT. A widget refreshes on a timer; if this route could reach a model, a placed widget

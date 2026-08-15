@@ -106,9 +106,12 @@ async function nextPlanned(
 
 const LB = 2.2046226218;
 
-// Last 7 measurements as lb (oldest→newest) plus pace against the nearest weight goal. Mirrors the
-// pace maths in api/weight.ts goalsWithPace: compare today's weight to the linear path from
-// (start_date, start_kg) to (target_date, target_kg), in the goal's own direction.
+// Last 7 measurements as lb (oldest→newest) plus pace against the nearest weight goal. Shares the
+// linear-path approach with api/weight.ts goalsWithPace (compare today's weight to the straight line
+// from (start_date, start_kg) to (target_date, target_kg), in the goal's own direction) but reports a
+// finer three-way "ahead"/"on_track"/"behind" bucket instead of goalsWithPace's boolean on_track,
+// which is true for ANY amount ahead of schedule. Same underlying number, coarser on the app tab
+// (e.g. 0.5kg ahead → app tab on_track:true, widget pace:"ahead"); direction never inverts.
 async function weightBlock(
   store: ReturnType<RouteDeps["platform"]["data"]["forUser"]>,
   day: string,
