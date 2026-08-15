@@ -72,7 +72,11 @@ async function nextPlanned(
   for (const e of entries) {
     if (e.status !== "planned") continue;
     if (e.kind === "activity") continue;
-    cands.push({ at: e.logged_at || "", title: e.name || "Planned meal", kcal: Math.round(Number(e.kcal) || 0), id: e.id });
+    // `description` is the real Entry field every write path (POST /api/plan/entry, plan.ts) uses
+    // for the title; `name` is NOT part of the Entry schema and is never written in production —
+    // it is kept only as a defensive fallback, so do not swap the order back to `name` first.
+    const title = e.description || e.name || "Planned meal";
+    cands.push({ at: e.logged_at || "", title, kcal: Math.round(Number(e.kcal) || 0), id: e.id });
   }
 
   let schedules: PlanSchedule[] = [];
