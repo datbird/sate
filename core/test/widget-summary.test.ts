@@ -88,3 +88,37 @@ test("an entry late in the local day buckets to the local day, not the UTC one",
   assert.equal(b.day, day);
   assert.equal(b.ring.value, 300);
 });
+
+test("next_planned is the next future planned item today, or null", async () => {
+  const { req, platform, email } = client();
+  const day = today(TZ);
+  const store = platform.data.forUser(email);
+  await store.create("profiles", { id: "me", method: "calories", goal_kcal: 2000 });
+
+  const empty = await (await req(`/api/widget/summary?tz=${TZ}`)).json();
+  assert.equal(empty.next_planned, null);
+
+  await store.create("entries", {
+    day, kind: "", status: "planned", kcal: 620, name: "Chicken and rice",
+    logged_at: `${day}T23:59:00.000Z`, macros: {},
+  });
+
+  const b = await (await req(`/api/widget/summary?tz=${TZ}`)).json();
+  assert.ok(b.next_planned, "a planned entry later today must surface");
+  assert.equal(b.next_planned.title, "Chicken and rice");
+  assert.equal(b.next_planned.kcal, 620);
+  assert.match(b.next_planned.at_local, /^\d{2}:\d{2}$/);
+});
+
+test("an already-logged entry is never offered as next_planned", async () => {
+  const { req, platform, email } = client();
+  const day = today(TZ);
+  const store = platform.data.forUser(email);
+  await store.create("profiles", { id: "me", method: "calories", goal_kcal: 2000 });
+  await store.create("entries", {
+    day, kind: "", kcal: 620, name: "Already eaten",
+    logged_at: `${day}T23:59:00.000Z`, macros: {},
+  });
+  const b = await (await req(`/api/widget/summary?tz=${TZ}`)).json();
+  assert.equal(b.next_planned, null);
+});
