@@ -100,6 +100,60 @@ async function nextPlanned(
   return { id: pick.id, title: pick.title, at_local: pick.at.slice(11, 16), kcal: pick.kcal };
 }
 
+const LB = 2.2046226218;
+
+// Last 7 measurements as lb (oldest→newest) plus pace against the nearest weight goal. Mirrors the
+// pace maths in api/weight.ts goalsWithPace: compare today's weight to the linear path from
+// (start_date, start_kg) to (target_date, target_kg), in the goal's own direction.
+async function weightBlock(
+  store: ReturnType<RouteDeps["platform"]["data"]["forUser"]>,
+  day: string,
+): Promise<{ current: number; unit: "lb"; trend: number[]; pace: string; goal: number; goal_date: string } | null> {
+  type M = { measured_at: string; weight_kg: number };
+  let rows: M[] = [];
+  try {
+    ({ items: rows } = await store.list<M>("measurements", {
+      orderBy: [{ field: "measured_at", dir: "desc" }], limit: 30,
+    }));
+  } catch { rows = []; }
+  rows = rows.filter((r) => Number(r.weight_kg) > 0);
+  if (!rows.length) return null;
+
+  const round1 = (n: number) => Math.round(n * 10) / 10;
+  const recent = rows.slice(0, 7).reverse();
+  const trend = recent.map((r) => round1(Number(r.weight_kg) * LB));
+  // noUncheckedIndexedAccess doesn't narrow rows[0] from the `rows.length` guard above; it is safe.
+  const curKg = Number(rows[0]!.weight_kg);
+
+  type G = { target_kg: number; target_date: string; start_kg?: number; start_date?: string };
+  let goals: G[] = [];
+  try {
+    ({ items: goals } = await store.list<G>("weight_goals", {
+      orderBy: [{ field: "target_date", dir: "asc" }], limit: 10,
+    }));
+  } catch { goals = []; }
+  const g = goals[0];
+  if (!g) return { current: round1(curKg * LB), unit: "lb", trend, pace: "none", goal: 0, goal_date: "" };
+
+  const startKg = Number(g.start_kg) || curKg;
+  const t0 = Date.parse((g.start_date || day) + "T00:00:00Z");
+  const t1 = Date.parse(g.target_date + "T00:00:00Z");
+  const tn = Date.parse(day + "T00:00:00Z");
+  let pace = "none";
+  if (t1 > t0) {
+    const frac = Math.min(1, Math.max(0, (tn - t0) / (t1 - t0)));
+    const expectedKg = startKg + (Number(g.target_kg) - startKg) * frac;
+    const losing = Number(g.target_kg) < startKg;
+    const deltaKg = curKg - expectedKg; // <0 while losing = ahead
+    const aheadKg = losing ? -deltaKg : deltaKg;
+    pace = Math.abs(aheadKg) < 0.25 ? "on_track" : aheadKg > 0 ? "ahead" : "behind";
+  }
+  return {
+    current: round1(curKg * LB), unit: "lb", trend, pace,
+    goal: round1(Number(g.target_kg) * LB), goal_date: g.target_date,
+  };
+}
+
 export async function registerWidget(app: App, deps: RouteDeps): Promise<void> {
   const { platform } = deps;
 
@@ -141,6 +195,7 @@ export async function registerWidget(app: App, deps: RouteDeps): Promise<void> {
 
     const nowISO = new Date().toISOString();
     const next = await nextPlanned(store, day, nowISO);
+    const weight = await weightBlock(store, day);
 
     return ok(c, {
       day,
@@ -155,6 +210,7 @@ export async function registerWidget(app: App, deps: RouteDeps): Promise<void> {
         fat: macro(totals.fat, profile.goal_fat),
       },
       next_planned: next,
+      weight,
     });
   });
 }

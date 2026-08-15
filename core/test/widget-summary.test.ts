@@ -122,3 +122,40 @@ test("an already-logged entry is never offered as next_planned", async () => {
   const b = await (await req(`/api/widget/summary?tz=${TZ}`)).json();
   assert.equal(b.next_planned, null);
 });
+
+test("weight is null with no measurements, and populated with them", async () => {
+  const { req, platform, email } = client();
+  const store = platform.data.forUser(email);
+  await store.create("profiles", { id: "me", method: "calories", goal_kcal: 2000 });
+
+  const none = await (await req(`/api/widget/summary?tz=${TZ}`)).json();
+  assert.equal(none.weight, null);
+
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000).toISOString();
+    await store.create("measurements", { measured_at: d, weight_kg: 90 - (6 - i) * 0.2 });
+  }
+  const b = await (await req(`/api/widget/summary?tz=${TZ}`)).json();
+  assert.ok(b.weight);
+  assert.equal(b.weight.unit, "lb");
+  assert.equal(b.weight.trend.length, 7);
+  assert.ok(b.weight.current > 0);
+  assert.equal(b.weight.pace, "none", "no goal set ⇒ pace none");
+});
+
+// THE INVARIANT. A widget refreshes on a timer; if this route could reach a model, a placed widget
+// would bill AI forever. Assert no outbound HTTP happens at all.
+test("summary makes no outbound network call", async () => {
+  const { req, platform, email } = client();
+  await platform.data.forUser(email).create("profiles", { id: "me", method: "calories", goal_kcal: 2000 });
+  const real = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async (...a: unknown[]) => { calls++; return real(...(a as [])); }) as typeof fetch;
+  try {
+    const res = await req(`/api/widget/summary?tz=${TZ}`);
+    assert.equal(res.status, 200);
+    assert.equal(calls, 0, "the widget summary route must never call out — no AI, no entitlements fetch");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
