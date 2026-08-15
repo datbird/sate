@@ -12,6 +12,8 @@
 import type { App, RouteDeps } from "./helpers";
 import { getUid, getEmail, ok, dayKey, tzOf, ensureProfile, dayIntakeTotals } from "./helpers";
 import { MODE_PRIMARY, type GoalMethod, type PrimaryMetric } from "../schema";
+import { projectOccurrences, type Occurrence } from "../domain/schedule";
+import type { Entry, PlanSchedule, PlanOverride } from "../schema";
 
 type Totals = Awaited<ReturnType<typeof dayIntakeTotals>>;
 
@@ -41,6 +43,61 @@ function primaryGoal(metric: PrimaryMetric, p: Record<string, unknown>): number 
     case "fat": return n(p.goal_fat);
     case "sodium": return n(p.goal_sodium);
   }
+}
+
+// The next still-planned item for the local day, from BOTH stored planned entries and projected
+// schedule occurrences — the same two sources GET /api/timeline merges. Occurrences already
+// materialized into an entry are dropped so an accepted meal cannot reappear as "next".
+async function nextPlanned(
+  store: ReturnType<RouteDeps["platform"]["data"]["forUser"]>,
+  day: string,
+  nowISO: string,
+): Promise<{ id: string; title: string; at_local: string; kcal: number } | null> {
+  // Entries created via the Planner test seams (and some legacy write paths) carry a display
+  // `name` that isn't part of the Entry zod schema (which only declares `description`); widen the
+  // fetched type locally so reading it type-checks without adding `name` to the shared schema.
+  let entries: (Entry & { name?: string })[] = [];
+  try {
+    ({ items: entries } = await store.list<Entry & { name?: string }>("entries", {
+      where: [{ field: "day", op: "==", value: day }], limit: 500,
+    }));
+  } catch { entries = []; }
+
+  const materialized = new Set<string>();
+  for (const e of entries) {
+    if (e.plan_schedule_id && e.scheduled_date) materialized.add(`${e.plan_schedule_id}:${e.scheduled_date}`);
+  }
+
+  const cands: { at: string; title: string; kcal: number; id: string }[] = [];
+  for (const e of entries) {
+    if (e.status !== "planned") continue;
+    if (e.kind === "activity") continue;
+    cands.push({ at: e.logged_at || "", title: e.name || "Planned meal", kcal: Math.round(Number(e.kcal) || 0), id: e.id });
+  }
+
+  let schedules: PlanSchedule[] = [];
+  let overrides: PlanOverride[] = [];
+  try {
+    ({ items: schedules } = await store.list<PlanSchedule>("plan_schedules", {
+      where: [{ field: "is_active", op: "==", value: true }], limit: 500,
+    }));
+  } catch { schedules = []; }
+  try {
+    ({ items: overrides } = await store.list<PlanOverride>("plan_overrides", { limit: 2000 }));
+  } catch { overrides = []; }
+
+  const occ: Occurrence[] = projectOccurrences(schedules, overrides, day, day, day);
+  for (const o of occ) {
+    if (o.kind === "activity") continue;
+    if (materialized.has(o.id)) continue;
+    const kcal = Math.round(Number((o.payload as { kcal?: unknown })?.kcal) || 0);
+    cands.push({ at: o.logged_at, title: o.name || "Planned meal", kcal, id: o.id });
+  }
+
+  const future = cands.filter((x) => x.at && x.at >= nowISO).sort((a, b) => (a.at < b.at ? -1 : 1));
+  const pick = future[0];
+  if (!pick) return null;
+  return { id: pick.id, title: pick.title, at_local: pick.at.slice(11, 16), kcal: pick.kcal };
 }
 
 export async function registerWidget(app: App, deps: RouteDeps): Promise<void> {
@@ -82,6 +139,9 @@ export async function registerWidget(app: App, deps: RouteDeps): Promise<void> {
       value: Math.round(v), goal: Math.round(Number(g) || 0), unit: "g",
     });
 
+    const nowISO = new Date().toISOString();
+    const next = await nextPlanned(store, day, nowISO);
+
     return ok(c, {
       day,
       generated_at: new Date().toISOString(),
@@ -94,6 +154,7 @@ export async function registerWidget(app: App, deps: RouteDeps): Promise<void> {
         carb: macro(totals.carbs, profile.goal_carbs),
         fat: macro(totals.fat, profile.goal_fat),
       },
+      next_planned: next,
     });
   });
 }
