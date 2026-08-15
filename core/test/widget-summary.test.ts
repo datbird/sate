@@ -99,7 +99,7 @@ test("next_planned is the next future planned item today, or null", async () => 
   assert.equal(empty.next_planned, null);
 
   await store.create("entries", {
-    day, kind: "", status: "planned", kcal: 620, name: "Chicken and rice",
+    day, kind: "", status: "planned", kcal: 620, description: "Chicken and rice",
     logged_at: `${day}T23:59:00.000Z`, macros: {},
   });
 
@@ -116,11 +116,25 @@ test("an already-logged entry is never offered as next_planned", async () => {
   const store = platform.data.forUser(email);
   await store.create("profiles", { id: "me", method: "calories", goal_kcal: 2000 });
   await store.create("entries", {
-    day, kind: "", kcal: 620, name: "Already eaten",
+    day, kind: "", kcal: 620, description: "Already eaten",
     logged_at: `${day}T23:59:00.000Z`, macros: {},
   });
   const b = await (await req(`/api/widget/summary?tz=${TZ}`)).json();
   assert.equal(b.next_planned, null);
+});
+
+test("next_planned prefers description over name when both are present", async () => {
+  const { req, platform, email } = client();
+  const day = today(TZ);
+  const store = platform.data.forUser(email);
+  await store.create("profiles", { id: "me", method: "calories", goal_kcal: 2000 });
+  await store.create("entries", {
+    day, kind: "", status: "planned", kcal: 400,
+    description: "Real field wins", name: "Stray legacy field",
+    logged_at: `${day}T23:59:00.000Z`, macros: {},
+  });
+  const b = await (await req(`/api/widget/summary?tz=${TZ}`)).json();
+  assert.equal(b.next_planned.title, "Real field wins");
 });
 
 test("weight is null with no measurements, and populated with them", async () => {
